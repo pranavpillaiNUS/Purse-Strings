@@ -1,0 +1,6 @@
+{
+  "name": "@purse/checker",
+  "private": true,
+  "type": "module",
+  "description": "The only process with PayPal credentials: deterministic cart checks, budget ledger, captures, audit log."
+}

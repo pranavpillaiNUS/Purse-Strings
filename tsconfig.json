@@ -1,0 +1,18 @@
+{
+  // Services run as .ts directly on Node (type stripping), so tsc only type-checks.
+  // erasableSyntaxOnly keeps us to syntax Node can strip: no enums, namespaces or parameter properties.
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["services/**/*.ts"]
+}
