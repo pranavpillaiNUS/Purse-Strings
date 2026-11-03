@@ -6,6 +6,10 @@ Help the operations manager at a 10–50 person company equip new hires with app
 laptops and monitors before their start date, within an all-in budget. The name is
 provisional. This is equipment procurement, not bill splitting.
 
+This is our entry for PayPal's "Build What's Next with PayPal and AI" hackathon.
+**Deadline: Nov 12, 2026, 3:00 PM US Eastern** (4:00 AM Nov 13 in Singapore). The
+project must meaningfully use both PayPal (sandbox only) and AI.
+
 **Stage one is CLI input/output only. Do not build a website, frontend or web server.**
 Prove contracts, policy decisions and eventually durable execution through terminal
 commands before introducing a UI. JSON files/stdin and explicit CLI commands are the
@@ -21,6 +25,57 @@ The runnable slice is OFFLINE eligibility checking using fixture suppliers. Ther
 also a pre-existing, separately invoked PayPal sandbox spike. There is no complete
 shopping agent, authenticated approval system, durable ledger, order executor or
 recovery workflow yet. Never describe these planned components as implemented.
+
+## Team, ownership and branches
+
+Two people split the work, each with their own AI coding agent. If you don't know
+which person you are working for, ask.
+
+| Path | Owner |
+| --- | --- |
+| `services/checker/` (rules, ledger, PayPal client and spike), payment execution, audit log, approval and exception flow | Role A, Money: Danny |
+| `services/suppliers/` (stores, fixtures, control panel), `services/agent/` (mandate drafting, bounded shopper) | Role B, Shopping: Pranav |
+| `apps/cli/` | Shared. Each role adds commands for its own features; tell the other person before changing shared parsing or output code. |
+| `packages/contracts/` | Shared. Changes need agreement from both people. |
+| `config/`, `examples/`, `docs/`, root config files, this file | Shared. Tell the other person about changes. |
+
+- Only edit files your person owns, or shared files under the rules above. If the
+  other role's code needs a change, say so and stop.
+- Don't change `packages/contracts/` unless your user confirms both people agreed.
+- Only Role A's code calls PayPal. `services/agent/` never imports checker or payment
+  code; its only tools are catalog search, product view, cart building and price-free
+  cart submission.
+- Check PayPal behavior against PayPal's current developer docs, not memory.
+- Work on your own branch, `role-a-money` or `role-b-shop`. Merge to `main` often and
+  keep `npm test`, `npm run typecheck` and `npm run demo` passing there.
+- PayPal sandbox and LLM keys go in `.env` (gitignored), with their names listed in
+  `.env.example`. Never commit secrets.
+
+Between the halves, the agent submits a price-free `CartSubmission` and gets back an
+`EligibilityResult` (`evaluatePurchase` in `services/checker/src/rules/evaluate.ts`).
+Until the real executor exists, Role B's agent submits through a stub that returns
+`eligible`, and Role A tests with hand-written carts in `examples/`.
+
+**Role A build order:** 1) PayPal sandbox spike: hold S$8,000, two partial captures,
+release the rest (`npm run spike:paypal`; code exists, not yet run; record results in
+`docs/paypal-spike.md`); 2) checker and unit tests (eligibility rules exist); 3) ledger
+and audit log; 4) approval and exception flow.
+
+**Role B build order:** 1) fake stores and a control panel that changes price,
+shipping and stock on cue (a CLI command in stage one); 2) mandate drafting and
+confirmation; 3) the agent with its bounded tools; 4) review and dashboard output, as
+CLI output until both people agree to start the stage-two website; 5) a
+prompt-injection listing for the demo.
+
+| Target date | Milestone |
+| --- | --- |
+| Nov 3–4 | Contracts and repo setup; Role A's sandbox spike passes |
+| Nov 7 | Both halves connected end to end |
+| Nov 10 | Demo flow runs reliably using the control panel |
+| Nov 11–12 | Polish, record the video (under 3 minutes), submit |
+
+The gates in `docs/project-scope.md` define what done means; these dates are when we
+aim to reach them.
 
 ## Authority and trust
 
