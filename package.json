@@ -8,12 +8,16 @@
     "node": ">=24"
   },
   "workspaces": [
+    "apps/*",
+    "packages/*",
     "services/*"
   ],
   "scripts": {
     "spike:paypal": "node --env-file-if-exists=.env services/checker/scripts/paypal-spike.ts",
     "typecheck": "tsc -p .",
-    "test": "node --test \"services/**/*.test.ts\""
+    "test": "node --test \"services/**/*.test.ts\" \"apps/**/*.test.ts\"",
+    "cli": "node apps/cli/src/main.ts",
+    "demo": "node apps/cli/src/main.ts demo"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

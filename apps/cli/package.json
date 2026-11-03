@@ -1,0 +1,6 @@
+{
+  "name": "@purse/cli",
+  "private": true,
+  "type": "module",
+  "description": "Stage-one terminal I/O for purchasing-core experiments."
+}

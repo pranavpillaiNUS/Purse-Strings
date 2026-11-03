@@ -1,0 +1,10 @@
+{
+  "mandateId": "engineering-hires-november",
+  "mandateVersion": 1,
+  "currency": "SGD",
+  "committedMinor": 200000,
+  "reservedMinor": 200000,
+  "quantities": [
+    { "requirementId": "engineering-laptops", "committed": 1, "reserved": 1 }
+  ]
+}

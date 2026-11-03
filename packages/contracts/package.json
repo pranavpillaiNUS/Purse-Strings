@@ -1,0 +1,9 @@
+{
+  "name": "@purse/contracts",
+  "private": true,
+  "type": "module",
+  "description": "Runtime contracts for the CLI eligibility slice.",
+  "dependencies": {
+    "zod": "^4.0.0"
+  }
+}

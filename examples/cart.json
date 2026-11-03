@@ -1,0 +1,9 @@
+{
+  "id": "laptop-cart-a",
+  "mandateId": "engineering-hires-november",
+  "mandateVersion": 1,
+  "supplierId": "store-a",
+  "lines": [
+    { "requirementId": "engineering-laptops", "sku": "LAP-14-AIR", "quantity": 3 }
+  ]
+}

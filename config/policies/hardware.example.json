@@ -1,0 +1,22 @@
+{
+  "id": "hardware-policy",
+  "version": 1,
+  "currency": "SGD",
+  "maxBudgetMinor": 1000000,
+  "allowedSuppliers": ["store-a", "store-b"],
+  "evidenceMaxAgeHours": 72,
+  "roles": {
+    "laptop": {
+      "allowedSkus": ["LAP-14-AIR", "LAP-14-PRO"],
+      "maxUnitPriceMinor": 120000,
+      "minWarrantyMonths": 24,
+      "maxUnits": 20
+    },
+    "monitor": {
+      "allowedSkus": ["MON-27-USBC"],
+      "maxUnitPriceMinor": 30000,
+      "minWarrantyMonths": 24,
+      "maxUnits": 20
+    }
+  }
+}

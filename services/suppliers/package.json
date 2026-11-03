@@ -1,0 +1,6 @@
+{
+  "name": "@purse/suppliers",
+  "private": true,
+  "type": "module",
+  "description": "Trusted supplier adapters; synthetic offline quote implementation."
+}

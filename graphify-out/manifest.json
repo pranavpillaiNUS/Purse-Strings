@@ -1,0 +1,188 @@
+{
+  "apps/cli/package.json": {
+    "mtime": 1793690999.52986,
+    "seen": 1793691258.1727314,
+    "ast_hash": "9aaebee4a9a511fa6778c2cd7ed8688b",
+    "semantic_hash": ""
+  },
+  "apps/cli/src/inputs.ts": {
+    "mtime": 1793691233.6937964,
+    "seen": 1793691258.1727374,
+    "ast_hash": "cbd9a52906f475b01992e098f6ebb4de",
+    "semantic_hash": ""
+  },
+  "apps/cli/src/main.test.ts": {
+    "mtime": 1793691306.1897569,
+    "seen": 1793691322.315468,
+    "ast_hash": "5dfafca4ad884eb05f07f7b4e55eb646",
+    "semantic_hash": ""
+  },
+  "apps/cli/src/main.ts": {
+    "mtime": 1793691233.6937964,
+    "seen": 1793691258.1727412,
+    "ast_hash": "6723853fe29fa44014d5a7199be26916",
+    "semantic_hash": ""
+  },
+  "config/policies/hardware.example.json": {
+    "mtime": 1793690999.51786,
+    "seen": 1793691258.172742,
+    "ast_hash": "162cb8d3b4ce6a39c41851fde9413e61",
+    "semantic_hash": ""
+  },
+  "examples/budget-snapshot.json": {
+    "mtime": 1793690999.5218601,
+    "seen": 1793691258.1727428,
+    "ast_hash": "29a2689d896fa1cef6fc96731ef46bb8",
+    "semantic_hash": ""
+  },
+  "examples/cart.json": {
+    "mtime": 1793690999.5218601,
+    "seen": 1793691258.172744,
+    "ast_hash": "aa15af5da26d3f772776ccf23624c0ef",
+    "semantic_hash": ""
+  },
+  "examples/mandate.json": {
+    "mtime": 1793690999.5218601,
+    "seen": 1793691258.1727448,
+    "ast_hash": "8c61903a3a9141f731eb41f289b088fa",
+    "semantic_hash": ""
+  },
+  "package.json": {
+    "mtime": 1793690999.50586,
+    "seen": 1793691258.1727457,
+    "ast_hash": "9738d16abcb399e8d55def0324947c2d",
+    "semantic_hash": ""
+  },
+  "packages/contracts/package.json": {
+    "mtime": 1793691075.4218495,
+    "seen": 1793691258.1727464,
+    "ast_hash": "ad7b9127320d5cffed58bffcd474e3d2",
+    "semantic_hash": ""
+  },
+  "packages/contracts/src/index.ts": {
+    "mtime": 1793691306.185757,
+    "seen": 1793691322.3154814,
+    "ast_hash": "609d20c53f58b597e1a9307680567cc6",
+    "semantic_hash": ""
+  },
+  "services/checker/package.json": {
+    "mtime": 1793690568.7820418,
+    "seen": 1793691258.1727483,
+    "ast_hash": "31ef7e756951979439b4f33da6c144ae",
+    "semantic_hash": ""
+  },
+  "services/checker/scripts/paypal-spike.ts": {
+    "mtime": 1793690568.786042,
+    "seen": 1793691258.172749,
+    "ast_hash": "77a22cba86028c112befe2b109cf6c7f",
+    "semantic_hash": ""
+  },
+  "services/checker/src/money.test.ts": {
+    "mtime": 1793690568.790042,
+    "seen": 1793691258.1727498,
+    "ast_hash": "081cc340bd96736104803d5c6afbda7e",
+    "semantic_hash": ""
+  },
+  "services/checker/src/money.ts": {
+    "mtime": 1793690568.790042,
+    "seen": 1793691258.1727505,
+    "ast_hash": "30e22cb9c543f4750a09ad1d957aefaf",
+    "semantic_hash": ""
+  },
+  "services/checker/src/paypal/client.ts": {
+    "mtime": 1793690568.790042,
+    "seen": 1793691258.1727514,
+    "ast_hash": "63936df485b70819b214308447bc1663",
+    "semantic_hash": ""
+  },
+  "services/checker/src/rules/evaluate.test.ts": {
+    "mtime": 1793691306.1897569,
+    "seen": 1793691322.315489,
+    "ast_hash": "01455a527abb59c95078eba9671cac4d",
+    "semantic_hash": ""
+  },
+  "services/checker/src/rules/evaluate.ts": {
+    "mtime": 1793691142.1818275,
+    "seen": 1793691258.1727526,
+    "ast_hash": "f7942d36f9c9fdf7e60cbadebc922fbb",
+    "semantic_hash": ""
+  },
+  "services/suppliers/fixtures/store-a.json": {
+    "mtime": 1793690999.52586,
+    "seen": 1793691258.1727533,
+    "ast_hash": "4c628f0aa9a4c176da8fab6cbf39d053",
+    "semantic_hash": ""
+  },
+  "services/suppliers/package.json": {
+    "mtime": 1793690999.5218601,
+    "seen": 1793691258.1727538,
+    "ast_hash": "4fa1dff5934da59fcad6cbb15900e0da",
+    "semantic_hash": ""
+  },
+  "services/suppliers/src/adapter.ts": {
+    "mtime": 1793690999.52586,
+    "seen": 1793691258.1727548,
+    "ast_hash": "91beaa498221f337411757daa20f440b",
+    "semantic_hash": ""
+  },
+  "services/suppliers/src/fixture.ts": {
+    "mtime": 1793691306.1897569,
+    "seen": 1793691322.315496,
+    "ast_hash": "596cbb18cd5cc34b5729c8865fd1da95",
+    "semantic_hash": ""
+  },
+  "tsconfig.json": {
+    "mtime": 1793690999.50986,
+    "seen": 1793691258.1727564,
+    "ast_hash": "697b8d99204d8768cb805ca0e822c4e6",
+    "semantic_hash": ""
+  },
+  "AGENTS.md": {
+    "mtime": 1793690888.4219303,
+    "seen": 1793691258.1727571,
+    "ast_hash": "02e0d3c5287e14b9c7a09d5986b01b22",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1793690888.4219303,
+    "seen": 1793691258.172758,
+    "ast_hash": "e9127ec0172df9532a3ed55c6afb14f7",
+    "semantic_hash": ""
+  },
+  "docs/architecture.md": {
+    "mtime": 1793690888.4219303,
+    "seen": 1793691258.172759,
+    "ast_hash": "9687cb5b48490b2235ac7c6f7f95270b",
+    "semantic_hash": ""
+  },
+  "docs/hackathon-plan.md": {
+    "mtime": 1793691306.1897569,
+    "seen": 1793691322.3155034,
+    "ast_hash": "d8995f4ef29ff221d3cafa984e040c98",
+    "semantic_hash": ""
+  },
+  "docs/paypal-spike.md": {
+    "mtime": 1793690568.7820418,
+    "seen": 1793691258.1727605,
+    "ast_hash": "f324d7415a03b0e34bd24b91939594c2",
+    "semantic_hash": ""
+  },
+  "docs/project-scope.md": {
+    "mtime": 1793690888.4219303,
+    "seen": 1793691258.1727614,
+    "ast_hash": "c1ab5394d3c8b86ad841d56506b10536",
+    "semantic_hash": ""
+  },
+  "services/agent/README.md": {
+    "mtime": 1793690999.53386,
+    "seen": 1793691258.1727624,
+    "ast_hash": "b967041072d0f4d3aab297bb288e8c6c",
+    "semantic_hash": ""
+  },
+  "services/checker/src/ledger/README.md": {
+    "mtime": 1793690999.53386,
+    "seen": 1793691258.172763,
+    "ast_hash": "1fc9485c87a3cc45a167f0963aa0e976",
+    "semantic_hash": ""
+  }
+}
