@@ -2,8 +2,9 @@ import type { DatabaseSync } from 'node:sqlite';
 
 export const SCHEMA_VERSION = 2;
 
-// Versioned migrations. Each entry runs once, in its own short synchronous
-// BEGIN IMMEDIATE transaction, so a failed migration rolls back completely.
+// Versioned migrations. Applying them runs the whole read-applied-then-apply
+// cycle inside one synchronous BEGIN IMMEDIATE transaction, so a failing
+// migration rolls back completely and concurrent openers serialize.
 export interface LedgerMigration {
   version: number;
   sql: string;
@@ -242,35 +243,39 @@ export function applyMigrations(
   database: DatabaseSync,
   migrations: readonly LedgerMigration[] = MIGRATIONS,
 ): void {
-  // Version 1 owns the schema_migrations table itself, so only read applied
-  // versions when an earlier migration has already created it.
-  const migrationTable = database.prepare(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
-  ).get();
-  const applied = new Set<number>();
-  if (migrationTable) {
-    for (const row of database.prepare('SELECT version FROM schema_migrations ORDER BY version').all()) {
-      const version = (row as { version: unknown }).version;
-      if (typeof version === 'number') applied.add(version);
+  // One BEGIN IMMEDIATE transaction covers reading the applied versions AND
+  // applying what is missing: a second opener that waits out the first one
+  // re-reads the winner's committed versions and skips cleanly instead of
+  // re-running already-applied SQL. Caller is expected to have a busy_timeout
+  // set, so a genuine lock timeout surfaces here as SQLITE_BUSY.
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    // Version 1 owns the schema_migrations table itself, so only read applied
+    // versions when an earlier migration has already created it.
+    const migrationTable = database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+    ).get();
+    const applied = new Set<number>();
+    if (migrationTable) {
+      for (const row of database.prepare('SELECT version FROM schema_migrations ORDER BY version').all()) {
+        const version = (row as { version: unknown }).version;
+        if (typeof version === 'number') applied.add(version);
+      }
     }
-  }
-  // A database written by a newer schema must never be "upgraded" backwards.
-  const highestStored = applied.size === 0 ? 0 : Math.max(...applied);
-  if (highestStored > maxKnownMigrationVersion()) {
-    throw new Error(`Ledger schema version ${highestStored} is unknown to this build`);
-  }
-
-  for (const migration of migrations) {
-    if (applied.has(migration.version)) continue;
-    database.exec('BEGIN IMMEDIATE');
-    try {
+    // A database written by a newer schema must never be "upgraded" backwards.
+    const highestStored = applied.size === 0 ? 0 : Math.max(...applied);
+    if (highestStored > maxKnownMigrationVersion()) {
+      throw new Error(`Ledger schema version ${highestStored} is unknown to this build`);
+    }
+    for (const migration of migrations) {
+      if (applied.has(migration.version)) continue;
       database.exec(migration.sql);
       database.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
         .run(migration.version, new Date().toISOString());
-      database.exec('COMMIT');
-    } catch (error) {
-      try { database.exec('ROLLBACK'); } catch { /* rollback is best-effort */ }
-      throw error;
     }
+    database.exec('COMMIT');
+  } catch (error) {
+    try { database.exec('ROLLBACK'); } catch { /* rollback is best-effort */ }
+    throw error;
   }
 }
