@@ -8,6 +8,7 @@ import {
   activateMandateRevision,
   assertLeaseHeld,
   claimLeaseRow,
+  loadMandateTotals,
   openLedgerStore,
   renewLeaseRow,
   runTransaction,
@@ -206,6 +207,53 @@ function runExecutionChild(config: object, mode: 'run' | 'reconcile'): Promise<C
   });
 }
 
+/** Runs a child built with resumeAfterIntent: at its BARRIER-intent marker the
+ * bump callback runs once (the parent can hold the application write lock and
+ * move the clock) before RESUME unfreezes the child. */
+function runResumedChild(config: object, bump: (operationId: string) => void): Promise<ChildResult> {
+  return new Promise((resolveChild, rejectChild) => {
+    const child = spawn(process.execPath, [EXEC_WORKER_PATH, 'run'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let goSent = false;
+    let resumed = false;
+    const deadline = setTimeout(() => {
+      child.kill('SIGKILL');
+      rejectChild(new Error(`resumed execution worker timed out\nstderr: ${stderr}\nstdout: ${stdout}`));
+    }, 45_000);
+    child.on('error', (error) => { clearTimeout(deadline); rejectChild(error); });
+    child.on('close', (code) => {
+      clearTimeout(deadline);
+      if (code !== 0) {
+        rejectChild(new Error(`resumed execution worker exited ${code}\nstderr: ${stderr}\nstdout: ${stdout}`));
+        return;
+      }
+      const lines = stdout.trim().split('\n');
+      const last = lines[lines.length - 1];
+      if (last === undefined) {
+        rejectChild(new Error(`resumed execution worker printed no result\nstdout: ${stdout}`));
+        return;
+      }
+      resolveChild({ kind: 'outcome', result: (JSON.parse(last) as { outcome: ChildOperation }).outcome });
+    });
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += String(chunk);
+      if (stdout.includes('READY') && !goSent) {
+        goSent = true;
+        child.stdin.write('GO\n');
+      }
+      const barrier = /^BARRIER-intent:(capture|order|refund):(.+)$/m.exec(String(chunk));
+      if (barrier !== null && !resumed) {
+        resumed = true;
+        bump(barrier[2]!);
+        child.stdin.write('RESUME\n');
+      }
+    });
+    child.stderr.on('data', (chunk: Buffer) => { stderr += String(chunk); });
+    child.stdin.write(`${JSON.stringify(config)}\n`);
+  });
+}
+
 function providerRowCount(providerDatabasePath: string, kind?: string): number {
   const database = new DatabaseSync(providerDatabasePath);
   try {
@@ -213,6 +261,19 @@ function providerRowCount(providerDatabasePath: string, kind?: string): number {
       ? database.prepare('SELECT COUNT(*) AS total FROM provider_effects').get()
       : database.prepare('SELECT COUNT(*) AS total FROM provider_effects WHERE kind = ?').get(kind);
     return typeof row?.total === 'number' ? row.total : 0;
+  } finally {
+    database.close();
+  }
+}
+
+/** Parsed audit details for one event kind; empty when the event never landed. */
+function auditDetailsFor(databasePath: string, operationId: string, kind: string): Array<Record<string, unknown>> {
+  const database = openLedgerStore(databasePath);
+  try {
+    const rows = database.prepare(
+      'SELECT event_json FROM audit_events WHERE operation_id = ? AND kind = ?',
+    ).all(operationId, kind) as Array<{ event_json: string }>;
+    return rows.map((row) => JSON.parse(row.event_json) as Record<string, unknown>);
   } finally {
     database.close();
   }
@@ -239,8 +300,7 @@ function providerEffectOutcomes(providerDatabasePath: string): Array<{ kind: str
   }
 }
 
-function operationAndReservation(databasePath: string, operationId: string): {
-  operation: { status: string };
+function operationAndReservation(databasePath: string, operationId: string): {  operation: { status: string };
   reservation: { state: string; amountMinor: number };
 } {
   const database = openLedgerStore(databasePath);
@@ -766,7 +826,7 @@ test('renewed eligibility retries the original absent capture with the same key 
   }
 });
 
-test('confirmed order rejection leads to a refund that never restores authority; unknown order still forbids refund after expiry', async () => {
+test('confirmed order rejection leads to a refund that never restores authority; absent order resumes past expiry with no refund', async () => {
   const harness = await createHarness({ prefix: 'exec-refund' });
   try {
     const submitted = await submitOperation(harness, TEST_CART, 'refund-key');
@@ -808,11 +868,13 @@ test('confirmed order rejection leads to a refund that never restores authority;
       provider.close();
     }
 
-    // Unknown order: refund is forbidden, no matter how late reconciliation runs.
-    const unknownOrder = { ...TEST_CART, id: 'unknown-order-cart', lines: [
+    // Absent order at a clock past the mandate deadline: the capture already
+    // succeeded, so the frozen order resumes with the original key even after
+    // expiry, and no refund is ever invented for a succeeded order.
+    const absentOrder = { ...TEST_CART, id: 'absent-order-cart', lines: [
       { requirementId: 'engineering-laptops', sku: 'LAP-14-AIR', quantity: 1 },
     ] };
-    const second = await submitOperation(harness, unknownOrder, 'unknown-order-key');
+    const second = await submitOperation(harness, absentOrder, 'absent-order-key');
     const attached = await runExecutionChild(
       childConfig(harness, TEST_CLOCK, second.operationId, 'run', { crashBeforeCommit: 'order' }), 'run',
     );
@@ -821,24 +883,27 @@ test('confirmed order rejection leads to a refund that never restores authority;
     // and the second operation committed nothing new.
     assert.equal(providerRowCount(harness.providerDatabasePath, 'order'), 1);
     assert.equal(providerRowsFor(harness.providerDatabasePath, `${second.operationId}:order`), 0);
-    const forbidden = await runExecutionChild(
+    assert.equal(providerRowsFor(harness.providerDatabasePath, `${second.operationId}:refund`), 0);
+    const resumedBeyondExpiry = await runExecutionChild(
       childConfig(harness, EXPIRED_CLOCK, second.operationId, 'run'), 'run',
     );
-    assert.equal(forbidden.kind, 'outcome');
-    if (forbidden.kind !== 'outcome') return;
-    assert.equal(forbidden.result.operation?.orderStatus, 'unknown');
-    assert.equal(forbidden.result.operation?.status, 'reconciliation_required');
-    assert.equal(forbidden.result.operation?.refundStatus, 'not_started');
-    assert.equal(forbidden.result.operation?.reservationStatus, 'consumed');
+    assert.equal(resumedBeyondExpiry.kind, 'outcome');
+    if (resumedBeyondExpiry.kind !== 'outcome') return;
+    assert.equal(resumedBeyondExpiry.result.operation?.status, 'ordered');
+    assert.equal(resumedBeyondExpiry.result.operation?.paymentStatus, 'succeeded');
+    assert.equal(resumedBeyondExpiry.result.operation?.orderStatus, 'succeeded');
+    assert.equal(resumedBeyondExpiry.result.operation?.refundStatus, 'not_started');
+    assert.equal(resumedBeyondExpiry.result.operation?.reservationStatus, 'consumed');
+    assert.equal(providerRowsFor(harness.providerDatabasePath, `${second.operationId}:order`), 1);
     assert.equal(providerRowsFor(harness.providerDatabasePath, `${second.operationId}:refund`), 0);
 
     // Terminal commerce outcomes stay untouched: reconcile is a safe passthrough.
     const settle = await runExecutionChild(
-      childConfig(harness, TEST_CLOCK, second.operationId, 'reconcile'), 'reconcile',
+      childConfig(harness, EXPIRED_CLOCK, second.operationId, 'reconcile'), 'reconcile',
     );
     assert.equal(settle.kind, 'outcome');
     if (settle.kind === 'outcome') {
-      assert.equal(settle.result.operation?.orderStatus, 'unknown');
+      assert.equal(settle.result.operation?.status, 'ordered');
       assert.equal(settle.result.operation?.refundStatus, 'not_started');
     }
   } finally {
@@ -1161,6 +1226,320 @@ test('a bounded lookup that never settles maps to unknown exactly like an apply 
         `${submitted.operationId}:capture`, 'the effect identity never moved to a new key');
     } finally {
       secondWorker.close();
+    }
+  } finally {
+    harness.close();
+  }
+});
+
+test('a supplier call that outlives the mandate deadline fails the gate at the post-response clock', async () => {
+  const harness = await createHarness({ prefix: 'exec-gate-postresponse',
+    draftOverrides: { purchaseBy: '2026-11-04T09:00:20.000Z' } });
+  try {
+    const submitted = await submitOperation(harness, TEST_CART, 'gate-postresponse-key');
+    const futureClock = '2026-11-04T09:00:25.000Z'; // 5s past purchaseBy, still inside the 30s lease TTL
+    const clockBox = { value: TEST_CLOCK };
+    const realAdapter = createFixtureSupplier(TEST_CATALOG);
+    let quoteCalls = 0;
+    let gateTimeSeen = '';
+    let releaseGate!: () => void;
+    const gateOpen = new Promise<void>((resolve) => { releaseGate = resolve; });
+    const deferredAdapter: SupplierAdapter = {
+      async quoteCart(cart, now) {
+        quoteCalls += 1;
+        gateTimeSeen = now;
+        await gateOpen;
+        return await realAdapter.quoteCart(cart, now);
+      },
+    };
+    const provider = createFakeProviderGateway(harness.providerDatabasePath);
+    const worker = createExecutionWorker({
+      databasePath: harness.databasePath,
+      suppliers: [{ supplierId: 'store-a', catalog: TEST_CATALOG, adapter: deferredAdapter }],
+      provider,
+      clock: () => clockBox.value,
+    });
+    try {
+      // The gate reaches the supplier, then the clock moves past the mandate
+      // deadline while the quote is still pending.
+      const runPromise = worker.run(submitted.operationId);
+      assert.ok(quoteCalls >= 1, 'the gate must have reached the deferred supplier');
+      clockBox.value = futureClock;
+      releaseGate();
+      const result = await runPromise;
+      assert.equal(result.kind, 'executed');
+      if (result.kind !== 'executed') return;
+      assert.equal(result.operation.status, 'failed');
+      assert.equal(result.operation.paymentStatus, 'not_started');
+      assert.equal(result.operation.reservationStatus, 'released');
+      assert.equal(providerRowCount(harness.providerDatabasePath), 0);
+      // Exactly one quote, requested at the gate-time timestamp.
+      assert.equal(quoteCalls, 1);
+      assert.equal(gateTimeSeen, TEST_CLOCK);
+      // The refusal is the post-response eligibility check: at the gate-time
+      // clock this exact cart and quote were eligible.
+      const details = auditDetailsFor(harness.databasePath, submitted.operationId, 'capture_gate_failed');
+      assert.equal(details.length, 1);
+      const codes = details[0]?.checkCodes as string[];
+      assert.ok(Array.isArray(codes) && codes.includes('MANDATE_TIMING'),
+        `expected a mandate-timing failure at the post-response clock: ${JSON.stringify(details)}`);
+    } finally {
+      worker.close();
+      provider.close();
+    }
+  } finally {
+    harness.close();
+  }
+});
+
+test('a lease that expires during the write-lock wait cannot renew or write; recovery claims generation+1', async () => {
+  const harness = await createHarness({ prefix: 'exec-lease-lock' });
+  try {
+    const submitted = await submitOperation(harness, TEST_CART, 'lease-lock-key');
+    const clockPath = `${harness.directory}/clock.txt`;
+    writeFileSync(clockPath, TEST_CLOCK);
+    // While the worker is parked at the intent barrier, hold the application
+    // BEGIN IMMEDIATE write lock and release it one scheduling tick later,
+    // together with a clock file moved past the 30s lease TTL. Whatever the
+    // interleaving, the child's next lease write can only sample that clock
+    // after acquiring the lock the parent held, so expiry must be judged with
+    // the post-lock time and the write must not land.
+    const fenced = await runResumedChild(
+      { ...childConfig(harness, TEST_CLOCK, submitted.operationId, 'run'), clockPath, resumeAfterIntent: true },
+      (operationId) => {
+        assert.equal(operationId, submitted.operationId, 'the barrier must come from this operation');
+        const holder = new DatabaseSync(harness.databasePath);
+        try {
+          holder.exec('BEGIN IMMEDIATE');
+          setTimeout(() => {
+            try {
+              writeFileSync(clockPath, LEASE_LAPSED_CLOCK);
+              holder.exec('COMMIT');
+            } finally {
+              holder.close();
+            }
+          }, 0);
+        } catch (error) {
+          holder.close();
+          throw error;
+        }
+      },
+    );
+    assert.equal(fenced.kind, 'outcome');
+    if (fenced.kind !== 'outcome') return;
+    assert.equal(fenced.result.kind, 'busy');
+    if (fenced.result.kind !== 'busy') return;
+    // The lease assert, not a locked-busy fallback, produced this sanitized busy.
+    assert.equal(fenced.result.message,
+      'The operation lease was lost while executing; another worker holds the operation');
+    assert.equal(effectRow(harness.databasePath, submitted.operationId, 'capture').state, 'intent',
+      'the fenced renewal must not have moved the effect row to in_flight');
+    assert.equal(providerRowCount(harness.providerDatabasePath), 0);
+    assert.equal(operationAndReservation(harness.databasePath, submitted.operationId).reservation.state, 'active');
+    let preGeneration = 0;
+    const database = openLedgerStore(harness.databasePath);
+    try {
+      const lease = database.prepare('SELECT owner_id, generation FROM worker_leases WHERE operation_id = ?')
+        .get(submitted.operationId) as { owner_id: string; generation: number };
+      assert.ok(lease.owner_id !== null);
+      preGeneration = lease.generation;
+    } finally {
+      database.close();
+    }
+
+    // A fresh claim afterwards succeeds with generation+1 and completes the run.
+    const recovered = await runExecutionChild(
+      childConfig(harness, LEASE_LAPSED_CLOCK, submitted.operationId, 'run'), 'run',
+    );
+    assert.equal(recovered.kind, 'outcome');
+    if (recovered.kind !== 'outcome') return;
+    assert.equal(recovered.result.kind, 'executed');
+    if (recovered.result.kind !== 'executed') return;
+    assert.equal(recovered.result.operation?.status, 'ordered');
+    assert.equal(providerRowCount(harness.providerDatabasePath, 'capture'), 1);
+    assert.equal(providerRowCount(harness.providerDatabasePath, 'order'), 1);
+    const after = openLedgerStore(harness.databasePath);
+    try {
+      const lease = after.prepare('SELECT owner_id, generation FROM worker_leases WHERE operation_id = ?')
+        .get(submitted.operationId) as { owner_id: string | null; generation: number };
+      assert.equal(lease.generation, preGeneration + 1);
+      assert.equal(lease.owner_id, null);
+    } finally {
+      after.close();
+    }
+  } finally {
+    harness.close();
+  }
+});
+
+test('an earlier process that never committed the order resumes the original key; a fresh run and reconcile both finish it', async () => {
+  const harness = await createHarness({ prefix: 'exec-order-absent' });
+  try {
+    const submitted = await submitOperation(harness, TEST_CART, 'order-absent-key');
+    const killed = await runExecutionChild(
+      childConfig(harness, TEST_CLOCK, submitted.operationId, 'run', { crashBeforeCommit: 'order' }), 'run',
+    );
+    assert.equal(killed.kind, 'killedAt');
+    assert.equal(providerRowCount(harness.providerDatabasePath, 'capture'), 1);
+    assert.equal(providerRowCount(harness.providerDatabasePath, 'order'), 0);
+    assert.equal(effectRow(harness.databasePath, submitted.operationId, 'order').state, 'in_flight');
+    assert.equal(operationAndReservation(harness.databasePath, submitted.operationId).reservation.state, 'consumed');
+    const requestBefore = readEffectJson(harness.databasePath, submitted.operationId, 'order');
+
+    // The absence is definitive, so a fresh full run resumes the order with
+    // its stored key and the immutable cart/quote snapshots.
+    const resumed = await runExecutionChild(
+      childConfig(harness, LEASE_LAPSED_CLOCK, submitted.operationId, 'run'), 'run',
+    );
+    assert.equal(resumed.kind, 'outcome');
+    if (resumed.kind !== 'outcome') return;
+    assert.equal(resumed.result.kind, 'executed');
+    if (resumed.result.kind !== 'executed') return;
+    assert.equal(resumed.result.operation?.status, 'ordered');
+    assert.equal(resumed.result.operation?.paymentStatus, 'succeeded');
+    assert.equal(resumed.result.operation?.orderStatus, 'succeeded');
+    assert.equal(providerRowsFor(harness.providerDatabasePath, `${submitted.operationId}:order`), 1);
+    assert.equal(providerRowCount(harness.providerDatabasePath), 2);
+    assert.equal(effectRow(harness.databasePath, submitted.operationId, 'order').key,
+      `${submitted.operationId}:order`);
+    assert.deepEqual(readEffectJson(harness.databasePath, submitted.operationId, 'order'), requestBefore);
+    const orderResumedAudit = auditDetailsFor(harness.databasePath, submitted.operationId, 'order_succeeded');
+    assert.equal(orderResumedAudit.length, 1);
+    assert.ok(!('recovered' in (orderResumedAudit[0] ?? {})));
+    assert.equal(auditDetailsFor(harness.databasePath, submitted.operationId, 'capture_succeeded').length, 1);
+
+    // Reconcile mode also resumes an absent order to ordered.
+    const second = await submitOperation(harness,
+      { ...TEST_CART, id: 'absent-order-reconcile-cart', lines: [
+        { requirementId: 'engineering-laptops', sku: 'LAP-14-AIR', quantity: 2 },
+      ] },
+      'order-absent-reconcile-key');
+    const killedAgain = await runExecutionChild(
+      childConfig(harness, TEST_CLOCK, second.operationId, 'run', { crashBeforeCommit: 'order' }), 'run',
+    );
+    assert.equal(killedAgain.kind, 'killedAt');
+    assert.equal(providerRowsFor(harness.providerDatabasePath, `${second.operationId}:order`), 0);
+    const reconciled = await runExecutionChild(
+      childConfig(harness, LEASE_LAPSED_CLOCK, second.operationId, 'reconcile'), 'reconcile',
+    );
+    assert.equal(reconciled.kind, 'outcome');
+    if (reconciled.kind === 'outcome') {
+      assert.equal(reconciled.result.operation?.status, 'ordered');
+      assert.equal(providerRowsFor(harness.providerDatabasePath, `${second.operationId}:order`), 1);
+    }
+  } finally {
+    harness.close();
+  }
+});
+
+test('a refund that never committed resumes to compensated under the original key and never restores authority', async () => {
+  const harness = await createHarness({ prefix: 'exec-refund-absent' });
+  try {
+    const submitted = await submitOperation(harness, TEST_CART, 'refund-absent-key');
+    const killed = await runExecutionChild(
+      childConfig(harness, TEST_CLOCK, submitted.operationId, 'run',
+        { rejectFor: 'order', crashBeforeCommit: 'refund' }), 'run',
+    );
+    assert.equal(killed.kind, 'killedAt');
+    assert.equal(providerRowCount(harness.providerDatabasePath, 'capture'), 1);
+    assert.equal(providerRowCount(harness.providerDatabasePath, 'order'), 1);
+    assert.equal(providerRowCount(harness.providerDatabasePath, 'refund'), 0);
+    assert.equal(effectRow(harness.databasePath, submitted.operationId, 'refund').state, 'in_flight');
+    assert.equal(operationAndReservation(harness.databasePath, submitted.operationId).operation.status,
+      'compensation_pending');
+    const refundRequestBefore = readEffectJson(harness.databasePath, submitted.operationId, 'refund');
+    assert.equal(refundRequestBefore.currency, 'SGD');
+    assert.equal(refundRequestBefore.amountMinor, submitted.totalMinor);
+
+    // Fresh run: the absence is definitive, so the compensation resumes with
+    // the stored captureId, currency and amount under the same key.
+    const resumed = await runExecutionChild(
+      childConfig(harness, LEASE_LAPSED_CLOCK, submitted.operationId, 'run'), 'run',
+    );
+    assert.equal(resumed.kind, 'outcome');
+    if (resumed.kind !== 'outcome') return;
+    assert.equal(resumed.result.kind, 'executed');
+    if (resumed.result.kind !== 'executed') return;
+    assert.equal(resumed.result.operation?.status, 'compensated');
+    assert.equal(resumed.result.operation?.paymentStatus, 'succeeded');
+    assert.equal(resumed.result.operation?.orderStatus, 'rejected');
+    assert.equal(resumed.result.operation?.refundStatus, 'succeeded');
+    assert.equal(providerRowsFor(harness.providerDatabasePath, `${submitted.operationId}:refund`), 1);
+    assert.equal(providerRowCount(harness.providerDatabasePath), 3);
+    assert.equal(effectRow(harness.databasePath, submitted.operationId, 'refund').key,
+      `${submitted.operationId}:refund`);
+    assert.deepEqual(readEffectJson(harness.databasePath, submitted.operationId, 'refund'), refundRequestBefore);
+    const refundResumedAudit = auditDetailsFor(harness.databasePath, submitted.operationId, 'refund_succeeded');
+    assert.equal(refundResumedAudit.length, 1);
+    assert.ok(!('recovered' in (refundResumedAudit[0] ?? {})));
+    // Compensation never restores purchasing authority.
+    const stored = operationAndReservation(harness.databasePath, submitted.operationId);
+    assert.equal(stored.reservation.state, 'consumed');
+    assert.equal(stored.reservation.amountMinor, submitted.totalMinor);
+    const database = openLedgerStore(harness.databasePath);
+    try {
+      const totals = loadMandateTotals(database, TEST_MANDATE_DRAFT.id);
+      assert.equal(totals.perRequirement.get('engineering-laptops')?.committed, 3);
+    } finally {
+      database.close();
+    }
+  } finally {
+    harness.close();
+  }
+});
+
+test('a lost or unknown order response still forbids every refund path', async () => {
+  const harness = await createHarness({ prefix: 'exec-order-unknown' });
+  try {
+    const submitted = await submitOperation(harness, TEST_CART, 'order-unknown-key');
+    const gateway = createFakeProviderGateway(harness.providerDatabasePath);
+    const lostOrderProvider: ExecutionProvider = {
+      async applyEffect(key, kind, request) {
+        const answer = await gateway.applyEffect(key, kind, request);
+        return kind === 'order' ? { outcome: 'unknown' as const } : answer;
+      },
+      async lookupEffect(key) { return await gateway.lookupEffect(key); },
+    };
+    const firstWorker = createExecutionWorker({
+      databasePath: harness.databasePath, suppliers: suppliersFor(harness.catalog),
+      provider: lostOrderProvider, clock: () => TEST_CLOCK,
+    });
+    try {
+      const first = await firstWorker.run(submitted.operationId);
+      assert.equal(first.kind, 'executed');
+      if (first.kind !== 'executed') return;
+      assert.equal(first.operation.orderStatus, 'unknown');
+      assert.equal(first.operation.status, 'reconciliation_required');
+      assert.equal(first.operation.refundStatus, 'not_started');
+      assert.equal(first.operation.reservationStatus, 'consumed');
+    } finally {
+      firstWorker.close();
+    }
+    assert.equal(providerRowsFor(harness.providerDatabasePath, `${submitted.operationId}:order`), 1);
+    assert.equal(providerRowsFor(harness.providerDatabasePath, `${submitted.operationId}:refund`), 0);
+
+    // Even when the lookup itself never settles, at any clock, the order
+    // stays unknown: no refund path fires and nothing dispatches anew.
+    const hangingProvider: ExecutionProvider = {
+      async applyEffect(): Promise<never> { return await new Promise<never>(() => {}); },
+      async lookupEffect(): Promise<never> { return await new Promise<never>(() => {}); },
+    };
+    const secondWorker = createExecutionWorker({
+      databasePath: harness.databasePath, suppliers: suppliersFor(harness.catalog),
+      provider: hangingProvider, clock: () => EXPIRED_CLOCK, providerTimeoutMs: 50,
+    });
+    try {
+      const second = await secondWorker.run(submitted.operationId);
+      assert.equal(second.kind, 'executed');
+      if (second.kind !== 'executed') return;
+      assert.equal(second.operation.orderStatus, 'unknown');
+      assert.equal(second.operation.status, 'reconciliation_required');
+      assert.equal(second.operation.refundStatus, 'not_started');
+      assert.equal(providerRowsFor(harness.providerDatabasePath, `${submitted.operationId}:refund`), 0);
+      assert.equal(providerRowsFor(harness.providerDatabasePath, `${submitted.operationId}:order`), 1);
+    } finally {
+      secondWorker.close();
+      gateway.close();
     }
   } finally {
     harness.close();

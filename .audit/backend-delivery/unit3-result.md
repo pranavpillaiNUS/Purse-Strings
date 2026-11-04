@@ -500,3 +500,66 @@ uncommitted):
 - CLI walkthrough: covered by `backend.test.ts` fresh-process flows exercising
   the exact documented command sequence; the delegate's verbatim manual
   walkthrough appears earlier in this file.
+
+## Accepted P1 repair pass (2026-11-05, branch `unit3-durable-execution`)
+
+Post-merge-style review produced three accepted P1 findings against the unit-3
+worker; all three are repaired and covered in this pass.
+
+- P1-A (capture gate timing): `validateCaptureGate` now takes a NEW trusted
+  clock sample after the awaited supplier quote resolves and evaluates
+  `evaluatePurchase` (deadline, quote window, evidence age) against that
+  post-response time instead of the pre-call gate-time sample. The quote
+  request keeps its gate-time timestamp and is fetched exactly once.
+  Test: `a supplier call that outlives the mandate deadline fails the gate at
+  the post-response clock` (in-proc deferred adapter, purchaseBy advanced
+  mid-call, gate refuses, reservation released, zero provider rows, audit
+  checkCodes show the post-response MANDATE_TIMING failure).
+- P1-B (lease sampled pre-lock): `underLease` samples the trusted clock inside
+  the BEGIN IMMEDIATE transaction, after the write lock is acquired, and passes
+  that post-lock sample to both `assertLeaseHeld` and the work callback;
+  `renewLease` grows the new expiry from it. Every lease-wrapped write (effect
+  state, status, audit, intent, consume/release, renew) now stamps from the
+  post-lock sample instead of claim-time `context.nowIso`; the unused claim-time
+  fields were removed from RunContext. `claim` itself still samples before its
+  transaction by design (a new claim with an older sample only shortens its own
+  first TTL, which is conservative).
+  Test: `a lease that expires during the write-lock wait cannot renew or write;
+  recovery claims generation+1` (child parks at the intent barrier; parent
+  holds BEGIN IMMEDIATE on the app DB and hands the child a clock file moved
+  past the lease TTL one scheduling tick later; the renewal fails fenced with
+  the exact LeaseLost sanitized message, effect row stays `intent`, provider
+  rows 0, reservation stays active; a fresh claim then succeeds at
+  generation+1 and completes the run). Runtime contract: the post-lock sample
+  fences in every interleaving; whether a reverted pre-lock implementation is
+  caught depends on commit-vs-sample scheduling.
+- P1-C (absent effects never converged): when the provider lookup returns
+  `not_applied` for an inherited in_flight/unknown order or refund effect, both
+  full and reconcile modes now RESUME the original idempotent request under the
+  stored effect key with its originally accepted payload (order: immutable
+  cart/quote snapshots; refund: stored captureId/currency/amountMinor);
+  reconcile had previously parked absent order/refund effects in
+  reconciliation_required forever. Preconditions unchanged and conservative:
+  order resume still requires the capture succeeded/consumed; refund resume
+  still requires compensation_pending with the order definitively rejected and
+  the capture succeeded; an UNKNOWN or lookup-unknown order still forbids every
+  refund path and still lands reconciliation_required; capture's not_applied
+  retry keeps its renewed-eligibility full-run-only gate. Resumed outcomes
+  record normal audit events; `recovered: true` remains exclusive to
+  lookup-recovered outcomes.
+  Tests: `an earlier process that never committed the order resumes the
+  original key; a fresh run and reconcile both finish it`,
+  `a refund that never committed resumes to compensated under the original key
+  and never restores authority` (reservation stays consumed, per-requirement
+  committed quantity unchanged), and `a lost or unknown order response still
+  forbids every refund path` (response loss then hanging lookup, at TEST and
+  EXPIRED clocks, refund provider rows 0 throughout). The old `exec-refund`
+  "unknown order after expiry" segment was re-anchored: an absent order now
+  resumes even past expiry per design.md, and the unknown-order guard moved to
+  the response-loss/lookup-unknown test.
+
+Checks at repair time: `npm test` 130/130 pass; execution worker suite run
+standalone twice (26/26 each); `npm run typecheck` clean; `npm run demo` exit 0;
+`git diff --check` clean. New files touched: worker.ts, worker.test.ts,
+test-worker.ts (test-only driver knobs: clockPath file clock, resumeAfterIntent
+barrier; worker test-only hook: testWaitAfterIntent). No new dependencies.

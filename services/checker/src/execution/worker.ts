@@ -93,6 +93,13 @@ export interface ExecutionWorkerConfig {
    * Never part of the CLI, config or shopper-visible shapes.
    */
   testPauseAfterIntent?: EffectKind | null;
+  /**
+   * Test-only: after an intent row is persisted for capture, emit
+   * "BARRIER-intent:capture" and await this injected barrier before the next
+   * lease write. Lets a parent hold the ledger write lock across that step so
+   * tests can prove post-lock lease sampling. Never part of the CLI.
+   */
+  testWaitAfterIntent?: (kind: EffectKind) => Promise<void>;
 }
 
 export type ExecutionResult =
@@ -132,6 +139,9 @@ interface RunContext {
   operationId: string;
   ownerId: string;
   generation: number;
+}
+
+interface ClockSample {
   nowIso: string;
   nowMs: number;
 }
@@ -253,13 +263,17 @@ async function validateCaptureGate(
       reserved: totals.perRequirement.get(requirement.id)?.reserved ?? 0,
     })),
   });
+  // The supplier call above can outlive the mandate deadline, quote window or
+  // evidence age, so eligibility is judged against a NEW trusted clock taken
+  // after that awaited response, never the gate-time sample.
+  const { nowIso: postResponseIso } = gateClock();
   const evaluation = evaluatePurchase({
     policy,
     mandate,
     submission: cart,
     quote: freshQuote,
     snapshot,
-    now: gateNowIso,
+    now: postResponseIso,
   });
   if (evaluation.decision !== 'eligible') {
     const failCodes: string[] = [];
@@ -313,24 +327,24 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
   /**
    * Every persisted worker write happens under this wrapper: lease ownership,
    * generation and expiry are asserted inside the same BEGIN IMMEDIATE
-   * transaction, so a fenced worker can neither renew nor commit.
+   * transaction, so a fenced worker can neither renew nor commit. The clock is
+   * sampled AFTER the write lock is acquired: BEGIN IMMEDIATE waits for other
+   * writers up to busy_timeout, and a lease that expires during that wait must
+   * be judged with the post-lock time, not a sample taken before it. Every
+   * lease-bound write stamps record timestamps from that post-lock sample too.
    */
-  function underLease<T>(context: RunContext, work: () => T): T {
-    const { nowMs } = trustedClock();
+  function underLease<T>(context: RunContext, work: (now: ClockSample) => T): T {
     return runTransaction(database, () => {
-      assertLeaseHeld(database, context.operationId, context.ownerId, context.generation, nowMs);
-      return work();
+      const now = trustedClock();
+      assertLeaseHeld(database, context.operationId, context.ownerId, context.generation, now.nowMs);
+      return work(now);
     });
   }
 
   /** Renew before provider work so provider calls stay inside a live lease. */
   function renewLease(context: RunContext): void {
-    // Settling the expiry against the claim-time value would renew in place
-    // forever, so every lease-wrap reads the trusted clock again and writes
-    // now_ms + TTL.
-    const { nowMs } = trustedClock();
-    underLease(context, () => {
-      renewLeaseRow(database, context.operationId, context.ownerId, context.generation, nowMs, leaseTtlMs);
+    underLease(context, (now) => {
+      renewLeaseRow(database, context.operationId, context.ownerId, context.generation, now.nowMs, leaseTtlMs);
     });
   }
 
@@ -390,7 +404,7 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
     kind: EffectKind,
     request: unknown,
   ): void {
-    underLease(context, () => {
+    underLease(context, (now) => {
       insertEffectIntentRow(database, {
         effectId: `eff-${randomUUID()}`,
         operationId: row.operationId,
@@ -398,7 +412,7 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
         effectKey: effectKey(row.operationId, kind),
         requestDigest: sha256Hex(canonicalize(request)),
         requestJson: canonicalize(request),
-        createdAt: context.nowIso,
+        createdAt: now.nowIso,
       });
     });
   }
@@ -406,8 +420,8 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
   /** Persists the in-flight marker immediately before the provider call. */
   function markInFlight(context: RunContext, row: OperationStorageRow, kind: EffectKind): void {
     renewLease(context);
-    underLease(context, () => {
-      setEffectStateRow(database, row.operationId, kind, 'in_flight', null, null, context.nowIso);
+    underLease(context, (now) => {
+      setEffectStateRow(database, row.operationId, kind, 'in_flight', null, null, now.nowIso);
     });
   }
 
@@ -433,15 +447,15 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
     kind: EffectKind,
     detail: string,
   ): void {
-    underLease(context, () => {
-      setEffectStateRow(database, row.operationId, kind, 'unknown', null, null, context.nowIso);
+    underLease(context, (now) => {
+      setEffectStateRow(database, row.operationId, kind, 'unknown', null, null, now.nowIso);
       if (kind !== 'refund') {
-        updateOperationStatusRow(database, row.operationId, 'reconciliation_required', context.nowIso);
+        updateOperationStatusRow(database, row.operationId, 'reconciliation_required', now.nowIso);
       }
       recordAuditEvent(database, row.mandateId, row.operationId, 'reconciliation_required', {
         effectKind: kind,
         reason: detail,
-      }, context.nowIso);
+      }, now.nowIso);
     });
   }
 
@@ -452,29 +466,29 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
     const effect = loadEffectRowByKind(database, row.operationId, 'capture');
 
     if (effect?.state === 'succeeded') {
-      underLease(context, () => {
+      underLease(context, (now) => {
         // Only the first capture-to-consumed transition appends the event: a
         // compensation_pending replay would otherwise re-record
         // capture_succeeded with no transition behind it.
         if (reservation.state === 'active') {
           consumeReservationRow(database, row.operationId);
           if (row.status === 'reserved') {
-            updateOperationStatusRow(database, row.operationId, 'running', context.nowIso);
+            updateOperationStatusRow(database, row.operationId, 'running', now.nowIso);
           }
           recordAuditEvent(database, row.mandateId, row.operationId, 'capture_succeeded', {
             providerId: effect.providerId,
-          }, context.nowIso);
+          }, now.nowIso);
         }
       });
       return true;
     }
     if (effect?.state === 'rejected') {
-      underLease(context, () => {
+      underLease(context, (now) => {
         releaseReservationRow(database, row.operationId);
-        updateOperationStatusRow(database, row.operationId, 'failed', context.nowIso);
+        updateOperationStatusRow(database, row.operationId, 'failed', now.nowIso);
         recordAuditEvent(database, row.mandateId, row.operationId, 'capture_rejected', {
           providerId: effect.providerId,
-        }, context.nowIso);
+        }, now.nowIso);
       });
       return false;
     }
@@ -483,9 +497,9 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
       // provider row justifies consumption or release. Mere absence never does.
       const lookup = await lookupProvider(row.operationId, 'capture');
       if (lookup.outcome === 'succeeded' || lookup.outcome === 'rejected') {
-        underLease(context, () => {
+        underLease(context, (now) => {
           setEffectStateRow(database, row.operationId, 'capture', lookup.outcome,
-            lookup.providerId, lookup.responseJson, context.nowIso);
+            lookup.providerId, lookup.responseJson, now.nowIso);
           if (lookup.outcome === 'succeeded') {
             consumeReservationRow(database, row.operationId);
           } else {
@@ -493,12 +507,12 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
           }
           // A definitive outcome ends the forced reconciliation pause.
           updateOperationStatusRow(database, row.operationId,
-            lookup.outcome === 'succeeded' ? 'running' : 'failed', context.nowIso);
+            lookup.outcome === 'succeeded' ? 'running' : 'failed', now.nowIso);
           recordAuditEvent(database, row.mandateId, row.operationId,
             lookup.outcome === 'succeeded' ? 'capture_succeeded' : 'capture_rejected', {
               providerId: lookup.providerId,
               recovered: true,
-            }, context.nowIso);
+            }, now.nowIso);
         });
         return lookup.outcome === 'succeeded';
       }
@@ -516,21 +530,21 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
             sendToReconciliation(context, row, 'capture', 'the provider outcome could not be established');
             return false;
           }
-          underLease(context, () => {
+          underLease(context, (now) => {
             setEffectStateRow(database, row.operationId, 'capture', answer.outcome,
-              answer.providerId, answer.responseJson, context.nowIso);
+              answer.providerId, answer.responseJson, now.nowIso);
             if (answer.outcome === 'succeeded') {
               consumeReservationRow(database, row.operationId);
             } else {
               releaseReservationRow(database, row.operationId);
             }
             updateOperationStatusRow(database, row.operationId,
-              answer.outcome === 'succeeded' ? 'running' : 'failed', context.nowIso);
+              answer.outcome === 'succeeded' ? 'running' : 'failed', now.nowIso);
             recordAuditEvent(database, row.mandateId, row.operationId,
               answer.outcome === 'succeeded' ? 'capture_succeeded' : 'capture_rejected', {
                 providerId: answer.providerId,
                 sameKeyRetry: true,
-              }, context.nowIso);
+              }, now.nowIso);
           });
           return answer.outcome === 'succeeded';
         }
@@ -553,18 +567,24 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
     if (!gate.passed) {
       // The effect row is absent or still an intent (never dispatched), so
       // safe failure releases the reservation and terminates the operation.
-      underLease(context, () => {
+      underLease(context, (now) => {
         releaseReservationRow(database, row.operationId);
-        updateOperationStatusRow(database, row.operationId, 'failed', context.nowIso);
+        updateOperationStatusRow(database, row.operationId, 'failed', now.nowIso);
         recordAuditEvent(database, row.mandateId, row.operationId, 'capture_gate_failed', {
           reason: gate.reason.slice(0, 250),
           checkCodes: gate.checkCodes.slice(0, 250),
-        }, context.nowIso);
+        }, now.nowIso);
       });
       return false;
     }
     if (effect === null) {
       createIntent(context, row, 'capture', request);
+      if (config.testWaitAfterIntent) {
+        // Test-only: the parent holds the ledger write lock around this resume
+        // so the next lease write samples its clock post-lock.
+        process.stdout.write(`BARRIER-intent:capture:${row.operationId}\n`);
+        await config.testWaitAfterIntent('capture');
+      }
     }
     if (config.testPauseAfterIntent === 'capture') {
       // Test-only: hold the process between intent persistence and the
@@ -579,19 +599,19 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
       sendToReconciliation(context, row, 'capture', 'the provider outcome could not be established');
       return false;
     }
-    underLease(context, () => {
+    underLease(context, (now) => {
       setEffectStateRow(database, row.operationId, 'capture', answer.outcome,
-        answer.providerId, answer.responseJson, context.nowIso);
+        answer.providerId, answer.responseJson, now.nowIso);
       if (answer.outcome === 'succeeded') {
         consumeReservationRow(database, row.operationId);
       } else {
         releaseReservationRow(database, row.operationId);
-        updateOperationStatusRow(database, row.operationId, 'failed', context.nowIso);
+        updateOperationStatusRow(database, row.operationId, 'failed', now.nowIso);
       }
       recordAuditEvent(database, row.mandateId, row.operationId,
         answer.outcome === 'succeeded' ? 'capture_succeeded' : 'capture_rejected', {
           providerId: answer.providerId,
-        }, context.nowIso);
+        }, now.nowIso);
     });
     return answer.outcome === 'succeeded';
   }
@@ -603,34 +623,63 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
     const effect = loadEffectRowByKind(database, row.operationId, 'order');
 
     if (effect?.state === 'succeeded') {
-      underLease(context, () => {
-        updateOperationStatusRow(database, row.operationId, 'ordered', context.nowIso);
+      underLease(context, (now) => {
+        updateOperationStatusRow(database, row.operationId, 'ordered', now.nowIso);
       });
       return 'terminal';
     }
     if (effect?.state === 'rejected') {
-      underLease(context, () => {
-        updateOperationStatusRow(database, row.operationId, 'compensation_pending', context.nowIso);
+      underLease(context, (now) => {
+        updateOperationStatusRow(database, row.operationId, 'compensation_pending', now.nowIso);
       });
       return 'compensate';
     }
     if (effect !== null && (effect.state === 'unknown' || effect.state === 'in_flight')) {
+      const request = {
+        operationId: row.operationId,
+        cart: CartSubmissionSchema.parse(JSON.parse(row.cartJson)) as CartSubmission,
+        quote: QuoteSchema.parse(JSON.parse(row.quoteJson)) as Quote,
+      };
       const lookup = await lookupProvider(row.operationId, 'order');
       if (lookup.outcome === 'succeeded' || lookup.outcome === 'rejected') {
-        underLease(context, () => {
+        underLease(context, (now) => {
           setEffectStateRow(database, row.operationId, 'order', lookup.outcome,
-            lookup.providerId, lookup.responseJson, context.nowIso);
+            lookup.providerId, lookup.responseJson, now.nowIso);
           updateOperationStatusRow(database, row.operationId,
-            lookup.outcome === 'succeeded' ? 'ordered' : 'compensation_pending', context.nowIso);
+            lookup.outcome === 'succeeded' ? 'ordered' : 'compensation_pending', now.nowIso);
           recordAuditEvent(database, row.mandateId, row.operationId,
             lookup.outcome === 'succeeded' ? 'order_succeeded' : 'order_rejected', {
               providerId: lookup.providerId,
               recovered: true,
-            }, context.nowIso);
+            }, now.nowIso);
         });
         return lookup.outcome === 'succeeded' ? 'terminal' : 'compensate';
       }
-      // Ambiguous order: refund is forbidden until rejection is established.
+      if (lookup.outcome === 'not_applied') {
+        // Definitive absence: the earlier process never committed the order.
+        // Resume the original idempotent request under the same effect key and
+        // the originally accepted snapshots; the capture already succeeded, so
+        // the order may proceed even if the mandate has since expired.
+        markInFlight(context, row, 'order');
+        const answer = await callProvider(context, row, 'order', request);
+        if (answer.outcome === 'unknown') {
+          sendToReconciliation(context, row, 'order', 'the provider outcome could not be established');
+          return 'block';
+        }
+        underLease(context, (now) => {
+          setEffectStateRow(database, row.operationId, 'order', answer.outcome,
+            answer.providerId, answer.responseJson, now.nowIso);
+          updateOperationStatusRow(database, row.operationId,
+            answer.outcome === 'succeeded' ? 'ordered' : 'compensation_pending', now.nowIso);
+          recordAuditEvent(database, row.mandateId, row.operationId,
+            answer.outcome === 'succeeded' ? 'order_succeeded' : 'order_rejected', {
+              providerId: answer.providerId,
+            }, now.nowIso);
+        });
+        return answer.outcome === 'succeeded' ? 'terminal' : 'compensate';
+      }
+      // Ambiguous order (lookup unknown): refund is forbidden until rejection
+      // is established.
       sendToReconciliation(context, row, 'order', 'the earlier order attempt is unresolved');
       return 'block';
     }
@@ -650,15 +699,15 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
       sendToReconciliation(context, row, 'order', 'the provider outcome could not be established');
       return 'block';
     }
-    underLease(context, () => {
+    underLease(context, (now) => {
       setEffectStateRow(database, row.operationId, 'order', answer.outcome,
-        answer.providerId, answer.responseJson, context.nowIso);
+        answer.providerId, answer.responseJson, now.nowIso);
       updateOperationStatusRow(database, row.operationId,
-        answer.outcome === 'succeeded' ? 'ordered' : 'compensation_pending', context.nowIso);
+        answer.outcome === 'succeeded' ? 'ordered' : 'compensation_pending', now.nowIso);
       recordAuditEvent(database, row.mandateId, row.operationId,
         answer.outcome === 'succeeded' ? 'order_succeeded' : 'order_rejected', {
           providerId: answer.providerId,
-        }, context.nowIso);
+        }, now.nowIso);
     });
     return answer.outcome === 'succeeded' ? 'terminal' : 'compensate';
   }
@@ -675,8 +724,8 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
     const effect = loadEffectRowByKind(database, row.operationId, 'refund');
 
     if (effect?.state === 'succeeded') {
-      underLease(context, () => {
-        updateOperationStatusRow(database, row.operationId, 'compensated', context.nowIso);
+      underLease(context, (now) => {
+        updateOperationStatusRow(database, row.operationId, 'compensated', now.nowIso);
       });
       return;
     }
@@ -684,32 +733,64 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
       return; // stays compensation_pending; nothing is restored anywhere
     }
     if (effect !== null && (effect.state === 'unknown' || effect.state === 'in_flight')) {
+      const request = {
+        operationId: row.operationId,
+        captureId: captureEffect.providerId,
+        currency: 'SGD',
+        amountMinor: reservation.amountMinor,
+      };
       const lookup = await lookupProvider(row.operationId, 'refund');
       if (lookup.outcome === 'succeeded') {
-        underLease(context, () => {
+        underLease(context, (now) => {
           setEffectStateRow(database, row.operationId, 'refund', 'succeeded',
-            lookup.providerId, lookup.responseJson, context.nowIso);
-          updateOperationStatusRow(database, row.operationId, 'compensated', context.nowIso);
+            lookup.providerId, lookup.responseJson, now.nowIso);
+          updateOperationStatusRow(database, row.operationId, 'compensated', now.nowIso);
           recordAuditEvent(database, row.mandateId, row.operationId, 'refund_succeeded', {
             providerId: lookup.providerId,
             recovered: true,
-          }, context.nowIso);
+          }, now.nowIso);
         });
         return;
       }
       if (lookup.outcome === 'rejected') {
-        underLease(context, () => {
+        underLease(context, (now) => {
           setEffectStateRow(database, row.operationId, 'refund', 'rejected',
-            lookup.providerId, lookup.responseJson, context.nowIso);
+            lookup.providerId, lookup.responseJson, now.nowIso);
           recordAuditEvent(database, row.mandateId, row.operationId, 'refund_rejected', {
             providerId: lookup.providerId,
             recovered: true,
-          }, context.nowIso);
+          }, now.nowIso);
         });
         return;
       }
-      // Ambiguous refund: stays compensation_pending for a later run. Authority
-      // is untouched either way; refunds never restore it.
+      if (lookup.outcome === 'not_applied') {
+        // Definitive absence: the earlier process never committed the refund.
+        // Resume the stored refund request (captureId, currency, amount) under
+        // the same effect key; rejection and successful capture are already
+        // established, so compensation resumes even if the mandate expired.
+        markInFlight(context, row, 'refund');
+        const answer = await callProvider(context, row, 'refund', request);
+        if (answer.outcome === 'unknown') {
+          sendToReconciliation(context, row, 'refund', 'the provider outcome could not be established');
+          return;
+        }
+        underLease(context, (now) => {
+          setEffectStateRow(database, row.operationId, 'refund', answer.outcome,
+            answer.providerId, answer.responseJson, now.nowIso);
+          if (answer.outcome === 'succeeded') {
+            updateOperationStatusRow(database, row.operationId, 'compensated', now.nowIso);
+            // Deliberately no reservation release or quantity restitution here:
+            // refunds never restore authority.
+          }
+          recordAuditEvent(database, row.mandateId, row.operationId,
+            answer.outcome === 'succeeded' ? 'refund_succeeded' : 'refund_rejected', {
+              providerId: answer.providerId,
+            }, now.nowIso);
+        });
+        return;
+      }
+      // Ambiguous refund (lookup unknown): stays compensation_pending for a
+      // later run. Authority is untouched either way; refunds never restore it.
       sendToReconciliation(context, row, 'refund', 'the earlier refund attempt is unresolved');
       return;
     }
@@ -730,18 +811,18 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
       sendToReconciliation(context, row, 'refund', 'the provider outcome could not be established');
       return;
     }
-    underLease(context, () => {
+    underLease(context, (now) => {
       setEffectStateRow(database, row.operationId, 'refund', answer.outcome,
-        answer.providerId, answer.responseJson, context.nowIso);
+        answer.providerId, answer.responseJson, now.nowIso);
       if (answer.outcome === 'succeeded') {
-        updateOperationStatusRow(database, row.operationId, 'compensated', context.nowIso);
+        updateOperationStatusRow(database, row.operationId, 'compensated', now.nowIso);
         // Deliberately no reservation release or quantity restitution here:
         // refunds never restore authority.
       }
       recordAuditEvent(database, row.mandateId, row.operationId,
         answer.outcome === 'succeeded' ? 'refund_succeeded' : 'refund_rejected', {
           providerId: answer.providerId,
-        }, context.nowIso);
+        }, now.nowIso);
     });
   }
 
@@ -777,7 +858,6 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
         operationId,
         ownerId: claimResult.ownerId,
         generation: claimResult.generation,
-        ...trustedClock(),
       };
       return await machine(context, mode);
     } catch (error) {

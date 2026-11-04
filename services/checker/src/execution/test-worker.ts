@@ -1,6 +1,5 @@
 import { createInterface } from 'node:readline';
-import { readFileSync } from 'node:fs';
-import { CatalogSchema } from '../../../../packages/contracts/src/index.ts';
+import { readFileSync } from 'node:fs';import { CatalogSchema } from '../../../../packages/contracts/src/index.ts';
 import { createFixtureSupplier } from '../../../suppliers/src/fixture.ts';
 import { createFakeProviderGateway, type FakeProviderScenario } from './fake.ts';
 import { PROVIDER_CALL_TIMEOUT_MS } from './gateway.ts';
@@ -17,11 +16,21 @@ interface RunConfig {
   providerDatabasePath: string;
   catalogPath: string;
   clock: string;
+  /**
+   * Test-only lease-fence scenarios: the trusted clock reads this file per
+   * call so the parent can advance it while the worker is suspended.
+   */
+  clockPath?: string;
   operationId: string;
   mode: 'full' | 'reconcile';
   scenario?: FakeProviderScenario;
   /** Test-only: pause after the intent row, before the in-flight marker. */
   pauseAfterIntent?: 'capture' | null;
+  /**
+   * Test-only: checkpoint after the intent commit; emits
+   * "BARRIER-intent:<kind>" and resumes on a RESUME line from the parent.
+   */
+  resumeAfterIntent?: boolean;
   /** Test-only: crash scenarios need an unbounded provider call. */
   providerTimeoutMs?: number | null;
 }
@@ -47,9 +56,17 @@ async function runExecution(config: RunConfig): Promise<unknown> {
     databasePath: config.databasePath,
     suppliers,
     provider,
-    clock: () => config.clock,
+    clock: config.clockPath === undefined
+      ? () => config.clock
+      : () => readFileSync(config.clockPath!, 'utf8'),
     providerTimeoutMs: config.providerTimeoutMs === undefined ? PROVIDER_CALL_TIMEOUT_MS : config.providerTimeoutMs,
     testPauseAfterIntent: config.pauseAfterIntent ?? null,
+    testWaitAfterIntent: config.resumeAfterIntent
+      ? async () => {
+          const line = await readLine(process.stdin);
+          if (line.trim() !== 'RESUME') throw new Error('test worker did not receive the resume barrier');
+        }
+      : undefined,
   });
   process.stdout.write('READY\n');
   const start = await readLine(process.stdin);
