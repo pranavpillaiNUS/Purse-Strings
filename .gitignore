@@ -4,5 +4,14 @@ node_modules/
 !.env.example
 spike-logs/
 *.log
+
+# Runtime ledger databases and SQLite sidecars are never committed.
+.runtime/
+*.db
+*.db-wal
+*.db-shm
 graphify-out/cache/
 graphify-out/????-??-??/
+graphify-out/.graphify_labels.json
+graphify-out/.graphify_labels.json.sig
+graphify-out/.graphify_root
