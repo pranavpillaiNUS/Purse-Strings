@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline';
-import { readFileSync } from 'node:fs';import { CatalogSchema } from '../../../../packages/contracts/src/index.ts';
+import { readFileSync } from 'node:fs';
+import { CatalogSchema } from '../../../../packages/contracts/src/index.ts';
 import { createFixtureSupplier } from '../../../suppliers/src/fixture.ts';
 import { createFakeProviderGateway, type FakeProviderScenario } from './fake.ts';
 import { PROVIDER_CALL_TIMEOUT_MS } from './gateway.ts';

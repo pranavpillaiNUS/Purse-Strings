@@ -300,7 +300,7 @@ function providerEffectOutcomes(providerDatabasePath: string): Array<{ kind: str
   }
 }
 
-function operationAndReservation(databasePath: string, operationId: string): {  operation: { status: string };
+function operationAndReservation(databasePath: string, operationId: string): { operation: { status: string };
   reservation: { state: string; amountMinor: number };
 } {
   const database = openLedgerStore(databasePath);
