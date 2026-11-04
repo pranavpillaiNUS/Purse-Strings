@@ -1,24 +1,25 @@
-# Graph Report - Splittap-pay  (2026-11-03)
+# Graph Report - Splittap-pay  (2026-11-04)
 
 ## Corpus Check
-- 31 files · ~14,114 words
+- 55 files · ~43,213 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 238 nodes · 327 edges · 14 communities (12 shown, 2 thin omitted)
+- 513 nodes · 1027 edges · 35 communities (27 shown, 4 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `4f134ff0`
+- Built from commit: `7887f54f`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
 - index.ts
 - paypal-spike.ts
-- Splittap purchasing agent
+- Splittap: instructions for coding agents
 - package.json
+- backend.ts
 - Hackathon project: an AI purchasing agent that can't overspend
 - compilerOptions
 - Project scope: CLI-first equipment procurement
@@ -29,18 +30,34 @@
 - suppliers/package.json
 - agent/README.md
 - ledger/README.md
+- CLI backend delivery specification
+- Team scope and framework assessment
+- Backend delivery run
+- Delivery findings
+- Unit 1 result
+- store.ts
+- application.ts
+- application.test.ts
+- client.mock.test.ts
+- mock.ts
+- submitProposal
+- CLI-first architecture
+- README.md
+- PayPal sandbox spike (build step 1)
+- Splittap — CLI-first equipment purchasing
+- BackendResponse
 
 ## God Nodes (most connected - your core abstractions)
-1. `holdAndCapture()` - 14 edges
-2. `Hackathon project: an AI purchasing agent that can't overspend` - 14 edges
-3. `paypalMoney` - 12 edges
-4. `compilerOptions` - 12 edges
-5. `Project scope: CLI-first equipment procurement` - 12 edges
-6. `fromMinor()` - 8 edges
-7. `Splittap purchasing agent` - 8 edges
-8. `CLI-first architecture` - 7 edges
-9. `scripts` - 6 edges
-10. `uniqueBy()` - 6 edges
+1. `handleProposalSubmit()` - 18 edges
+2. `confirmMandateRevision()` - 18 edges
+3. `AuthorityFailure` - 15 edges
+4. `Splittap: instructions for coding agents` - 15 edges
+5. `holdAndCapture()` - 14 edges
+6. `Hackathon project: an AI purchasing agent that can't overspend` - 14 edges
+7. `draftMandateRevision()` - 13 edges
+8. `readString()` - 13 edges
+9. `openLedgerStore()` - 13 edges
+10. `CLI backend delivery specification` - 13 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `printResult()` --calls--> `fromMinor()`  [EXTRACTED]
@@ -49,31 +66,35 @@
   apps/cli/src/inputs.ts → services/suppliers/src/fixture.ts
 - `main()` --calls--> `evaluatePurchase()`  [EXTRACTED]
   apps/cli/src/main.ts → services/checker/src/rules/evaluate.ts
-- `cart()` --calls--> `toMinor()`  [EXTRACTED]
-  services/checker/scripts/paypal-spike.ts → services/checker/src/money.ts
-- `Authorization` --references--> `paypalMoney`  [EXTRACTED]
-  services/checker/src/paypal/client.ts → services/checker/src/money.ts
+- `LoadedAuthority` --references--> `Policy`  [EXTRACTED]
+  services/checker/src/application.ts → packages/contracts/src/index.ts
+- `LoadedAuthority` --references--> `Mandate`  [EXTRACTED]
+  services/checker/src/application.ts → packages/contracts/src/index.ts
 
 ## Import Cycles
 - None detected.
 
-## Communities (14 total, 2 thin omitted)
+## Communities (35 total, 4 thin omitted)
 
 ### Community 0 - "index.ts"
-Cohesion: 0.09
-Nodes (40): DEMO_NOW, InputOptions, loadInput(), readJson(), main(), printResult(), amount, BudgetSnapshot (+32 more)
+Cohesion: 0.08
+Nodes (44): DEMO_NOW, InputOptions, loadInput(), readJson(), main(), printResult(), amount, BudgetSnapshot (+36 more)
 
 ### Community 1 - "paypal-spike.ts"
 Cohesion: 0.07
 Nodes (47): BUDGET, capture(), captureCart(), cart(), CART_A, CART_B, CART_C, checkCapture() (+39 more)
 
-### Community 2 - "Splittap purchasing agent"
-Cohesion: 0.07
-Nodes (26): Authority and trust, Current implementation boundary, Implementation and verification, Knowledge graph, Purchasing invariants, Purpose and current scope, Sources of truth and personalization, Splittap purchasing agent (+18 more)
+### Community 2 - "Splittap: instructions for coding agents"
+Cohesion: 0.13
+Nodes (15): Authority and isolation (hard edges), Check locally (verified 2026-11-04 on this checkout), Delivery sequence: one verifiable slice at a time, External effects and recovery, Implemented vs planned (verify in source; do assume otherwise), Knowledge graph, Ledger invariants (M2+ — these encode hard-won decisions), PayPal rules (verify current docs for the target account) (+7 more)
 
 ### Community 3 - "package.json"
 Cohesion: 0.09
 Nodes (22): description, devDependencies, @types/node, typescript, engines, node, license, name (+14 more)
+
+### Community 4 - "backend.ts"
+Cohesion: 0.10
+Nodes (23): BackendErrorCodeSchema, BackendErrorResponseSchema, BackendSuccessResponseSchema, CatalogListRequestSchema, CatalogListResultSchema, EffectStatusSchema, MandateGetRequestSchema, MandateGetResultSchema (+15 more)
 
 ### Community 5 - "Hackathon project: an AI purchasing agent that can't overspend"
 Cohesion: 0.11
@@ -107,25 +128,81 @@ Nodes (4): description, name, private, type
 Cohesion: 0.40
 Nodes (4): description, name, private, type
 
+### Community 15 - "CLI backend delivery specification"
+Cohesion: 0.10
+Nodes (19): Acceptance and remaining milestones, Alternatives and choice, CLI backend delivery specification, CLI contract, Concrete storage, Current system and sources, Detailed implementation decisions, Detailed implementation plan (+11 more)
+
+### Community 16 - "Team scope and framework assessment"
+Cohesion: 0.12
+Nodes (15): Backend exclusions, Backend framework comparison, Contract operations to design first, Optional supplier simulator platforms, Order of implementation, Ownership in the current repository, PayPal adapter, Persistence (+7 more)
+
+### Community 17 - "Backend delivery run"
+Cohesion: 0.25
+Nodes (7): Backend delivery run, Current phase, Evidence and constraints, Outcome and authority, Planned acceptance, Throughput checkpoint, Workflow
+
+### Community 18 - "Delivery findings"
+Cohesion: 0.50
+Nodes (3): Delivery findings, design-critic-r1-1, design-critic-r1-2
+
+### Community 23 - "Unit 1 result"
+Cohesion: 0.29
+Nodes (6): Delivered, Files and scope notes, Limitations, Unit 1 result, Unit 1 review follow-up, Verification
+
+### Community 24 - "store.ts"
+Cohesion: 0.08
+Nodes (58): resolveIdentities(), ValidatedMandateRead, AuthorityFailureCode, checkPolicyNarrowing(), confirmMandateRevision(), DraftRevisionResult, loadMandateAuthority(), loadPolicySnapshot() (+50 more)
+
+### Community 25 - "application.ts"
+Cohesion: 0.12
+Nodes (32): Mandate, Policy, ApplicationBackendConfig, authorityFailureResponse(), buildSnapshot(), buildWireOperation(), correlationFields(), createApplicationBackend() (+24 more)
+
+### Community 26 - "application.test.ts"
+Cohesion: 0.13
+Nodes (27): definePolicySnapshot(), draftMandateRevision(), reviewMandateRevision(), openLedgerStore(), Harness, setup(), NarrowingCase, setup() (+19 more)
+
+### Community 27 - "client.mock.test.ts"
+Cohesion: 0.17
+Nodes (11): BackendRequest, BackendRequestSchema, BackendResponseSchema, BackendClient, BackendProtocolError, BackendTransport, createBackendClient(), cart (+3 more)
+
+### Community 28 - "mock.ts"
+Cohesion: 0.17
+Nodes (14): BackendErrorCode, BackendMethod, BackendMethodSchema, Operation, MAX_AMOUNT_MINOR, canonicalCart(), canonicalize(), compareText() (+6 more)
+
+### Community 29 - "submitProposal"
+Cohesion: 0.39
+Nodes (8): createMock(), createMockBackend(), findMandate(), handleValidRequest(), submitProposal(), errorResponse(), identityKey(), projectedTotal()
+
+### Community 30 - "CLI-first architecture"
+Cohesion: 0.29
+Nodes (7): Authority and evidence, CLI-first architecture, Ledger and recovery requirements (planned), Repository map, Stage-one boundaries, Technology decisions, Test strategy
+
+### Community 32 - "PayPal sandbox spike (build step 1)"
+Cohesion: 0.33
+Nodes (5): One-time setup (about 15 minutes), PayPal sandbox spike (build step 1), Results, Run, What each check means
+
+### Community 33 - "Splittap — CLI-first equipment purchasing"
+Cohesion: 0.40
+Nodes (5): Run, Separate PayPal feasibility spike, Splittap — CLI-first equipment purchasing, Start here, Status
+
 ## Knowledge Gaps
-- **136 isolated node(s):** `name`, `private`, `type`, `description`, `InputOptions` (+131 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 141 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **2 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **234 isolated node(s):** `name`, `private`, `type`, `description`, `InputOptions` (+229 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 262 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **4 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `fromMinor()` connect `paypal-spike.ts` to `index.ts`?**
-  _High betweenness centrality (0.038) - this node is a cross-community bridge._
-- **Why does `Hackathon project: an AI purchasing agent that can't overspend` connect `Hackathon project: an AI purchasing agent that can't overspend` to `Splittap purchasing agent`?**
-  _High betweenness centrality (0.034) - this node is a cross-community bridge._
-- **Why does `Project scope: CLI-first equipment procurement` connect `Project scope: CLI-first equipment procurement` to `Splittap purchasing agent`?**
-  _High betweenness centrality (0.024) - this node is a cross-community bridge._
+  _High betweenness centrality (0.042) - this node is a cross-community bridge._
+- **Why does `evaluatePurchase()` connect `index.ts` to `application.ts`?**
+  _High betweenness centrality (0.010) - this node is a cross-community bridge._
+- **Why does `Hackathon project: an AI purchasing agent that can't overspend` connect `Hackathon project: an AI purchasing agent that can't overspend` to `README.md`?**
+  _High betweenness centrality (0.008) - this node is a cross-community bridge._
 - **What connects `name`, `private`, `type` to the rest of the system?**
-  _136 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _234 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `index.ts` be split into smaller, more focused modules?**
-  _Cohesion score 0.0851063829787234 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.0783744557329463 - nodes in this community are weakly interconnected._
 - **Should `paypal-spike.ts` be split into smaller, more focused modules?**
   _Cohesion score 0.07184325108853411 - nodes in this community are weakly interconnected._
-- **Should `Splittap purchasing agent` be split into smaller, more focused modules?**
-  _Cohesion score 0.06653225806451613 - nodes in this community are weakly interconnected._
+- **Should `Splittap: instructions for coding agents` be split into smaller, more focused modules?**
+  _Cohesion score 0.13333333333333333 - nodes in this community are weakly interconnected._
