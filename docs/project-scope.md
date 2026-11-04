@@ -45,6 +45,8 @@ Example dates and suppliers are synthetic test data, not live availability claim
   budget/quantities, exact SKUs, price, warranty, timing and stock/delivery evidence.
 - CLI `demo` and `check` commands, readable or JSON output and documented exit codes.
 - Offline demo: valid cart, shipping jump, cumulative excess quantity and unknown delivery.
+- CLI fixture-store controls for price, shipping, stock, delivery/evidence and reset;
+  working catalogs feed fresh quotes into offline checks without editing seed data.
 - Scope, architecture, agent instructions and seams for later CLI implementation.
 - Preserve the pre-existing sandbox PayPal client, money helpers and spike.
 
@@ -132,6 +134,9 @@ reviewable proposed changes, separated into facts, preferences, exceptions and p
 
 ## Implementation status
 
-M0 is delivered by this scaffold; M1–M5 are planned. PayPal feasibility is unverified
+M0 is delivered by this scaffold. A partial M1 slice now supports deterministic CLI
+mandate draft/review from structured hire requests and kit templates, with runtime
+validation and policy narrowing. It establishes no confirmation or stock authority.
+M1 is incomplete; M2–M5 are planned. PayPal feasibility is unverified
 until `docs/paypal-spike.md` records observed results. The original hackathon schedule
 is preserved in `docs/hackathon-plan.md`, not adopted as a current commitment.

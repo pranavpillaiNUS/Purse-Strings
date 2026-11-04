@@ -28,9 +28,9 @@ payment service, identity system or deployed process isolation. No website is in
 | `services/checker/src/rules/` | Pure eligibility functions | Implemented |
 | `services/checker/src/ledger/` | Atomic reservations and durable operations | Design seam only |
 | `services/checker/src/paypal/` | Trusted provider adapter | Existing sandbox client |
-| `services/suppliers/src/` | Supplier interface and fixture adapter | Quote slice implemented |
+| `services/suppliers/src/` | Supplier interface, fixture quotes and local catalog controls | Offline simulation implemented |
 | `services/suppliers/fixtures/` | Synthetic catalog and evidence | Demo data |
-| `services/agent/` | Draft parser and bounded shopping loop | Design seam only |
+| `services/agent/` | Deterministic mandate draft/review; bounded shopper planned | Offline planning implemented |
 
 ## Technology decisions
 
@@ -38,6 +38,21 @@ Keep Node 24+, erasable TypeScript and ESM. Use Zod for runtime validation and
 `node:test` for behavior tests. Node built-ins handle CLI arguments/files; no CLI,
 server or agent framework is needed for M0. Stdout in JSON mode contains a single
 JSON result; operational errors go to stderr. No frontend dependencies.
+
+`store show/reset/set` controls synthetic working catalogs through the CLI. Supplier
+code validates the full change and replaces the working file only after validation;
+seed fixtures stay unchanged. Price, shipping, stock, delivery and evidence changes
+affect subsequent quotes loaded via `check --catalog`. Explicit offline clocks and
+per-field observation updates keep scenarios reproducible without refreshing
+unrelated evidence. This file state is not a transaction ledger or stock reservation.
+
+`mandate draft/review` compiles structured hire counts and versioned kit templates
+under the supplied policy. Agent-local runtime schemas keep planning artifacts
+distinct from confirmed mandates; shared contracts are unchanged. Review loads the
+current policy and kit, checks content bindings and deadlines, and re-derives the
+proposal. Digests identify content without authenticating it. No model, stock
+assignment, confirmation authority or execution is part of this planning slice.
+See `services/agent/CONFIRMATION_HANDOFF.md` for the proposed integration boundary.
 
 Use SQLite transactions for M2's single checker process. Multiple production writers
 would require a separate storage decision (likely PostgreSQL). Never hold a long DB

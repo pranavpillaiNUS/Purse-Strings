@@ -1,0 +1,18 @@
+{
+  "id": "engineering",
+  "version": 1,
+  "lines": [
+    {
+      "requirementId": "engineering-laptops",
+      "role": "laptop",
+      "unitsPerHire": 1,
+      "allowedSkus": ["LAP-14-AIR"]
+    },
+    {
+      "requirementId": "engineering-monitors",
+      "role": "monitor",
+      "unitsPerHire": 1,
+      "allowedSkus": ["MON-27-USBC"]
+    }
+  ]
+}

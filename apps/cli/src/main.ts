@@ -1,5 +1,7 @@
 import { parseArgs } from 'node:util';
 import { loadInput, DEMO_NOW } from './inputs.ts';
+import { runStore } from './store.ts';
+import { runMandate } from './mandate.ts';
 import { evaluatePurchase } from '../../../services/checker/src/rules/evaluate.ts';
 import { fromMinor } from '../../../services/checker/src/money.ts';
 import type { EligibilityResult } from '../../../packages/contracts/src/index.ts';
@@ -11,6 +13,10 @@ Usage:
   npm run cli -- check [--request cart.json|-] [--json] [--now ISO_TIMESTAMP]
     [--policy policy.json] [--mandate mandate.json]
     [--snapshot budget.json] [--catalog catalog.json]
+  npm run cli -- store show|reset|set --catalog working.json [options]
+    Use store --help for synthetic supplier controls.
+  npm run cli -- mandate draft|review [options]
+    Use mandate --help for policy-constrained draft planning.
 
 Bundled examples load by default. Override paths are relative to your current
 directory; --request - reads stdin. check uses the current time unless --now is
@@ -32,6 +38,14 @@ function printResult(result: EligibilityResult): void {
 }
 
 async function main(): Promise<void> {
+  if (process.argv[2] === 'mandate') {
+    runMandate(process.argv.slice(3));
+    return;
+  }
+  if (process.argv[2] === 'store') {
+    runStore(process.argv.slice(3));
+    return;
+  }
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
