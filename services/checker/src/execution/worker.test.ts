@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import {
   LeaseLost,
@@ -40,7 +41,7 @@ import {
 // only execute or reconcile operations. Crash evidence is a real SIGKILL issued
 // by the parent exactly when the child emits CRASHPOINT from its injected hook.
 
-const EXEC_WORKER_PATH = new URL('./test-worker.ts', import.meta.url).pathname;
+const EXEC_WORKER_PATH = fileURLToPath(new URL('./test-worker.ts', import.meta.url));
 const TEST_CLOCK_MS = Date.parse(TEST_CLOCK);
 const EXPIRED_CLOCK = '2026-11-08T09:00:00.000Z'; // after TEST_MANDATE_DRAFT.purchaseBy
 const LEASE_LAPSED_CLOCK = '2026-11-04T09:01:00.000Z'; // 60s after TEST_CLOCK: past the 30s lease
