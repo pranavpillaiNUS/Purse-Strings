@@ -10,23 +10,25 @@ flowchart LR
   Agent -->|SKUs and quantities only| Checker[Policy checker / executor]
   Agent -->|Catalog reads| Suppliers[Supplier adapters]
   Checker -->|Trusted quotes / order status| Suppliers
-  Checker --> Ledger[(Transactional ledger: planned)]
+  Checker --> Ledger[(Transactional SQLite ledger)]
   Checker --> PayPal[PayPal sandbox: separate spike]
 ```
 
-M0 calls the pure checker and fixture supplier in-process. There is no executing
-payment service, identity system or deployed process isolation. No website is in stage one.
+M0 calls the pure checker and fixture supplier in-process. The separate backend CLI
+runs durable execution against fake providers only. There is no executing payment
+service, identity system or deployed process isolation. No website is in stage one.
 
 ## Repository map
 
 | Path | Owner/responsibility | State |
 | --- | --- | --- |
-| `apps/cli/src/` | Argument parsing, file input, readable/JSON results, exit codes | M0 implemented |
+| `apps/cli/src/` | Argument parsing, file input, readable/JSON results, exit codes | M0 and simulation backend CLI implemented |
 | `packages/contracts/src/` | Runtime schemas and shared types | Eligibility slice implemented |
 | `config/policies/` | Versioned company policy | Synthetic example |
 | `examples/` | Mandate, cart and prior commitments | Synthetic examples |
 | `services/checker/src/rules/` | Pure eligibility functions | Implemented |
-| `services/checker/src/ledger/` | Atomic reservations and durable operations | Design seam only |
+| `services/checker/src/ledger/` | Mandate authority, atomic reservations and durable operations | Implemented |
+| `services/checker/src/execution/` | Durable effect worker and fake providers | Simulation only |
 | `services/checker/src/paypal/` | Trusted provider adapter | Existing sandbox client |
 | `services/suppliers/src/` | Supplier interface, fixture quotes and local catalog controls | Offline simulation implemented |
 | `services/suppliers/fixtures/` | Synthetic catalog and evidence | Demo data |
@@ -52,7 +54,7 @@ distinct from confirmed mandates; shared contracts are unchanged. Review loads t
 current policy and kit, checks content bindings and deadlines, and re-derives the
 proposal. Digests identify content without authenticating it. No model, stock
 assignment, confirmation authority or execution is part of this planning slice.
-See `services/agent/CONFIRMATION_HANDOFF.md` for the proposed integration boundary.
+See `services/agent/CONFIRMATION_HANDOFF.md` for the integration boundary.
 
 Use SQLite transactions for M2's single checker process. Multiple production writers
 would require a separate storage decision (likely PostgreSQL). Never hold a long DB
@@ -64,8 +66,9 @@ perform external work through a durable worker and reconcile its outcome.
 Policy -> human-confirmed mandate -> price-free cart -> trusted quote -> eligibility
 -> atomic reservation -> external execution -> reconciliation -> equipment readiness.
 
-Every edge after eligibility is planned. `BudgetSnapshot` is an offline input, not
-a ledger. A real executor loads state from storage, not agent-supplied JSON. A
+Atomic reservation and execution exist only as a simulation over fake providers. Real
+external execution, provider reconciliation and equipment readiness are planned.
+`BudgetSnapshot` is an offline input, not a ledger. A real executor loads state from storage, not agent-supplied JSON. A
 mandate's `approvedBy` is descriptive fixture metadata, not authentication. The
 prototype identity model is a trusted local operator; do not assume it extends to
 remote agents or multi-user deployment.
@@ -75,7 +78,9 @@ expiry times. A source string alone is not authenticity. Production adapters mus
 verify upstream identity and freshness before producing evidence. Approved exact
 SKUs encode company-vetted compatibility; M0 does not certify manufacturer claims.
 
-## Ledger and recovery requirements (planned)
+## Ledger and recovery requirements
+
+Partly implemented for the simulation; see `services/checker/src/ledger/README.md`.
 
 - Unique operation scoped to company, mandate revision and cart identity.
 - Atomic amount and per-requirement unit reservations, including prior commitments.

@@ -1,7 +1,8 @@
-# Confirmation and stock: proposed next integration
+# Confirmation and stock: integration status
 
-This is a review proposal, not an implemented authority system or an agreed shared
-contract. No changes to `packages/contracts/` have been made.
+Mandate drafting here and operator confirmation in the checker both exist, but they
+are separate CLIs joined by a manual file handoff. Stock attestation and assignment
+are not implemented. No changes to `packages/contracts/` have been made for this.
 
 ## Current review surface
 
@@ -11,17 +12,46 @@ creation time. The existing confirmed-mandate schema rejects both the artifact
 and its bare proposal. A public content digest is only record identity: anyone
 can recompute it. `draft_valid` never authorizes a purchase.
 
+## From draft to confirmation
+
+`services/agent` must not import checker code, so the handoff is a file:
+
+1. Save the `proposal` object from `mandate draft --json` to its own file. The
+   backend refuses the whole draft artifact.
+2. Run `npm run backend -- --db PATH --config PATH mandate-draft --file proposal.json`.
+   It stores a revision and prints the digest to confirm.
+3. Run `mandate-review --id ID --revision N`, then
+   `mandate-confirm --id ID --revision N --digest DIGEST`, with the same root options.
+
+`mandate-confirm` refuses the digest printed by `mandate review`. The planning digest
+covers the request, kit, creation time and proposal. The backend digest covers only
+the policy digest and proposal, so a confirmation does not bind the request or kit.
+
+The backend is a simulation over fake providers, and its operator identity comes
+from the OS user, which is not production authentication. See
+[the ledger README](../checker/src/ledger/README.md) for its limits.
+
+Known gaps in this route:
+
+- The backend uses the real clock, so `purchaseBy` must still be in the future when
+  confirming. The deadline in `fixtures/hire-request.json` has passed.
+- On Windows, the backend refuses its runtime directory after the first command
+  because of a POSIX permission check. This route has only been run on Windows with
+  that check skipped in a scratch copy, and has not been run on Linux.
+- The backend rejects files with a UTF-8 BOM, which Windows PowerShell's
+  `Set-Content -Encoding utf8` writes.
+
 ## Decisions for Pranav and Danny
 
-| Seam | Proposed requirement |
-| --- | --- |
-| Shared draft | Agree which agent-local request, kit and draft fields should become shared schemas. Keep draft and confirmed states distinct; model output must never supply authoritative confirmation metadata. |
-| Confirmation | A trusted local operator explicitly confirms an exact draft digest/revision, policy identity/content and kit revision. The trusted process loads current records, rechecks policy and records actor and trusted confirmation time. Caller-provided `approvedBy` is not identity. |
-| Revision | Any material edit creates a new revision requiring review and confirmation. Agree monotonic revision allocation and stale-confirmation rejection in trusted storage. |
-| Stock attestation | Record a unique unit ID, exact vetted SKU, serviceability/compatibility, location and readiness evidence, attestor and observation time. Unknown or stale mandatory facts cannot reduce purchasing needs automatically. |
-| Stock assignment | The storage owner atomically binds a unit to one active request/revision. Competing requests and restart must not assign it twice. A supplied stock list, preview or JSON file cannot prove this. |
-| Requirement accounting | Agree how total equipment need, confirmed stock assignments and remaining purchase quantities are represented. Keep prior purchases and active reservations visible; a future refund must not silently restore purchasing authority. |
-| Executor handoff | The executor loads confirmed mandate, policy, assignments, quote and ledger state independently. It never accepts an agent-supplied confirmation identity, authoritative quote or budget snapshot. |
+| Seam | Status | Remaining decision |
+| --- | --- | --- |
+| Shared draft | Agent and checker each have their own draft schema and digest | Keep the manual proposal handoff, or agree shared schemas and one digest in `packages/contracts/`. Keep draft and confirmed states distinct; model output must never supply authoritative confirmation metadata. |
+| Confirmation | Backend checks the exact digest and policy, and records OS-derived identity and trusted time | Decide whether the confirmed digest must also bind the kit revision and request. Caller-provided `approvedBy` is not identity. |
+| Revision | Backend refuses changed content under an existing version, and replacement revisions after the first reservation | Agree who allocates revision numbers. |
+| Stock attestation | Not implemented | Record a unique unit ID, exact vetted SKU, serviceability/compatibility, location and readiness evidence, attestor and observation time. Unknown or stale mandatory facts cannot reduce purchasing needs automatically. |
+| Stock assignment | Not implemented | The storage owner atomically binds a unit to one active request/revision. Competing requests and restart must not assign it twice. A supplied stock list, preview or JSON file cannot prove this. |
+| Requirement accounting | Ledger tracks reserved and committed units; stock-adjusted need is not implemented | Agree how total equipment need, confirmed stock assignments and remaining purchase quantities are represented. Keep prior purchases and active reservations visible; a future refund must not silently restore purchasing authority. |
+| Executor handoff | Backend executes against fake providers only | When real providers connect, the executor must still load confirmed mandate, policy, assignments, quote and ledger state independently. It never accepts an agent-supplied confirmation identity, authoritative quote or budget snapshot. |
 
 ## Next milestone exit evidence
 

@@ -32,7 +32,7 @@ exits 0 for `draft_valid`, 2 for `needs_revision` and 1 for invalid input.
 Drafts retain the request and kit snapshots, policy content digest, revisions and
 creation time. Digests use SHA-256 over JSON with recursively sorted object keys
 and original array order. They identify content and are neither signatures nor
-approval evidence. Review compares the current policy and kit against the draft,
+approval evidence, and they differ from the digest the backend confirms. Review compares the current policy and kit against the draft,
 re-derives the proposal, and checks its digest and deadlines. A changed template or
 policy requires a new draft, including edits under an unchanged version number.
 

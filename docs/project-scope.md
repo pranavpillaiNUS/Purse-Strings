@@ -136,7 +136,10 @@ reviewable proposed changes, separated into facts, preferences, exceptions and p
 
 M0 is delivered by this scaffold. A partial M1 slice now supports deterministic CLI
 mandate draft/review from structured hire requests and kit templates, with runtime
-validation and policy narrowing. It establishes no confirmation or stock authority.
-M1 is incomplete; M2–M5 are planned. PayPal feasibility is unverified
+validation and policy narrowing. That slice establishes no confirmation or stock
+authority, and M1 is incomplete. M2 implementation exists: a SQLite ledger with atomic
+reservations, plus a simulation-only backend CLI with local operator confirmation and
+durable execution over fake providers (see `services/checker/src/ledger/README.md`).
+No gate after M0 is recorded as passed, and M3–M5 are planned. PayPal feasibility is unverified
 until `docs/paypal-spike.md` records observed results. The original hackathon schedule
 is preserved in `docs/hackathon-plan.md`, not adopted as a current commitment.

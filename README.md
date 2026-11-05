@@ -70,10 +70,11 @@ npm run cli -- store reset --catalog services/suppliers/state/store-a.json
 | `--sku SKU --product-evidence STATUS` | Product/warranty evidence status |
 
 Evidence status is `supported`, `partial` or `unknown`. Every `set` requires
-`--now ISO_TIMESTAMP`. Product, stock and delivery changes record synthetic control
-provenance and that observation time only for the affected evidence. Unchanged
+`--now ISO_TIMESTAMP`. Stock, delivery and explicit evidence changes record synthetic
+control provenance and that observation time only for the affected evidence. Unchanged
 evidence retains its original time and status; uncertainty is preserved unless
-explicitly changed. Shipping alone does not refresh evidence.
+explicitly changed. Shipping or price alone does not refresh evidence, so use
+`--product-evidence` to record a new product or warranty observation.
 
 Changes are validated together before replacing the working catalog. Unknown SKUs,
 invalid values and unsupported options fail without changing the file. Seed files,
@@ -114,6 +115,10 @@ means only that the supplied planning records are consistent. Drafts cannot be u
 as confirmed mandates by `check`. Stock assignment, human confirmation, quote
 eligibility and execution are still separate work, and M1 is incomplete.
 
+The digest above is not the one the backend confirms. To take a draft to confirmation,
+pass only its `proposal` to the backend's `mandate-draft`, then confirm the digest the
+backend prints. See the [confirmation/stock handoff](services/agent/CONFIRMATION_HANDOFF.md).
+
 Exit codes: `draft` uses 0 for a produced draft and 1 for invalid input; `review`
 uses 0 for `draft_valid`, 2 for `needs_revision` and 1 for invalid input. JSON mode
 keeps stdout machine-readable and sends errors to stderr. See
@@ -124,13 +129,15 @@ keeps stdout machine-readable and sends errors to stderr. See
 
 **Implemented:** runtime contracts, company-policy/mandate examples, fixture supplier,
 deterministic eligibility checks, CLI demo/check and fixture-store controls with
-behavior tests, plus deterministic mandate draft/review planning. The original
-sandbox PayPal client, money helpers and spike remain intact.
+behavior tests, plus deterministic mandate draft/review planning. The checker adds a
+SQLite ledger for mandate authority and atomic reservations, and a simulation-only
+backend CLI (`npm run backend`) with local operator confirmation and durable execution
+over fake providers; see [its limits](services/checker/src/ledger/README.md). The
+original sandbox PayPal client, money helpers and spike remain intact.
 
-**Planned:** local operator confirmation, stock assignment, transactional ledger,
-bounded AI shopper, durable order/payment execution, exceptions, reconciliation and
-equipment-readiness tracking. All will be tested through the CLI. No website scaffold
-or frontend dependencies are included.
+**Planned:** stock assignment, bounded AI shopper, PayPal and real supplier execution
+through the ledger, exceptions and equipment-readiness tracking. All will be tested
+through the CLI. No website scaffold or frontend dependencies are included.
 
 ## Separate PayPal feasibility spike
 

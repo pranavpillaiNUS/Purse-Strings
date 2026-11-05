@@ -6,9 +6,9 @@
     "semantic_hash": ""
   },
   "apps/cli/src/inputs.ts": {
-    "mtime": 1793705049.6666641,
-    "seen": 1793897720.452953,
-    "ast_hash": "99ca0c6392431f31039b3922467e4f29",
+    "mtime": 1793897802.8815148,
+    "seen": 1793897929.4782023,
+    "ast_hash": "54cc02e81f09e45c24022b9a55684a9e",
     "semantic_hash": ""
   },
   "apps/cli/src/main.test.ts": {
@@ -144,15 +144,15 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793810762.6676433,
-    "seen": 1793897720.453031,
-    "ast_hash": "2c72defe72471d2a369c2e23233a6786",
+    "mtime": 1793897880.1973667,
+    "seen": 1793897929.4782822,
+    "ast_hash": "fec0aa0e013cf4e7b94fa4cacab1425d",
     "semantic_hash": ""
   },
   "docs/architecture.md": {
-    "mtime": 1793810762.6706455,
-    "seen": 1793897720.4530323,
-    "ast_hash": "c9562f9d6987f2ca18c3125b624abe98",
+    "mtime": 1793897886.4494493,
+    "seen": 1793897929.4782832,
+    "ast_hash": "48dfc8a83c4a1d405a09499896db017b",
     "semantic_hash": ""
   },
   "docs/hackathon-plan.md": {
@@ -168,15 +168,15 @@
     "semantic_hash": ""
   },
   "docs/project-scope.md": {
-    "mtime": 1793810762.6720734,
-    "seen": 1793897720.4530356,
-    "ast_hash": "ec9905cd6f6a280185fb340c7b08c4a3",
+    "mtime": 1793897880.979229,
+    "seen": 1793897929.4782867,
+    "ast_hash": "4728436279e2660abf60b8d2e79f899f",
     "semantic_hash": ""
   },
   "services/agent/README.md": {
-    "mtime": 1793810762.6770966,
-    "seen": 1793897720.4530392,
-    "ast_hash": "30f8f3e2f244cc8220a526a821ab7cbb",
+    "mtime": 1793897877.839001,
+    "seen": 1793897929.47829,
+    "ast_hash": "07bd7acd5a1193e9dd560d1eafcfa278",
     "semantic_hash": ""
   },
   "services/checker/src/ledger/README.md": {
@@ -402,15 +402,15 @@
     "semantic_hash": ""
   },
   "apps/cli/src/store.test.ts": {
-    "mtime": 1793810762.6696446,
-    "seen": 1793897720.4529595,
-    "ast_hash": "fc350ae3e72708e905b7a738865597ff",
+    "mtime": 1793897804.449401,
+    "seen": 1793897929.47821,
+    "ast_hash": "628601042ea23c365a44538665f471ee",
     "semantic_hash": ""
   },
   "apps/cli/src/store.ts": {
-    "mtime": 1793810762.6706455,
-    "seen": 1793897720.452961,
-    "ast_hash": "978dea84d1e1cd88158d9c3ec92ba09f",
+    "mtime": 1793897803.679659,
+    "seen": 1793897929.4782114,
+    "ast_hash": "dbe771afdbfa20a54d83e32b322e8ef6",
     "semantic_hash": ""
   },
   "services/agent/fixtures/engineering-kit.json": {
@@ -450,27 +450,27 @@
     "semantic_hash": ""
   },
   "services/suppliers/src/control-files.ts": {
-    "mtime": 1793810762.6770966,
-    "seen": 1793897720.4530125,
-    "ast_hash": "b078023b4d5e007c564a26090f011b5a",
+    "mtime": 1793897802.1013944,
+    "seen": 1793897929.478263,
+    "ast_hash": "e2eb13939aa2ae9f00c50951cfc4663a",
     "semantic_hash": ""
   },
   "services/suppliers/src/control.test.ts": {
-    "mtime": 1793810762.6770966,
-    "seen": 1793897720.4530134,
-    "ast_hash": "3e0b09dd65baac119fb0e0f27c505a05",
+    "mtime": 1793897801.3164513,
+    "seen": 1793897929.478264,
+    "ast_hash": "ff4272726f90c4ff49b41a1e6814f355",
     "semantic_hash": ""
   },
   "services/suppliers/src/control.ts": {
-    "mtime": 1793810762.6770966,
-    "seen": 1793897720.4530146,
-    "ast_hash": "735555af4a6714d1750d60df1a519841",
+    "mtime": 1793897798.162846,
+    "seen": 1793897929.478265,
+    "ast_hash": "5367942476576d9b42a6d5270f470e93",
     "semantic_hash": ""
   },
   "services/agent/CONFIRMATION_HANDOFF.md": {
-    "mtime": 1793810762.6770966,
-    "seen": 1793897720.4530377,
-    "ast_hash": "88b30c843771c176d8e53debadd64d63",
+    "mtime": 1793897877.0493762,
+    "seen": 1793897929.478289,
+    "ast_hash": "dc3130f6e07fcfcf1530f34eaa8ce69f",
     "semantic_hash": ""
   },
   "package-lock.json": {
