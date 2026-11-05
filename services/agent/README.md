@@ -1,4 +1,4 @@
-# Mandate planning and the planned bounded shopper
+# Mandate planning and offline shopping tools
 
 ## Delivered planning slice
 
@@ -47,12 +47,98 @@ artifacts, not additions to `packages/contracts/`. See
 [the confirmation and stock handoff](CONFIRMATION_HANDOFF.md) before connecting them
 to execution. M1 is still incomplete.
 
-## Planned shopper (M4)
+## Offline shopping tools: preparatory M4 slice
 
-First prove authority and the ledger. Later expose only catalog search, product
-view, cart building and price-free cart submission tools to a separate worker.
-Model output remains a draft until human confirmation. There are no payment
-credentials, payment tools, policy writes, shell tools or arbitrary URL fetching
-in this service. Bound future tool calls and model spend. Keep hostile catalog
-prose as data. The trusted executor loads quotes and ledger state independently.
-See `AGENTS.md`.
+`src/shopper.ts` exposes four runtime-validated tools through
+`createOfflineShoppingSession(input, catalogSource).dispatch(call)`. This is a
+deterministic rehearsal surface for a future model worker, not an AI shopper or a
+backend connection. Shared contracts and CLI parsing are unchanged. No M1 or M4
+acceptance gate is established by this slice.
+
+| Tool | Arguments | Result |
+| --- | --- | --- |
+| `catalog.search` | `supplierId`, `requirementId`, optional `limit` (1–25, default 10) | Exact approved SKU matches in catalog order, with supplier facts and original evidence |
+| `product.view` | `supplierId`, `requirementId`, `sku` | One exact approved product with supplier facts and original evidence |
+| `cart.build` | `supplierId`, `lines: [{requirementId, sku, quantity}]` | A price-free `CartSubmission` with host-bound mandate revision and cart ID |
+| `cart.submit` | `cartId` returned by the latest successful build | An explicitly labelled offline stub receipt |
+
+Every call is `{ "tool": "NAME", "args": { ... } }`. Extra fields, unrecognized
+tools, arbitrary URLs, prices, quote/budget snapshots, clocks, mandate revisions
+and approval identities are rejected. Prices can appear in catalog observations;
+they cannot enter a cart. The supplied catalog port has only
+`getCatalog(supplierId)`; the fixture implementation is
+`createFixtureCatalogSource(catalogs)` in `services/suppliers/src/catalog.ts`.
+It snapshots configured catalogs and returns separate copies on every read.
+The session validates connector output and supplier identity again. Evidence
+status, source and observation time are preserved, including unknown or stale facts.
+Supplier strings are never interpreted as tool calls or authority.
+
+The host configures a full fixture mandate, `runId`, explicit offline `now`,
+optional `maxToolCalls` (1–100, default 24) and `catalogTimeoutMs` (1–10,000,
+default 1,000). `getContext()` returns planning fields without `approvedBy` or
+`confirmedAt`; accepting a schema-valid mandate does not authenticate it. Calls
+are serialized. Invalid, overlapping and replay attempts consume the call budget.
+A read timeout discards late results and clears the busy state; it cannot cancel
+an adapter's underlying work. Only trusted, read-only adapters belong on this port.
+
+A cart must use configured suppliers, requirements and exact SKUs present in the
+catalog. Quantity limits add all lines for each requirement, including different
+SKUs. Duplicate SKUs fail validation. A successful rebuild receives a new host ID
+and replaces the previous build; a failed rebuild preserves the last valid cart.
+One session submits at most one cart. Repeating that submission returns a separate
+copy of the same receipt; other tools are closed after submission. These are
+in-memory rehearsal semantics, not durable idempotency or cumulative accounting
+across sessions. Reuse distinct host run IDs for distinct rehearsals.
+
+The submission receipt has `kind: "offline-eligibility-stub"`, `simulation: true`,
+the exact price-free cart and a warning. As specified by the current Role B stub
+seam, its nested `EligibilityResult` always says `eligible`; `totalMinor` and
+`remainingBeforeMinor` are zero placeholders, `quoteId` is `offline-stub-no-quote`
+and the `OFFLINE_STUB` check is `unknown`. **This is not an eligibility decision.**
+Keep the wrapper and warning when rendering it. Never pass it off as a checker
+result, reservation or payment authority.
+
+The tools constrain proposals but do not check policy narrowing, affordability,
+unit prices, stock availability, warranty or delivery evidence. Unknown evidence
+stays visible; it is not promoted to verified evidence or purchase permission.
+The future trusted executor must independently resolve current authority, quotes
+and ledger state, and block execution when required evidence is missing.
+
+Run the behavior tests from the repository root:
+
+```powershell
+node --test --test-isolation=none services/agent/src/shopper.test.ts services/suppliers/src/catalog.test.ts
+```
+
+`fixtures/shopping-tool-calls.json` is an editable synthetic transcript for terminal
+review. To replay it from PowerShell without changing shared CLI routing:
+
+```powershell
+@'
+import { readFileSync } from 'node:fs';
+import { createOfflineShoppingSession } from './services/agent/src/shopper.ts';
+import { createFixtureCatalogSource } from './services/suppliers/src/catalog.ts';
+const read = (path) => JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
+const session = createOfflineShoppingSession({
+  mandate: read('examples/mandate.json'), runId: 'fixture-shopping',
+  now: '2026-11-03T09:00:00Z'
+}, createFixtureCatalogSource([read('services/suppliers/fixtures/store-a.json')]));
+const results = [];
+for (const call of read('services/agent/fixtures/shopping-tool-calls.json')) {
+  results.push(await session.dispatch(call));
+}
+console.log(JSON.stringify({ mode: 'offline-shopping-replay', results }));
+'@ | node --input-type=module
+```
+
+The fixed clock keeps dated fixtures reproducible and is not execution time.
+The example needs no keys, network, database or external effects. Tests include
+hostile supplier text, rejected authority/payment tools, quantity splitting,
+mutation isolation, cart identity changes, overlap and timeout recovery. There is
+no model here, so these tests do not establish prompt-injection immunity.
+
+Next work is a separately bounded model driver and a coordinated CLI command.
+Stock assignment/confirmation integration remains in Danny's ledger scope; see
+[the handoff](CONFIRMATION_HANDOFF.md). The future worker must also run without
+payment secrets and with process isolation: module separation and these tests do
+not prove that deployment boundary. See `AGENTS.md`.

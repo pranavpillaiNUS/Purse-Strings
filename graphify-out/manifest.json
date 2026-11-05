@@ -174,9 +174,9 @@
     "semantic_hash": ""
   },
   "services/agent/README.md": {
-    "mtime": 1793897877.839001,
-    "seen": 1793897929.47829,
-    "ast_hash": "07bd7acd5a1193e9dd560d1eafcfa278",
+    "mtime": 1793899048.2291934,
+    "seen": 1793899067.9196827,
+    "ast_hash": "424389ccc9ea6c41846f41344798793f",
     "semantic_hash": ""
   },
   "services/checker/src/ledger/README.md": {
@@ -471,6 +471,36 @@
     "mtime": 1793897877.0493762,
     "seen": 1793897929.478289,
     "ast_hash": "dc3130f6e07fcfcf1530f34eaa8ce69f",
+    "semantic_hash": ""
+  },
+  "services/agent/fixtures/shopping-tool-calls.json": {
+    "mtime": 1793898985.3825123,
+    "seen": 1793899067.9196122,
+    "ast_hash": "f4607ef226e116c1f8cf2103a2fb5f7f",
+    "semantic_hash": ""
+  },
+  "services/agent/src/shopper.test.ts": {
+    "mtime": 1793899048.1321728,
+    "seen": 1793899067.9196177,
+    "ast_hash": "b4dcdaad940ee1ac6470ebb11d2f159c",
+    "semantic_hash": ""
+  },
+  "services/agent/src/shopper.ts": {
+    "mtime": 1793899048.0290911,
+    "seen": 1793899067.9196188,
+    "ast_hash": "f89ba99805d03251c664fdd765a230b6",
+    "semantic_hash": ""
+  },
+  "services/suppliers/src/catalog.test.ts": {
+    "mtime": 1793898820.1897414,
+    "seen": 1793899067.9196496,
+    "ast_hash": "bd085af2efcbd5446daacc002f2bc060",
+    "semantic_hash": ""
+  },
+  "services/suppliers/src/catalog.ts": {
+    "mtime": 1793898820.095251,
+    "seen": 1793899067.9196506,
+    "ast_hash": "44aca57de35a3a09f9611791b47f2961",
     "semantic_hash": ""
   },
   "package-lock.json": {

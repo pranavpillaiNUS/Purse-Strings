@@ -1,0 +1,21 @@
+[
+  {
+    "tool": "catalog.search",
+    "args": { "supplierId": "store-a", "requirementId": "engineering-laptops", "limit": 5 }
+  },
+  {
+    "tool": "product.view",
+    "args": { "supplierId": "store-a", "requirementId": "engineering-laptops", "sku": "LAP-14-AIR" }
+  },
+  {
+    "tool": "cart.build",
+    "args": {
+      "supplierId": "store-a",
+      "lines": [
+        { "requirementId": "engineering-laptops", "sku": "LAP-14-AIR", "quantity": 3 },
+        { "requirementId": "engineering-monitors", "sku": "MON-27-USBC", "quantity": 5 }
+      ]
+    }
+  },
+  { "tool": "cart.submit", "args": { "cartId": "fixture-shopping-cart-1" } }
+]
