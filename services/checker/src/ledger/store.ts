@@ -113,27 +113,32 @@ function readNumber(row: RawRow, column: string): number {
 
 export function openLedgerStore(databasePath: string): DatabaseSync {
   const database = new DatabaseSync(databasePath);
-  // busy_timeout must be set before journal_mode and the rest of open: SQLite
-  // does not honor the busy handler for the WAL switch itself, so only the
-  // waiting-read retry below rescues a contended opener.
-  database.exec('PRAGMA busy_timeout = 5000');
-  // The WAL switch fails immediately on SQLITE_BUSY under concurrent openers
-  // instead of honoring busy_timeout. A waiting read does honor it, and the
-  // winner's committed switch makes the file permanently WAL, so on BUSY wait
-  // through one read and retry the now no-op switch instead of surfacing it.
-  for (let attempt = 1; ; attempt += 1) {
-    try {
-      database.exec('PRAGMA journal_mode = WAL');
-      break;
-    } catch (error) {
-      if (!isSqliteBusy(error) || attempt >= 5) throw error;
-      database.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
+  try {
+    // busy_timeout must be set before journal_mode and the rest of open: SQLite
+    // does not honor the busy handler for the WAL switch itself, so only the
+    // waiting-read retry below rescues a contended opener.
+    database.exec('PRAGMA busy_timeout = 5000');
+    // The WAL switch fails immediately on SQLITE_BUSY under concurrent openers
+    // instead of honoring busy_timeout. A waiting read does honor it, and the
+    // winner's committed switch makes the file permanently WAL, so on BUSY wait
+    // through one read and retry the now no-op switch instead of surfacing it.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        database.exec('PRAGMA journal_mode = WAL');
+        break;
+      } catch (error) {
+        if (!isSqliteBusy(error) || attempt >= 5) throw error;
+        database.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
+      }
     }
+    database.exec('PRAGMA synchronous = FULL');
+    database.exec('PRAGMA foreign_keys = ON');
+    applyMigrations(database);
+    return database;
+  } catch (error) {
+    try { database.close(); } catch { /* preserve the initialization error */ }
+    throw error;
   }
-  database.exec('PRAGMA synchronous = FULL');
-  database.exec('PRAGMA foreign_keys = ON');
-  applyMigrations(database);
-  return database;
 }
 
 const databasesInTransaction = new WeakSet<DatabaseSync>();

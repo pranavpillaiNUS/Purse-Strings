@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { openProviderDatabase } from '../../execution/fake.ts';
 import {
   applyMigrations,
   maxKnownMigrationVersion,
@@ -74,6 +75,32 @@ test('a database written by a newer schema version is rejected', () => {
     database.close();
     assert.throws(() => openLedgerStore(path), /unknown to this build/);
   } finally {
+    removeTempDir(dir);
+  }
+});
+
+test('failed ledger and provider initialization closes the database connection', (t) => {
+  const dir = makeTempDir('failed-open-cleanup');
+  try {
+    const ledgerPath = `${dir}/ledger.db`;
+    const ledger = openLedgerStore(ledgerPath);
+    ledger.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+      .run(maxKnownMigrationVersion() + 1, TEST_CLOCK);
+    ledger.close();
+
+    const providerPath = `${dir}/provider.db`;
+    const provider = openProviderDatabase(providerPath);
+    provider.prepare('INSERT INTO provider_migrations (version, applied_at) VALUES (?, ?)')
+      .run(999, TEST_CLOCK);
+    provider.close();
+
+    const close = t.mock.method(DatabaseSync.prototype, 'close');
+    assert.throws(() => openLedgerStore(ledgerPath), /unknown to this build/);
+    assert.equal(close.mock.callCount(), 1, 'failed ledger open must close its connection');
+    assert.throws(() => openProviderDatabase(providerPath), /unknown to this build/);
+    assert.equal(close.mock.callCount(), 2, 'failed provider open must close its connection');
+  } finally {
+    t.mock.restoreAll();
     removeTempDir(dir);
   }
 });

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { openLedgerStore } from '../store.ts';
 import { MIGRATIONS } from '../schema.ts';
 import {
@@ -27,7 +28,7 @@ import {
 // authority setup (policy/draft/confirmation) stays in this parent process and
 // children only submit proposals.
 
-const WORKER_PATH = new URL('./test-worker.ts', import.meta.url).pathname;
+const WORKER_PATH = fileURLToPath(new URL('./test-worker.ts', import.meta.url));
 
 function digestOf(database: import('node:sqlite').DatabaseSync, mandateId: string, version: number): string {
   const review = reviewMandateRevision(database, mandateId, version);

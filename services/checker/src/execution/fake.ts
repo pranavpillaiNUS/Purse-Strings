@@ -47,51 +47,56 @@ function readString(row: RawRow, column: string): string {
 
 export function openProviderDatabase(path: string): DatabaseSync {
   const database = new DatabaseSync(path);
-  // busy_timeout must be set before journal_mode: concurrent executors opening
-  // the same provider file would otherwise fail the WAL switch on SQLITE_BUSY.
-  database.exec('PRAGMA busy_timeout = 5000');
-  // SQLite does not honor the busy handler for the WAL switch itself: only a
-  // waiting-read retry rescues contended first openers. The winner's committed
-  // switch makes the file permanently WAL, so on BUSY wait through one read
-  // and retry the now no-op switch instead of surfacing it.
-  for (let attempt = 1; ; attempt += 1) {
-    try {
-      database.exec('PRAGMA journal_mode = WAL');
-      break;
-    } catch (error) {
-      if (!isSqliteBusy(error) || attempt >= 5) throw error;
-      database.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
-    }
-  }
-  database.exec('PRAGMA synchronous = FULL');
-  database.exec('PRAGMA foreign_keys = ON');
-  const migrationTable = database.prepare(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'provider_migrations'",
-  ).get();
-  if (!migrationTable) {
-    database.exec('BEGIN IMMEDIATE');
-    try {
-      // Concurrent executors can both reach the migration; the second one
-      // re-checks inside the write transaction and no-ops instead of failing.
-      const recheck = database.prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'provider_migrations'",
-      ).get();
-      if (!recheck) {
-        database.exec(PROVIDER_MIGRATION);
+  try {
+    // busy_timeout must be set before journal_mode: concurrent executors opening
+    // the same provider file would otherwise fail the WAL switch on SQLITE_BUSY.
+    database.exec('PRAGMA busy_timeout = 5000');
+    // SQLite does not honor the busy handler for the WAL switch itself: only a
+    // waiting-read retry rescues contended first openers. The winner's committed
+    // switch makes the file permanently WAL, so on BUSY wait through one read
+    // and retry the now no-op switch instead of surfacing it.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        database.exec('PRAGMA journal_mode = WAL');
+        break;
+      } catch (error) {
+        if (!isSqliteBusy(error) || attempt >= 5) throw error;
+        database.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
       }
-      database.exec('COMMIT');
-    } catch (error) {
-      try { database.exec('ROLLBACK'); } catch { /* rollback is best-effort */ }
-      throw error;
     }
-  } else {
-    const version = database.prepare('SELECT MAX(version) AS max FROM provider_migrations').get() as
-      { max?: unknown } | undefined;
-    if (version?.max !== 1) {
-      throw new Error('Provider database schema is unknown to this build');
+    database.exec('PRAGMA synchronous = FULL');
+    database.exec('PRAGMA foreign_keys = ON');
+    const migrationTable = database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'provider_migrations'",
+    ).get();
+    if (!migrationTable) {
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        // Concurrent executors can both reach the migration; the second one
+        // re-checks inside the write transaction and no-ops instead of failing.
+        const recheck = database.prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'provider_migrations'",
+        ).get();
+        if (!recheck) {
+          database.exec(PROVIDER_MIGRATION);
+        }
+        database.exec('COMMIT');
+      } catch (error) {
+        try { database.exec('ROLLBACK'); } catch { /* rollback is best-effort */ }
+        throw error;
+      }
+    } else {
+      const version = database.prepare('SELECT MAX(version) AS max FROM provider_migrations').get() as
+        { max?: unknown } | undefined;
+      if (version?.max !== 1) {
+        throw new Error('Provider database schema is unknown to this build');
+      }
     }
+    return database;
+  } catch (error) {
+    try { database.close(); } catch { /* preserve the initialization error */ }
+    throw error;
   }
-  return database;
 }
 
 /**
