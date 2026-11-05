@@ -113,12 +113,32 @@ function readNumber(row: RawRow, column: string): number {
 
 export function openLedgerStore(databasePath: string): DatabaseSync {
   const database = new DatabaseSync(databasePath);
-  database.exec('PRAGMA journal_mode = WAL');
-  database.exec('PRAGMA synchronous = FULL');
-  database.exec('PRAGMA foreign_keys = ON');
-  database.exec('PRAGMA busy_timeout = 5000');
-  applyMigrations(database);
-  return database;
+  try {
+    // busy_timeout must be set before journal_mode and the rest of open: SQLite
+    // does not honor the busy handler for the WAL switch itself, so only the
+    // waiting-read retry below rescues a contended opener.
+    database.exec('PRAGMA busy_timeout = 5000');
+    // The WAL switch fails immediately on SQLITE_BUSY under concurrent openers
+    // instead of honoring busy_timeout. A waiting read does honor it, and the
+    // winner's committed switch makes the file permanently WAL, so on BUSY wait
+    // through one read and retry the now no-op switch instead of surfacing it.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        database.exec('PRAGMA journal_mode = WAL');
+        break;
+      } catch (error) {
+        if (!isSqliteBusy(error) || attempt >= 5) throw error;
+        database.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
+      }
+    }
+    database.exec('PRAGMA synchronous = FULL');
+    database.exec('PRAGMA foreign_keys = ON');
+    applyMigrations(database);
+    return database;
+  } catch (error) {
+    try { database.close(); } catch { /* preserve the initialization error */ }
+    throw error;
+  }
 }
 
 const databasesInTransaction = new WeakSet<DatabaseSync>();
@@ -510,13 +530,22 @@ export interface MandateTotals {
 /**
  * Total authority scope is the mandate identity across all revisions.
  * Active reservations count as reserved, consumed as committed; released is ignored.
+ * `excludeOperationId` removes one operation's own reservation from the totals:
+ * the execution capture gate revalidates authority against every OTHER
+ * operation, never counting the gate's own reservation twice.
  */
-export function loadMandateTotals(database: DatabaseSync, mandateId: string): MandateTotals {
+export function loadMandateTotals(
+  database: DatabaseSync,
+  mandateId: string,
+  excludeOperationId?: string,
+): MandateTotals {
   const amountRows = database.prepare(
     `SELECT r.state AS state, r.amount_minor AS amount
      FROM reservations AS r JOIN operations AS o ON o.operation_id = r.operation_id
-     WHERE o.mandate_id = ? AND r.state IN ('active', 'consumed')`,
-  ).all(mandateId) as RawRow[];
+     WHERE o.mandate_id = ?
+       AND r.state IN ('active', 'consumed')
+       AND (? IS NULL OR r.operation_id <> ?)`,
+  ).all(mandateId, excludeOperationId ?? null, excludeOperationId ?? null) as RawRow[];
   let committedMinor = 0;
   let reservedMinor = 0;
   for (const row of amountRows) {
@@ -529,8 +558,10 @@ export function loadMandateTotals(database: DatabaseSync, mandateId: string): Ma
      FROM reservation_lines AS rl
      JOIN reservations AS r ON r.operation_id = rl.operation_id
      JOIN operations AS o ON o.operation_id = r.operation_id
-     WHERE o.mandate_id = ? AND r.state IN ('active', 'consumed')`,
-  ).all(mandateId) as RawRow[];
+     WHERE o.mandate_id = ?
+       AND r.state IN ('active', 'consumed')
+       AND (? IS NULL OR r.operation_id <> ?)`,
+  ).all(mandateId, excludeOperationId ?? null, excludeOperationId ?? null) as RawRow[];
   const perRequirement = new Map<string, { committed: number; reserved: number }>();
   for (const row of lineRows) {
     const rid = readString(row, 'rid');
@@ -608,4 +639,212 @@ export function loadEffectRows(database: DatabaseSync, operationId: string): Eff
     createdAt: readString(row, 'created_at'),
     updatedAt: readString(row, 'updated_at'),
   }));
+}
+
+// --- Execution support (Unit 3): effect rows, leases, reservation transitions. ---
+// Mutating helpers only run inside the caller's transaction; the execution
+// worker pairs every one of them with a lease assertion in the same
+// BEGIN IMMEDIATE transaction so a fenced (expired or superseded) worker can
+// never write. Read helpers also legitimately run outside any transaction.
+
+export type EffectKind = 'capture' | 'order' | 'refund';
+
+/** The lease expired or was superseded by another owner. */
+export class LeaseLost extends Error {
+  constructor() {
+    super('The operation lease was lost to another worker or expired');
+    this.name = 'LeaseLost';
+  }
+}
+
+export interface LeaseRow {
+  ownerId: string | null;
+  generation: number;
+  expiresAtMs: number;
+}
+
+export function loadLeaseRow(database: DatabaseSync, operationId: string): LeaseRow | null {
+  const row = database.prepare(
+    'SELECT owner_id, generation, expires_at_ms FROM worker_leases WHERE operation_id = ?',
+  ).get(operationId) as RawRow | undefined;
+  if (!row) return null;
+  return {
+    ownerId: readStringOrNull(row, 'owner_id'),
+    generation: readNumber(row, 'generation'),
+    expiresAtMs: readNumber(row, 'expires_at_ms'),
+  };
+}
+
+export function loadEffectRowByKind(
+  database: DatabaseSync,
+  operationId: string,
+  kind: EffectKind,
+): EffectStorageRow | null {
+  const row = database.prepare(
+    `SELECT effect_id, operation_id, kind, effect_key, request_digest, request_json,
+       state, provider_id, response_json, created_at, updated_at
+     FROM effects WHERE operation_id = ? AND kind = ?`,
+  ).get(operationId, kind) as RawRow | undefined;
+  if (!row) return null;
+  const state = readString(row, 'state');
+  if (state !== 'intent' && state !== 'in_flight' && state !== 'unknown'
+    && state !== 'succeeded' && state !== 'rejected') {
+    throw new Error('Ledger effect state is invalid');
+  }
+  const storedKind = readString(row, 'kind');
+  if (storedKind !== 'capture' && storedKind !== 'order' && storedKind !== 'refund') {
+    throw new Error('Ledger effect kind is invalid');
+  }
+  return {
+    effectId: readString(row, 'effect_id'),
+    operationId: readString(row, 'operation_id'),
+    kind: storedKind,
+    effectKey: readString(row, 'effect_key'),
+    requestDigest: readString(row, 'request_digest'),
+    requestJson: readString(row, 'request_json'),
+    state,
+    providerId: readStringOrNull(row, 'provider_id'),
+    responseJson: readStringOrNull(row, 'response_json'),
+    createdAt: readString(row, 'created_at'),
+    updatedAt: readString(row, 'updated_at'),
+  };
+}
+
+/**
+ * Claims an unowned or expired lease with a fresh owner id and generation
+ * increment. Must run inside the caller's write transaction. A lease that is
+ * owned and unexpired is a conflict; the caller surfaces sanitized BUSY.
+ * Ownership is released at the end of a bounded run (owner_id NULL) while the
+ * generation is retained, so historical generations stay ahead of stale writers.
+ */
+export function claimLeaseRow(
+  database: DatabaseSync,
+  operationId: string,
+  ownerId: string,
+  nowMs: number,
+  ttlMs: number,
+): { kind: 'claimed'; generation: number } | { kind: 'conflict' } {
+  const lease = loadLeaseRow(database, operationId);
+  if (lease !== null && lease.ownerId !== null && lease.expiresAtMs > nowMs) {
+    return { kind: 'conflict' };
+  }
+  const generation = (lease?.generation ?? 0) + 1;
+  const expiresAtMs = nowMs + ttlMs;
+  if (lease === null) {
+    database.prepare(
+      'INSERT INTO worker_leases (operation_id, owner_id, generation, expires_at_ms) VALUES (?, ?, ?, ?)',
+    ).run(operationId, ownerId, generation, expiresAtMs);
+  } else {
+    database.prepare(
+      'UPDATE worker_leases SET owner_id = ?, generation = ?, expires_at_ms = ? WHERE operation_id = ?',
+    ).run(ownerId, generation, expiresAtMs, operationId);
+  }
+  return { kind: 'claimed', generation };
+}
+
+/**
+ * Conditioning check for every worker write: the lease must still name this
+ * owner at this generation and be unexpired. Throws LeaseLost otherwise; the
+ * transaction wrapper rolls the write back. Expired leases are always lost,
+ * so a worker whose lease ran out cannot renew or commit anything.
+ */
+export function assertLeaseHeld(
+  database: DatabaseSync,
+  operationId: string,
+  ownerId: string,
+  generation: number,
+  nowMs: number,
+): void {
+  const lease = loadLeaseRow(database, operationId);
+  if (lease === null
+    || lease.ownerId !== ownerId
+    || lease.generation !== generation
+    || lease.expiresAtMs <= nowMs) {
+    throw new LeaseLost();
+  }
+}
+
+/** Extends a lease the worker still holds; LeaseLost when expired or superseded. */
+export function renewLeaseRow(
+  database: DatabaseSync,
+  operationId: string,
+  ownerId: string,
+  generation: number,
+  nowMs: number,
+  ttlMs: number,
+): void {
+  assertLeaseHeld(database, operationId, ownerId, generation, nowMs);
+  database.prepare(
+    'UPDATE worker_leases SET expires_at_ms = ? WHERE operation_id = ?',
+  ).run(nowMs + ttlMs, operationId);
+}
+
+/** Releases ownership after a bounded run; the generation is retained. */
+export function releaseLeaseOwnerRow(database: DatabaseSync, operationId: string): void {
+  database.prepare(
+    'UPDATE worker_leases SET owner_id = NULL WHERE operation_id = ?',
+  ).run(operationId);
+}
+
+export function insertEffectIntentRow(
+  database: DatabaseSync,
+  effect: {
+    effectId: string;
+    operationId: string;
+    kind: EffectKind;
+    effectKey: string;
+    requestDigest: string;
+    requestJson: string;
+    createdAt: string;
+  },
+): void {
+  database.prepare(
+    `INSERT INTO effects
+      (effect_id, operation_id, kind, effect_key, request_digest, request_json,
+       state, provider_id, response_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'intent', NULL, NULL, ?, ?)`,
+  ).run(effect.effectId, effect.operationId, effect.kind, effect.effectKey,
+    effect.requestDigest, effect.requestJson, effect.createdAt, effect.createdAt);
+}
+
+export function setEffectStateRow(
+  database: DatabaseSync,
+  operationId: string,
+  kind: EffectKind,
+  state: 'in_flight' | 'unknown' | 'succeeded' | 'rejected',
+  providerId: string | null,
+  responseJson: string | null,
+  updatedAt: string,
+): void {
+  database.prepare(
+    'UPDATE effects SET state = ?, provider_id = ?, response_json = ?, updated_at = ? WHERE operation_id = ? AND kind = ?',
+  ).run(state, providerId, responseJson, updatedAt, operationId, kind);
+}
+
+export function updateOperationStatusRow(
+  database: DatabaseSync,
+  operationId: string,
+  status: string,
+  updatedAt: string,
+): void {
+  database.prepare(
+    'UPDATE operations SET status = ?, updated_at = ? WHERE operation_id = ?',
+  ).run(status, updatedAt, operationId);
+}
+
+/** Capture success consumes money and purchasing quantity conservatively; idempotent. */
+export function consumeReservationRow(database: DatabaseSync, operationId: string): void {
+  database.prepare(
+    "UPDATE reservations SET state = 'consumed' WHERE operation_id = ? AND state = 'active'",
+  ).run(operationId);
+}
+
+/**
+ * Safe-failure release: only for definitive non-application or rejection.
+ * Refunds never call this; authority is never replenished.
+ */
+export function releaseReservationRow(database: DatabaseSync, operationId: string): void {
+  database.prepare(
+    "UPDATE reservations SET state = 'released' WHERE operation_id = ? AND state = 'active'",
+  ).run(operationId);
 }

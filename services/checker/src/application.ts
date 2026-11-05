@@ -257,7 +257,8 @@ function loadActiveAuthority(
   return { mandate, policy: parseStoredPolicy(authority.policyRow.contentJson) };
 }
 
-function buildWireOperation(
+/** Shared with the execution worker and backend CLI for uniform wire operation views. */
+export function buildWireOperation(
   database: DatabaseSync,
   row: OperationStorageRow,
   effects: EffectStorageRow[],

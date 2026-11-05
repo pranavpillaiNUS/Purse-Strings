@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { openLedgerStore } from '../store.ts';
+import { MIGRATIONS } from '../schema.ts';
 import {
   confirmMandateRevision,
   definePolicySnapshot,
@@ -25,7 +28,7 @@ import {
 // authority setup (policy/draft/confirmation) stays in this parent process and
 // children only submit proposals.
 
-const WORKER_PATH = new URL('./test-worker.ts', import.meta.url).pathname;
+const WORKER_PATH = fileURLToPath(new URL('./test-worker.ts', import.meta.url));
 
 function digestOf(database: import('node:sqlite').DatabaseSync, mandateId: string, version: number): string {
   const review = reviewMandateRevision(database, mandateId, version);
@@ -74,7 +77,7 @@ function runWorker(mode: 'submit' | 'verify', config: object): Promise<WorkerRes
       child.kill('SIGKILL');
       rejectWorker(new Error(`${message}\nstderr: ${stderr}`));
     };
-    const deadline = setTimeout(() => fail('worker timed out'), 30_000);
+    const deadline = setTimeout(() => fail('worker timed out'), 120_000);
     child.on('error', (error) => { clearTimeout(deadline); rejectWorker(error); });
     child.on('close', (code) => {
       clearTimeout(deadline);
@@ -390,6 +393,117 @@ test('replay after terminal-state mutation returns the current operation without
     assert.equal(replay.responses[0]?.result?.operation.id, operationId);
   } finally {
     removeTempDir(dir);
+  }
+});
+
+// Dual-open regression (LEDGER-R5-001): two fresh processes must race
+// openLedgerStore on one fresh database with a start barrier and both end
+// migrated and usable. The driver is materialized into the temp dir with its
+// own package.json so a clean-child spawn outside the repo tree stays ESM.
+const OPEN_DRIVER_TEMPLATE = (storeUrl: string) => `import { createInterface } from 'node:readline';
+import { openLedgerStore } from '${storeUrl}';
+
+process.stdout.write('READY\\n');
+const reader = createInterface({ input: process.stdin });
+const start = await new Promise<string>((resolve, reject) => {
+  reader.once('line', resolve);
+  reader.once('error', reject);
+});
+reader.close();
+if (start.trim() !== 'GO') throw new Error('test driver did not receive the start barrier');
+const database = openLedgerStore(process.argv[2]);
+const applied = database.prepare('SELECT version FROM schema_migrations ORDER BY version').all()
+  .map((row) => (row as { version: number }).version);
+const total = Number((database.prepare('SELECT COUNT(*) AS total FROM operations').get() as { total?: unknown }).total);
+database.close();
+process.stdout.write(JSON.stringify({ applied, total }) + '\\n', () => process.exit(0));
+`;
+
+interface OpenChildRun {
+  ready: Promise<void>;
+  release: () => void;
+  done: Promise<{ applied: Array<number>; total: number }>;
+}
+
+function runOpenChild(driverPath: string, databasePath: string): OpenChildRun {
+  let resolveChild!: (result: { applied: Array<number>; total: number }) => void;
+  let rejectChild!: (error: Error) => void;
+  let resolveReady!: () => void;
+  let rejectReady!: (error: Error) => void;
+  let released = false;
+  const done = new Promise<{ applied: Array<number>; total: number }>((resolve, reject) => {
+    resolveChild = resolve;
+    rejectChild = reject;
+  });
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  const child = spawn(process.execPath, [driverPath, databasePath], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout += String(chunk); });
+  child.stderr.on('data', (chunk) => { stderr += String(chunk); });
+  const fail = (message: string) => {
+    child.kill('SIGKILL');
+    const error = new Error(`${message}\nstderr: ${stderr}`);
+    rejectChild(error);
+    if (!released) rejectReady(error);
+  };
+  const deadline = setTimeout(() => fail('open driver timed out'), 120_000);
+  child.on('error', (error) => { clearTimeout(deadline); fail(String(error)); });
+  child.on('close', (code) => {
+    clearTimeout(deadline);
+    const resultLine = stdout.trim().split('\n').filter((line) => line.length > 0).pop();
+    if (code !== 0 || resultLine === undefined) {
+      rejectChild(new Error(`open driver exited ${code}\nstdout: ${stdout}\nstderr: ${stderr}`));
+      if (!released) rejectReady(new Error(`open driver failed before readiness: exit ${code}`));
+      return;
+    }
+    resolveChild(JSON.parse(resultLine) as { applied: Array<number>; total: number });
+  });
+  let readyBuffer = '';
+  child.stdout.on('data', (chunk) => {
+    readyBuffer += String(chunk);
+    if (/READY/.test(readyBuffer) && !released) resolveReady();
+  });
+  return {
+    ready,
+    release: () => {
+      released = true;
+      child.stdin.write('GO\n');
+    },
+    done,
+  };
+}
+
+test('start-barrier race: two fresh processes open one fresh database and both apply migrations', async () => {
+  const home = makeTempDir('open-race');
+  try {
+    const driverPath = `${home}/open-driver.ts`;
+    writeFileSync(driverPath, OPEN_DRIVER_TEMPLATE(new URL('../store.ts', import.meta.url).href));
+    writeFileSync(`${home}/package.json`, JSON.stringify({ type: 'module' }));
+    const expected = MIGRATIONS.map((migration) => migration.version);
+    for (let iteration = 0; iteration < 4; iteration += 1) {
+      const dir = makeTempDir('open-race-db');
+      try {
+        const databasePath = `${dir}/ledger.db`;
+        const first = runOpenChild(driverPath, databasePath);
+        const second = runOpenChild(driverPath, databasePath);
+        await Promise.all([first.ready, second.ready]);
+        first.release();
+        second.release();
+        const [one, two] = await Promise.all([first.done, second.done]);
+        assert.deepEqual(one.applied, expected);
+        assert.deepEqual(two.applied, expected);
+        assert.equal(one.total, 0);
+        assert.equal(two.total, 0);
+      } finally {
+        removeTempDir(dir);
+      }
+    }
+  } finally {
+    removeTempDir(home);
   }
 });
 

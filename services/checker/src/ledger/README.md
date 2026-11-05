@@ -33,8 +33,17 @@ recovery is manual data repair, never a silent drop.
   authority tests); elsewhere a bare `finally` cleanup is an accepted
   inconsistency, not a claim that no cleanup step can fail.
 
-Not implemented yet (no code may claim it): effect write paths (`effects`,
-`worker_leases` tables exist but no worker claims/leases or gateway calls),
-payment/order execution, PayPal integration through this ledger, readiness
-assessment, production authentication, or any real spend. Statuses other than
-`reserved` are stored-schema only until the execution unit lands.
+- Execution: `../execution/{gateway,fake,worker}.ts` drive the durable
+  simulated payment/supplier state machine on top of these tables. Effects
+  (capture/order/refund) use immutable keys `operationId:kind`, intents are
+  persisted before dispatch, every write asserts the `worker_leases` owner,
+  generation and expiry inside its transaction, and fake providers live in a
+  SEPARATE SQLite file (see `../execution/fake.ts`). The operator/RPC surface
+  is `apps/cli/src/backend.ts` (mandate draft/review/confirm, operation
+  run/reconcile, status, audit, strict stdin RPC).
+
+Not implemented yet (no code may claim it): real money or supplier effects —
+everything above is a labelled simulation over fake providers — PayPal
+integration through this ledger (the next unit), readiness assessment,
+production authentication, or any real spend. `ordered`/`compensated` are
+fake-provider facts and never mean delivered or ready.
