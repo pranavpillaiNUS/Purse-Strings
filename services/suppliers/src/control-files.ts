@@ -13,7 +13,8 @@ const seedPath = join(fixtureDirectory, 'store-a.json');
 
 /** Files are synthetic catalog state, never a purchasing ledger or execution authority. */
 export function loadFixtureCatalog(path: string): Catalog {
-  return CatalogSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+  // Windows PowerShell's UTF-8 Set-Content may write a BOM; it is not part of JSON content.
+  return CatalogSchema.parse(JSON.parse(readFileSync(path, 'utf8').replace(/^﻿/, '')));
 }
 
 function isWithin(directory: string, target: string): boolean {

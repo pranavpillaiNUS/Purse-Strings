@@ -92,6 +92,46 @@ test('persisted supplier controls drive normal, cost, stock and evidence check d
   assert.equal(restored.totalMinor, baseline.totalMinor);
 });
 
+test('a price edit cannot make stale product evidence current', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-store-stale-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const catalogPath = join(directory, 'catalog.json');
+  const later = '2026-11-07T09:00:00Z';
+  const productEvidence = () => {
+    const result = run(['check', '--catalog', catalogPath, '--now', later, '--json']);
+    assert.equal(result.stderr, '');
+    return JSON.parse(result.stdout).checks
+      .find((item: { code: string }) => item.code === 'PRODUCT_EVIDENCE:LAP-14-AIR').status;
+  };
+
+  expectSuccess('reset', catalogPath);
+  assert.equal(productEvidence(), 'unknown');
+  expectSuccess('set', catalogPath, ['--now', later, '--sku', 'LAP-14-AIR', '--price-minor', '109900']);
+  assert.equal(productEvidence(), 'unknown');
+  expectSuccess('set', catalogPath, ['--now', later, '--sku', 'LAP-14-AIR', '--product-evidence', 'supported']);
+  assert.equal(productEvidence(), 'pass');
+});
+
+test('catalogs saved with a UTF-8 BOM stay usable and can be repaired', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-store-bom-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const catalogPath = join(directory, 'catalog.json');
+  expectSuccess('reset', catalogPath);
+  const baselineBytes = readFileSync(catalogPath, 'utf8');
+  const baseline = check(catalogPath, 0, 'eligible');
+
+  writeFileSync(catalogPath, `﻿${baselineBytes}`);
+  expectSuccess('show', catalogPath);
+  assert.equal(check(catalogPath, 0, 'eligible').quoteId, baseline.quoteId);
+
+  expectSuccess('set', catalogPath, ['--now', now, '--shipping-minor', '0']);
+  assert.notEqual(readFileSync(catalogPath, 'utf8').charCodeAt(0), 0xFEFF);
+
+  writeFileSync(catalogPath, `﻿${baselineBytes}`);
+  expectSuccess('reset', catalogPath);
+  assert.equal(readFileSync(catalogPath, 'utf8'), baselineBytes);
+});
+
 test('store set exposes delivery and separate product/stock evidence controls', (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'splittap-store-evidence-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));

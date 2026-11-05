@@ -54,10 +54,12 @@ export function applyFixtureChanges(rawCatalog: unknown, rawChanges: unknown, no
     const change = changes.product;
     const product = catalog.products.find((item) => item.sku === change.sku);
     if (!product) throw new Error(`SKU unavailable in fixture catalog: ${change.sku}`);
-    if (change.unitPriceMinor !== undefined || change.productEvidenceStatus !== undefined) {
-      if (change.unitPriceMinor !== undefined) product.unitPriceMinor = change.unitPriceMinor;
+    if (change.unitPriceMinor !== undefined) product.unitPriceMinor = change.unitPriceMinor;
+    // Product evidence covers product and warranty facts, which a price edit does not
+    // re-observe. Quote timing governs price freshness. Only an explicit status refreshes it.
+    if (change.productEvidenceStatus !== undefined) {
       product.productEvidence = {
-        status: change.productEvidenceStatus ?? product.productEvidence.status,
+        status: change.productEvidenceStatus,
         source: controlSource(`${source}/${product.sku}/product`),
         observedAt,
       };

@@ -36,7 +36,7 @@ test('shipping changes produce fresh deterministic all-in quotes without changin
   assert.equal(readFileSync(seedPath, 'utf8'), seedBytes);
 });
 
-test('a price change affects new supplier snapshots and refreshes only that product evidence', async () => {
+test('a price change affects new supplier snapshots without refreshing any evidence', async () => {
   const original = catalog();
   const supplierBeforeChange = createFixtureSupplier(original);
   const changed = applyFixtureChanges(original, {
@@ -47,9 +47,7 @@ test('a price change affects new supplier snapshots and refreshes only that prod
 
   assert.equal(quote.totalMinor, 392073);
   assert.equal((await supplierBeforeChange.quoteCart(cart, now)).totalMinor, 359373);
-  assert.equal(laptop.productEvidence.observedAt, now);
-  assert.match(laptop.productEvidence.source, /^fixture:control\//);
-  assert.equal(laptop.productEvidence.status, 'supported');
+  assert.deepEqual(laptop.productEvidence, original.products[0]!.productEvidence);
   assert.deepEqual(laptop.stockEvidence, original.products[0]!.stockEvidence);
   assert.deepEqual(changed.products[1], original.products[1]);
   assert.deepEqual(changed.delivery, original.delivery);
@@ -96,9 +94,8 @@ test('price and stock edits preserve existing evidence uncertainty unless explic
 
   assert.equal(changed.products[0]!.unitPriceMinor, 0);
   assert.equal(changed.products[0]!.availableUnits, 1000);
-  assert.equal(changed.products[0]!.productEvidence.status, 'partial');
+  assert.deepEqual(changed.products[0]!.productEvidence, original.products[0]!.productEvidence);
   assert.equal(changed.products[0]!.stockEvidence.status, 'unknown');
-  assert.equal(changed.products[0]!.productEvidence.observedAt, now);
   assert.equal(changed.products[0]!.stockEvidence.observedAt, now);
   const supported = applyFixtureChanges(changed, {
     product: { sku: 'LAP-14-AIR', productEvidenceStatus: 'supported', stockEvidenceStatus: 'partial' },
@@ -158,7 +155,7 @@ test('valid maximum-length identifiers still produce bounded deterministic evide
   original.products[0]!.sku = 'p'.repeat(200);
   const changes = {
     deliveryEvidenceStatus: 'unknown',
-    product: { sku: original.products[0]!.sku, unitPriceMinor: 1, availableUnits: 0 },
+    product: { sku: original.products[0]!.sku, productEvidenceStatus: 'partial', availableUnits: 0 },
   };
   const changed = applyFixtureChanges(original, changes, now);
   assert.deepEqual(changed, applyFixtureChanges(original, changes, now));

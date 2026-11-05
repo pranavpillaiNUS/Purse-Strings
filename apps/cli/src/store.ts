@@ -20,6 +20,7 @@ Usage:
 set needs at least one change; product changes need --sku. Amounts are integer
 SGD cents, stock is integer units. All set operations require an explicit clock.
 Only changed evidence is re-observed; existing uncertainty stays until changed.
+A price edit does not re-observe product evidence; use --product-evidence for that.
 reset copies the dated bundled store-a seed exactly. The destination's parent
 directory must exist. Seed fixtures and existing non-catalog files are protected.
 Use check --catalog working.json --now ISO_TIMESTAMP to evaluate the new state.
