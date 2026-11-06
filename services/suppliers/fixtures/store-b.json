@@ -1,0 +1,64 @@
+{
+  "supplierId": "store-b",
+  "shippingMinor": 6000,
+  "taxRateBasisPoints": 900,
+  "deliveryLocationId": "singapore-office",
+  "delivery": {
+    "by": "2026-11-17T09:00:00Z",
+    "evidence": {
+      "status": "supported",
+      "source": "fixture:store-b/delivery",
+      "observedAt": "2026-11-03T08:30:00Z"
+    }
+  },
+  "products": [
+    {
+      "sku": "LAP-14-AIR",
+      "unitPriceMinor": 104900,
+      "warrantyMonths": 24,
+      "productEvidence": {
+        "status": "supported",
+        "source": "fixture:store-b/LAP-14-AIR",
+        "observedAt": "2026-11-03T08:30:00Z"
+      },
+      "availableUnits": 8,
+      "stockEvidence": {
+        "status": "supported",
+        "source": "fixture:store-b/stock",
+        "observedAt": "2026-11-03T08:30:00Z"
+      }
+    },
+    {
+      "sku": "LAP-14-PRO",
+      "unitPriceMinor": 145000,
+      "warrantyMonths": 36,
+      "productEvidence": {
+        "status": "supported",
+        "source": "fixture:store-b/LAP-14-PRO",
+        "observedAt": "2026-11-03T08:30:00Z"
+      },
+      "availableUnits": 20,
+      "stockEvidence": {
+        "status": "supported",
+        "source": "fixture:store-b/stock",
+        "observedAt": "2026-11-03T08:30:00Z"
+      }
+    },
+    {
+      "sku": "MON-27-USBC",
+      "unitPriceMinor": 26900,
+      "warrantyMonths": 36,
+      "productEvidence": {
+        "status": "supported",
+        "source": "fixture:store-b/MON-27-USBC",
+        "observedAt": "2026-11-03T08:30:00Z"
+      },
+      "availableUnits": 8,
+      "stockEvidence": {
+        "status": "supported",
+        "source": "fixture:store-b/stock",
+        "observedAt": "2026-11-03T08:30:00Z"
+      }
+    }
+  ]
+}

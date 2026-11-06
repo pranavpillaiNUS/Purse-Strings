@@ -212,6 +212,37 @@ test('store actions reject missing arguments, unrelated options and extra positi
   assert.match(help.stdout, /store/);
 });
 
+test('store reset selects a named seed and can re-date its evidence for a real clock', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-store-seeds-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const catalogPath = join(directory, 'catalog.json');
+  const seeded = expectSuccess('reset', catalogPath, ['--seed', 'store-b']);
+  assert.equal(seeded.catalog.supplierId, 'store-b');
+  assert.equal(seeded.catalog.delivery.evidence.observedAt, '2026-11-03T08:30:00Z');
+
+  const later = '2026-11-07T09:00:00Z';
+  const dated = expectSuccess('reset', catalogPath, ['--seed', 'store-b', '--now', later]);
+  assert.equal(dated.catalog.delivery.evidence.observedAt, later);
+  assert.equal(dated.catalog.products[0].productEvidence.source, 'fixture:store-b/LAP-14-AIR');
+
+  const hostile = expectSuccess('reset', catalogPath, ['--seed', 'store-b-hostile']);
+  assert.match(hostile.catalog.products[0].productEvidence.source, /NOTICE TO AI AGENTS/);
+
+  const bytes = readFileSync(catalogPath, 'utf8');
+  for (const flags of [
+    ['--seed', 'absent'],
+    ['--seed', '../../../config/policies/hardware.example'],
+    ['--seed', 'store-a'],
+    ['--seed', 'store-b', '--now', 'not-a-time'],
+  ]) {
+    expectFailure(['store', 'reset', '--catalog', catalogPath, '--json', ...flags]);
+    assert.equal(readFileSync(catalogPath, 'utf8'), bytes, flags.join(' '));
+  }
+  expectFailure(['store', 'set', '--catalog', catalogPath, '--now', now, '--shipping-minor', '1', '--seed', 'store-b', '--json']);
+  expectFailure(['store', 'show', '--catalog', catalogPath, '--seed', 'store-b', '--json']);
+  assert.equal(readFileSync(catalogPath, 'utf8'), bytes);
+});
+
 test('store mutations protect the bundled seed and do not invent missing working catalogs', (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'splittap-store-protection-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));

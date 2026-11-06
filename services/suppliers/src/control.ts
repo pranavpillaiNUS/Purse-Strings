@@ -31,6 +31,22 @@ function controlSource(path: string): string {
 }
 
 /**
+ * Re-date every evidence observation, leaving status and source untouched, so a
+ * dated seed can run under a real clock. Unknown evidence stays unknown, and listing
+ * text stays exactly as written. The clock is a simulation input, never authority.
+ */
+export function stampObservations(rawCatalog: unknown, now: string): Catalog {
+  const catalog = CatalogSchema.parse(rawCatalog);
+  const observedAt = EvidenceSchema.shape.observedAt.parse(now);
+  catalog.delivery.evidence.observedAt = observedAt;
+  for (const product of catalog.products) {
+    product.productEvidence.observedAt = observedAt;
+    product.stockEvidence.observedAt = observedAt;
+  }
+  return CatalogSchema.parse(catalog);
+}
+
+/**
  * Change synthetic supplier observations without mutating the seed or input.
  * The explicit clock is for offline scenarios, never execution authority.
  */

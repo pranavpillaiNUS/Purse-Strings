@@ -8,7 +8,7 @@ import type { Catalog } from '../../../packages/contracts/src/index.ts';
 const HELP = `Synthetic fixture-store controls (offline only)
 
 Usage:
-  npm run cli -- store reset --catalog working.json [--json]
+  npm run cli -- store reset --catalog working.json [--seed NAME] [--now ISO_TIMESTAMP] [--json]
   npm run cli -- store show --catalog working.json [--json]
   npm run cli -- store set --catalog working.json --now ISO_TIMESTAMP [--json]
     [--shipping-minor N] [--delivery-by ISO_TIMESTAMP]
@@ -21,8 +21,11 @@ set needs at least one change; product changes need --sku. Amounts are integer
 SGD cents, stock is integer units. All set operations require an explicit clock.
 Only changed evidence is re-observed; existing uncertainty stays until changed.
 A price edit does not re-observe product evidence; use --product-evidence for that.
-reset copies the dated bundled store-a seed exactly. The destination's parent
-directory must exist. Seed fixtures and existing non-catalog files are protected.
+reset copies a dated bundled seed exactly: store-a (default), store-b, or
+store-b-hostile (store-b with a prompt-injection listing). Add --now to re-date its
+evidence for runs under the backend's real clock; status and source do not change.
+The destination's parent directory must exist. Seed fixtures and existing
+non-catalog files are protected.
 Use check --catalog working.json --now ISO_TIMESTAMP to evaluate the new state.
 Exit codes: 0 success; 1 invalid input/error. No orders or payments are made.
 `;
@@ -45,6 +48,7 @@ export function runStore(args: string[]): void {
       json: { type: 'boolean' },
       catalog: { type: 'string' },
       now: { type: 'string' },
+      seed: { type: 'string' },
       sku: { type: 'string' },
       'shipping-minor': { type: 'string' },
       'price-minor': { type: 'string' },
@@ -64,15 +68,23 @@ export function runStore(args: string[]): void {
     throw new Error('Expected store show, reset or set. Use store --help.');
   }
   if (!values.catalog?.trim()) throw new Error('store requires --catalog with a working catalog path');
-  if (action !== 'set' && Object.entries(values).some(([key, value]) =>
+  if (action === 'show' && Object.entries(values).some(([key, value]) =>
     !['json', 'catalog'].includes(key) && value !== undefined)) {
-    throw new Error(`store ${action} accepts only --catalog and --json`);
+    throw new Error('store show accepts only --catalog and --json');
+  }
+  if (action === 'reset' && Object.entries(values).some(([key, value]) =>
+    !['json', 'catalog', 'seed', 'now'].includes(key) && value !== undefined)) {
+    throw new Error('store reset accepts only --catalog, --seed, --now and --json');
+  }
+  if (action === 'set' && values.seed !== undefined) {
+    throw new Error('store set does not accept --seed; use store reset');
   }
 
   let catalog: Catalog;
   if (action === 'show') catalog = loadFixtureCatalog(values.catalog);
-  else if (action === 'reset') catalog = resetFixtureCatalog(values.catalog);
-  else {
+  else if (action === 'reset') {
+    catalog = resetFixtureCatalog(values.catalog, { seed: values.seed, now: values.now });
+  } else {
     if (!values.now) throw new Error('store set requires --now ISO_TIMESTAMP for the offline observation clock');
     const hasProductChange = ['sku', 'price-minor', 'stock', 'product-evidence', 'stock-evidence']
       .some((key) => values[key as keyof typeof values] !== undefined);

@@ -6,15 +6,24 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { fileURLToPath } from 'node:url';
 import { CatalogSchema } from '../../../packages/contracts/src/index.ts';
 import type { Catalog } from '../../../packages/contracts/src/index.ts';
-import { applyFixtureChanges } from './control.ts';
+import { applyFixtureChanges, stampObservations } from './control.ts';
 
 const fixtureDirectory = fileURLToPath(new URL('../fixtures/', import.meta.url));
-const seedPath = join(fixtureDirectory, 'store-a.json');
+
+/** Named seeds only: a free-form seed path could read any JSON file into a working catalog. */
+export const FIXTURE_SEEDS = ['store-a', 'store-b', 'store-b-hostile'] as const;
+
+function seedPath(seed: string): string {
+  if (!(FIXTURE_SEEDS as readonly string[]).includes(seed)) {
+    throw new Error(`Unknown fixture seed. Choose one of: ${FIXTURE_SEEDS.join(', ')}`);
+  }
+  return join(fixtureDirectory, `${seed}.json`);
+}
 
 /** Files are synthetic catalog state, never a purchasing ledger or execution authority. */
 export function loadFixtureCatalog(path: string): Catalog {
   // Windows PowerShell's UTF-8 Set-Content may write a BOM; it is not part of JSON content.
-  return CatalogSchema.parse(JSON.parse(readFileSync(path, 'utf8').replace(/^﻿/, '')));
+  return CatalogSchema.parse(JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, '')));
 }
 
 function isWithin(directory: string, target: string): boolean {
@@ -69,10 +78,17 @@ function writeCatalog(target: string, catalog: Catalog): void {
   }
 }
 
-/** Restore the exact bundled baseline, including its original observation times. */
-export function resetFixtureCatalog(path: string): Catalog {
+/**
+ * Restore a named bundled baseline, by default with its original observation times.
+ * `now` re-dates its evidence for runs under the backend's real clock.
+ */
+export function resetFixtureCatalog(
+  path: string,
+  options: { seed?: string; now?: string } = {},
+): Catalog {
+  const seeded = loadFixtureCatalog(seedPath(options.seed ?? 'store-a'));
+  const catalog = options.now === undefined ? seeded : stampObservations(seeded, options.now);
   const { target, existing } = writableCatalogPath(path);
-  const catalog = loadFixtureCatalog(seedPath);
   if (existing && existing.supplierId !== catalog.supplierId) {
     throw new Error(`Reset requires a ${catalog.supplierId} working catalog`);
   }
