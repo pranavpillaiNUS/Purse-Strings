@@ -1,0 +1,32 @@
+{
+  "id": "engineering-hires-practice",
+  "version": 1,
+  "policyId": "hardware-policy",
+  "policyVersion": 1,
+  "currency": "SGD",
+  "budgetMinor": 800000,
+  "purchaseBy": "2026-11-16T10:00:00Z",
+  "readyBy": "2026-11-19T09:00:00Z",
+  "deliveryLocationId": "singapore-office",
+  "approvedBy": "fixture-ops-manager",
+  "confirmedAt": "2026-11-03T08:00:00Z",
+  "allowedSuppliers": ["store-a", "store-b"],
+  "requirements": [
+    {
+      "id": "engineering-laptops",
+      "role": "laptop",
+      "quantity": 5,
+      "allowedSkus": ["LAP-14-AIR"],
+      "maxUnitPriceMinor": 120000,
+      "minWarrantyMonths": 24
+    },
+    {
+      "id": "engineering-monitors",
+      "role": "monitor",
+      "quantity": 5,
+      "allowedSkus": ["MON-27-USBC"],
+      "maxUnitPriceMinor": 30000,
+      "minWarrantyMonths": 24
+    }
+  ]
+}

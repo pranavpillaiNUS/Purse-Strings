@@ -18,7 +18,8 @@
     "test": "node --test \"services/**/*.test.ts\" \"apps/**/*.test.ts\" \"packages/**/*.test.ts\"",
     "cli": "node apps/cli/src/main.ts",
     "demo": "node apps/cli/src/main.ts demo",
-    "backend": "node apps/cli/src/backend.ts"
+    "backend": "node apps/cli/src/backend.ts",
+    "shop": "node apps/cli/src/shop.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
