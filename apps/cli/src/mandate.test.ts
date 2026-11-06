@@ -34,6 +34,28 @@ function invalid(args: string[], input?: string) {
   assert.notEqual(result.stderr, '');
 }
 
+test('--proposal-out writes a BOM-free proposal for the backend and never overwrites a file', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-proposal-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const out = join(directory, 'proposal.json');
+  const result = run(['mandate', 'draft', '--request', requestPath, '--now', now, '--proposal-out', out, '--json']);
+  assert.equal(result.status, 0, result.stderr);
+  const artifact = MandateDraftSchema.parse(JSON.parse(result.stdout));
+  const bytes = readFileSync(out);
+  assert.notDeepEqual([...bytes.subarray(0, 3)], [0xEF, 0xBB, 0xBF]);
+  const proposal = JSON.parse(bytes.toString('utf8'));
+  assert.deepEqual(proposal, artifact.proposal);
+  assert.equal('approvedBy' in proposal, false);
+  assert.equal('digest' in proposal, false);
+
+  const before = readFileSync(out, 'utf8');
+  const repeat = run(['mandate', 'draft', '--request', requestPath, '--now', now, '--proposal-out', out, '--json']);
+  assert.equal(repeat.status, 1);
+  assert.equal(repeat.stdout, '');
+  assert.equal(readFileSync(out, 'utf8'), before);
+  invalid(['mandate', 'review', '--draft', requestPath, '--now', now, '--proposal-out', join(directory, 'other.json')]);
+});
+
 test('mandate draft JSON is directly reviewable from stdin and contains no confirmation authority', () => {
   const artifact = draft('-', `\uFEFF${readFileSync(requestPath, 'utf8')}`);
   assert.equal(artifact.request.hireCount, 5);

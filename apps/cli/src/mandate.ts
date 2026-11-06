@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createMandateDraft, reviewMandateDraft } from '../../../services/agent/src/mandate.ts';
@@ -8,7 +8,7 @@ const HELP = `Mandate draft and review (offline planning only)
 
 Usage:
   npm run cli -- mandate draft --request request.json|- --now ISO_TIMESTAMP [--json]
-    [--policy policy.json] [--kit kit.json]
+    [--policy policy.json] [--kit kit.json] [--proposal-out proposal.json]
   npm run cli -- mandate review --draft draft.json|- --now ISO_TIMESTAMP [--json]
     [--policy policy.json] [--kit kit.json]
 
@@ -18,6 +18,8 @@ local planning. Input and output schemas are agent-local, pending shared agreeme
 the current directory. Every command needs an explicit offline clock.
 
 draft --json emits the draft artifact itself, suitable for saving and review.
+--proposal-out writes only the proposal to a new file (never overwriting one), in
+the form the backend's mandate-draft accepts. That handoff is not a confirmation.
 review checks the content digest, current policy and kit, deadlines and kit needs.
 Exit codes: 0 draft produced/valid; 2 review needs revision; 1 invalid input/error.
 The digest identifies content; it is not a signature or approval. These commands
@@ -56,6 +58,7 @@ export function runMandate(args: string[]): void {
       policy: { type: 'string' },
       kit: { type: 'string' },
       now: { type: 'string' },
+      'proposal-out': { type: 'string' },
     },
   });
   if (values.help) {
@@ -67,7 +70,7 @@ export function runMandate(args: string[]): void {
     throw new Error('Expected mandate draft or review. Use mandate --help.');
   }
   if (!values.now) throw new Error(`mandate ${action} requires --now ISO_TIMESTAMP for offline planning`);
-  const allowed = action === 'draft' ? ['request', 'policy', 'kit', 'now', 'json'] : ['draft', 'policy', 'kit', 'now', 'json'];
+  const allowed = action === 'draft' ? ['request', 'policy', 'kit', 'now', 'json', 'proposal-out'] : ['draft', 'policy', 'kit', 'now', 'json'];
   if (Object.entries(values).some(([key, value]) => value !== undefined && !allowed.includes(key))) {
     throw new Error(`mandate ${action} accepts only ${allowed.map((name) => `--${name}`).join(', ')}`);
   }
@@ -79,6 +82,10 @@ export function runMandate(args: string[]): void {
   const kit = readJson(values.kit ?? bundled('services/agent/fixtures/engineering-kit.json'));
   if (action === 'draft') {
     const draft = createMandateDraft(policy, readJson(inputPath), kit, values.now);
+    // Written directly, because PowerShell's stdout redirection adds a BOM the backend refuses.
+    if (values['proposal-out']) {
+      writeFileSync(values['proposal-out'], `${JSON.stringify(draft.proposal, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+    }
     if (values.json) console.log(JSON.stringify(draft));
     else {
       console.log(`Mandate draft | digest ${draft.digest}`);
