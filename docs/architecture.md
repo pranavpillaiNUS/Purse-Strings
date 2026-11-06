@@ -6,23 +6,26 @@
 flowchart LR
   Human[Local operations manager] --> CLI[CLI input/output]
   CLI --> Core[Purchasing application core]
-  Core --> Agent[Bounded shopper: planned]
-  Agent -->|SKUs and quantities only| Checker[Policy checker / executor]
-  Agent -->|Catalog reads| Suppliers[Supplier adapters]
+  Core --> Checker
+  CLI --> Agent[Bounded shopper]
+  Agent -->|SKUs and quantities only, over rpc| Checker[Policy checker / executor]
+  Checker -->|Approved catalogs, over rpc| Agent
   Checker -->|Trusted quotes / order status| Suppliers
   Checker --> Ledger[(Transactional SQLite ledger)]
   Checker --> PayPal[PayPal sandbox: separate spike]
 ```
 
 M0 calls the pure checker and fixture supplier in-process. The separate backend CLI
-runs durable execution against fake providers only. There is no executing payment
-service, identity system or deployed process isolation. No website is in stage one.
+runs durable execution against fake providers only. The shopper is its own CLI entry
+point: it reaches the backend through the shared client, over one `rpc` child process
+per request. There is no executing payment service, identity system or deployed
+process isolation. No website is in stage one.
 
 ## Repository map
 
 | Path | Owner/responsibility | State |
 | --- | --- | --- |
-| `apps/cli/src/` | Argument parsing, file input, readable/JSON results, exit codes | M0 and simulation backend CLI implemented |
+| `apps/cli/src/` | Argument parsing, file input, readable/JSON results, exit codes | M0, simulation backend CLI and shopper CLI implemented |
 | `packages/contracts/src/` | Runtime schemas and shared types | Eligibility slice implemented |
 | `config/policies/` | Versioned company policy | Synthetic example |
 | `examples/` | Mandate, cart and prior commitments | Synthetic examples |
@@ -32,7 +35,7 @@ service, identity system or deployed process isolation. No website is in stage o
 | `services/checker/src/paypal/` | Trusted provider adapter | Existing sandbox client |
 | `services/suppliers/src/` | Supplier interface, fixture quotes and local catalog controls | Offline simulation implemented |
 | `services/suppliers/fixtures/` | Synthetic catalog and evidence | Demo data |
-| `services/agent/` | Deterministic mandate draft/review; bounded shopper planned | Offline planning implemented |
+| `services/agent/` | Deterministic mandate draft/review; bounded shopper worker over the shared client | Implemented; one live model run, against the contract mock |
 
 ## Technology decisions
 
@@ -40,6 +43,11 @@ Keep Node 24+, erasable TypeScript and ESM. Use Zod for runtime validation and
 `node:test` for behavior tests. Node built-ins handle CLI arguments/files; no CLI,
 server or agent framework is needed for M0. Stdout in JSON mode contains a single
 JSON result; operational errors go to stderr. No frontend dependencies.
+
+The shopper uses `@anthropic-ai/sdk` through a manual Messages loop rather than an agent
+framework, because the worker must own every bound and validate every call itself. This
+narrows the framework option in `docs/team-split-and-technology-research.md`. The
+worker depends on a provider-neutral model seam, so tests run with no key or network.
 
 `store show/reset/set` controls synthetic working catalogs through the CLI. Supplier
 code validates the full change and replaces the working file only after validation;

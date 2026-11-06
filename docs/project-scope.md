@@ -140,6 +140,10 @@ validation and policy narrowing. That slice establishes no confirmation or stock
 authority, and M1 is incomplete. M2 implementation exists: a SQLite ledger with atomic
 reservations, plus a simulation-only backend CLI with local operator confirmation and
 durable execution over fake providers (see `services/checker/src/ledger/README.md`).
-No gate after M0 is recorded as passed, and M3–M5 are planned. PayPal feasibility is unverified
+A partial M4 slice adds the bounded shopper worker over the shared client, tested
+against the real checker core with scripted models. It has had one live model run,
+against the contract mock, and its CLI approval and exception flows do not exist. No
+gate after M0 is recorded as passed,
+and M3 and M5 are planned. PayPal feasibility is unverified
 until `docs/paypal-spike.md` records observed results. The original hackathon schedule
 is preserved in `docs/hackathon-plan.md`, not adopted as a current commitment.

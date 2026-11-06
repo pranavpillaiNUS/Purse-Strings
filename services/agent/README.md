@@ -1,19 +1,25 @@
-# Mandate planning and offline shopping tools
+# Mandate planning and the bounded shopper
 
-## Delivered planning slice
+The agent drafts mandates and shops within them. It never decides what executes: the
+checker prices every cart itself and owns the ledger. This service holds no payment
+credentials and imports no checker code. `src/boundary.test.ts` checks the imports;
+that proves module separation, not deployment isolation.
+
+## Mandate planning
 
 `src/mandate.ts` deterministically turns a structured hire request and versioned kit
-template into a policy-constrained draft. No model integration is implemented yet.
-All input is runtime-validated. Supplier lists, exact role SKUs, per-item price caps,
-warranty minimums, total budget and aggregate role quantities must stay within the
-supplied policy. Templates can narrow limits; attempted relaxations fail rather
-than being silently clamped. Purchase must be on or before readiness, and the
-purchase deadline must not have passed at the explicit offline clock.
+template into a policy-constrained draft. No model is involved yet. All input is
+runtime-validated. Supplier lists, exact role SKUs, per-item price caps, warranty
+minimums, total budget and aggregate role quantities must stay within the supplied
+policy. Templates can narrow limits; attempted relaxations fail rather than being
+silently clamped. Purchase must be on or before readiness, and the purchase deadline
+must not have passed at the explicit offline clock.
 
-The sample request needs five laptops and five monitors. The template and request
-in `fixtures/` and the default company policy are synthetic. No stock is subtracted:
-proposed reuse is not an assignment. Per-request quantity checks do not prevent
-double allocation or over-purchasing across requests.
+The sample request needs five laptops and five monitors. The template and requests in
+`fixtures/` and the default company policy are synthetic. `hire-request.json` is dated
+for fixed-clock tests and its deadline has passed; `demo-hire-request.json` allows both
+stores and is dated for real-clock runs until November 16, 2026. No stock is
+subtracted: proposed reuse is not an assignment.
 
 From the repository root:
 
@@ -24,121 +30,161 @@ npm.cmd run cli -- mandate review --draft services/agent/state/draft.json --now 
 
 Use `--policy` and `--kit` with either command for other local planning files, or
 `--request -` / `--draft -` for UTF-8 stdin. UTF-8 BOMs are supported. Working
-artifacts under `state/` are ignored in Git. The commands do not write input files;
-the example explicitly saves stdout. `--json` emits one artifact or review result;
-errors go to stderr. `draft` exits 0 on creation and 1 on invalid input. `review`
-exits 0 for `draft_valid`, 2 for `needs_revision` and 1 for invalid input.
+artifacts under `state/` are ignored in Git. `--json` emits one artifact or review
+result; errors go to stderr. `draft` exits 0 on creation and 1 on invalid input.
+`review` exits 0 for `draft_valid`, 2 for `needs_revision` and 1 for invalid input.
+
+`mandate draft --proposal-out FILE` also writes just the proposal to a new file, in the
+form the backend's `mandate-draft` accepts. It refuses to overwrite an existing file.
 
 Drafts retain the request and kit snapshots, policy content digest, revisions and
-creation time. Digests use SHA-256 over JSON with recursively sorted object keys
-and original array order. They identify content and are neither signatures nor
-approval evidence, and they differ from the digest the backend confirms. Review compares the current policy and kit against the draft,
-re-derives the proposal, and checks its digest and deadlines. A changed template or
-policy requires a new draft, including edits under an unchanged version number.
+creation time. Digests use SHA-256 over JSON with recursively sorted object keys and
+original array order. They identify content and are neither signatures nor approval
+evidence, and they differ from the digest the backend confirms. Review compares the
+current policy and kit against the draft, re-derives the proposal, and checks its digest
+and deadlines. A changed template or policy requires a new draft, including edits under
+an unchanged version number.
 
-`draft_valid` means only that the supplied planning records are consistent. It is
-not cart eligibility, affordability, verified evidence, stock assignment, human
-confirmation or payment permission. No trusted source identity is established by
-passing a file path. Drafts omit `approvedBy` and `confirmedAt` and cannot satisfy
-the existing confirmed `MandateSchema`; the CLI `check` command rejects them.
+`draft_valid` means only that the supplied planning records are consistent. It is not
+cart eligibility, affordability, verified evidence, stock assignment, human confirmation
+or payment permission. Drafts omit `approvedBy` and `confirmedAt` and cannot satisfy
+`MandateSchema`. The planning schemas live only in this service, not in
+`packages/contracts/`. See [the confirmation and stock handoff](CONFIRMATION_HANDOFF.md).
 
-The planning schemas live only in this service. They are experimental inputs and
-artifacts, not additions to `packages/contracts/`. See
-[the confirmation and stock handoff](CONFIRMATION_HANDOFF.md) before connecting them
-to execution. M1 is still incomplete.
+## The shopper
 
-## Offline shopping tools: preparatory M4 slice
+`npm run shop -- run` runs a model in a loop over four tools, through the shared
+`BackendClient`. The mandate and ledger totals come from the backend's `mandate.get`, so
+an unconfirmed mandate stops the run before any model call.
 
-`src/shopper.ts` exposes four runtime-validated tools through
-`createOfflineShoppingSession(input, catalogSource).dispatch(call)`. This is a
-deterministic rehearsal surface for a future model worker, not an AI shopper or a
-backend connection. Shared contracts and CLI parsing are unchanged. No M1 or M4
-acceptance gate is established by this slice.
+| Module | Responsibility |
+| --- | --- |
+| `src/shopper.ts` | The tool boundary: validates each call and tracks carts, units and submission state |
+| `src/backend-session.ts` | Connects the session to the shared backend client |
+| `src/worker.ts` | The bounded model loop, the prompt and the host-derived report |
+| `src/model.ts` | The provider-neutral model seam, plus a scripted model for offline runs |
+| `src/anthropic.ts` | Claude through a manual Messages loop |
+
+`apps/cli/src/shop.ts` is a separate entry point, like `backend.ts`, so this process
+never loads checker modules. It reaches the backend through
+`apps/cli/src/backend-transport.ts`: one fresh `rpc` child process per request, with an
+allowlisted environment that excludes the model key.
+
+### Tools
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
-| `catalog.search` | `supplierId`, `requirementId`, optional `limit` (1–25, default 10) | Exact approved SKU matches in catalog order, with supplier facts and original evidence |
-| `product.view` | `supplierId`, `requirementId`, `sku` | One exact approved product with supplier facts and original evidence |
-| `cart.build` | `supplierId`, `lines: [{requirementId, sku, quantity}]` | A price-free `CartSubmission` with host-bound mandate revision and cart ID |
-| `cart.submit` | `cartId` returned by the latest successful build | An explicitly labelled offline stub receipt |
+| `catalog.search` | `supplierId`, `requirementId`, optional `limit` (1–25, default 10) | Approved exact SKU matches with supplier facts and original evidence |
+| `product.view` | `supplierId`, `requirementId`, `sku` | One approved product with supplier facts and original evidence |
+| `cart.build` | `supplierId`, `lines: [{requirementId, sku, quantity}]` | A price-free cart with a host-assigned ID, and a non-authoritative estimate for comparison |
+| `cart.submit` | `cartId` from the latest successful build | The checker's answer, plus remaining units and budget |
 
-Every call is `{ "tool": "NAME", "args": { ... } }`. Extra fields, unrecognized
-tools, arbitrary URLs, prices, quote/budget snapshots, clocks, mandate revisions
-and approval identities are rejected. Prices can appear in catalog observations;
-they cannot enter a cart. The supplied catalog port has only
-`getCatalog(supplierId)`; the fixture implementation is
-`createFixtureCatalogSource(catalogs)` in `services/suppliers/src/catalog.ts`.
-It snapshots configured catalogs and returns separate copies on every read.
-The session validates connector output and supplier identity again. Evidence
-status, source and observation time are preserved, including unknown or stale facts.
-Supplier strings are never interpreted as tool calls or authority.
+Models see these as `catalog_search` and so on. Extra fields, other tools, URLs, prices,
+quotes, budgets, clocks, mandate revisions and approval identities are all rejected, and
+those attempts still consume the tool budget. Supplier strings are never interpreted as
+tool calls or authority. Unknown or stale evidence stays visible, not promoted.
 
-The host configures a full fixture mandate, `runId`, explicit offline `now`,
-optional `maxToolCalls` (1–100, default 24) and `catalogTimeoutMs` (1–10,000,
-default 1,000). `getContext()` returns planning fields without `approvedBy` or
-`confirmedAt`; accepting a schema-valid mandate does not authenticate it. Calls
-are serialized. Invalid, overlapping and replay attempts consume the call budget.
-A read timeout discards late results and clears the busy state; it cannot cancel
-an adapter's underlying work. Only trusted, read-only adapters belong on this port.
+### What the host enforces
 
-A cart must use configured suppliers, requirements and exact SKUs present in the
-catalog. Quantity limits add all lines for each requirement, including different
-SKUs. Duplicate SKUs fail validation. A successful rebuild receives a new host ID
-and replaces the previous build; a failed rebuild preserves the last valid cart.
-One session submits at most one cart. Repeating that submission returns a separate
-copy of the same receipt; other tools are closed after submission. These are
-in-memory rehearsal semantics, not durable idempotency or cumulative accounting
-across sessions. Reuse distinct host run IDs for distinct rehearsals.
+| Limit | Default |
+| --- | --- |
+| Tool calls, including invalid ones | 24 (`--max-tool-calls`) |
+| Model turns | 16 (`--max-model-turns`) |
+| Carts accepted per run | 3 (`--max-carts`) |
+| Total tokens counted across turns | 150,000 |
+| Wall clock for the run | 5 minutes |
 
-The submission receipt has `kind: "offline-eligibility-stub"`, `simulation: true`,
-the exact price-free cart and a warning. As specified by the current Role B stub
-seam, its nested `EligibilityResult` always says `eligible`; `totalMinor` and
-`remainingBeforeMinor` are zero placeholders, `quoteId` is `offline-stub-no-quote`
-and the `OFFLINE_STUB` check is `unknown`. **This is not an eligibility decision.**
-Keep the wrapper and warning when rendering it. Never pass it off as a checker
-result, reservation or payment authority.
+Quantities count ledger holdings plus this run's accepted carts, across all carts and
+suppliers. A truncated or refused model turn never runs its tool calls. A model's final
+text is reported as `modelSummary`; `outcome` and `progress` come only from host state,
+so a model claiming success changes nothing.
 
-The tools constrain proposals but do not check policy narrowing, affordability,
-unit prices, stock availability, warranty or delivery evidence. Unknown evidence
-stays visible; it is not promoted to verified evidence or purchase permission.
-The future trusted executor must independently resolve current authority, quotes
-and ledger state, and block execution when required evidence is missing.
+### Submission outcomes
 
-Run the behavior tests from the repository root:
+| Backend answer | Session behavior |
+| --- | --- |
+| Accepted | Units and budget update. This is a reservation, not payment or an order |
+| `BUDGET_EXCEEDED`, `QUANTITY_EXCEEDED`, `QUOTE_EXPIRED`, `MANDATORY_EVIDENCE_UNKNOWN`, `INELIGIBLE`, `SUPPLIER_UNAVAILABLE` | Nothing reserved. The model may build an alternative |
+| `IDEMPOTENCY_CONFLICT`, `MANDATE_REVISION_CONFLICT`, `MANDATE_NOT_CONFIRMED`, `NOT_FOUND`, `INVALID_REQUEST`, `UNSUPPORTED_VERSION` | Run ends as `backend_refused`. Another cart cannot fix these |
+| `BUSY`, `INTERNAL_ERROR`, timeout or lost response | Unknown: a reservation may exist. No other cart can be built until the same cart ID resolves it |
 
-```powershell
-node --test --test-isolation=none services/agent/src/shopper.test.ts services/suppliers/src/catalog.test.ts
-```
+One cart always carries the same idempotency key, so retrying can only return the
+original operation. Reusing a run ID is safe too: a fresh session reads the ledger's
+holdings first, and changed content under an existing cart ID is refused.
 
-`fixtures/shopping-tool-calls.json` is an editable synthetic transcript for terminal
-review. To replay it from PowerShell without changing shared CLI routing:
+### Run it
+
+Exit codes: 0 `completed`; 2 `partial`, `no_feasible_cart`, `limit_exceeded`,
+`backend_refused` or `model_refused`; 3 `unknown_submission`; 1 `failed` or invalid
+input. `--json` prints one report on stdout, and `--trace FILE` appends each model turn
+and tool call as JSON lines before the tool runs. Run `npm run shop -- --help` for all
+options.
+
+Against the contract mock, with no ledger, key or network:
 
 ```powershell
-@'
-import { readFileSync } from 'node:fs';
-import { createOfflineShoppingSession } from './services/agent/src/shopper.ts';
-import { createFixtureCatalogSource } from './services/suppliers/src/catalog.ts';
-const read = (path) => JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
-const session = createOfflineShoppingSession({
-  mandate: read('examples/mandate.json'), runId: 'fixture-shopping',
-  now: '2026-11-03T09:00:00Z'
-}, createFixtureCatalogSource([read('services/suppliers/fixtures/store-a.json')]));
-const results = [];
-for (const call of read('services/agent/fixtures/shopping-tool-calls.json')) {
-  results.push(await session.dispatch(call));
-}
-console.log(JSON.stringify({ mode: 'offline-shopping-replay', results }));
-'@ | node --input-type=module
+npm.cmd run --silent shop -- run --run-id fixture-shopping --mandate-id engineering-hires-november --mock-mandate examples/mandate.json --catalog services/suppliers/fixtures/store-a.json --scripted services/agent/fixtures/shopping-tool-calls.json
 ```
 
-The fixed clock keeps dated fixtures reproducible and is not execution time.
-The example needs no keys, network, database or external effects. Tests include
-hostile supplier text, rejected authority/payment tools, quantity splitting,
-mutation isolation, cart identity changes, overlap and timeout recovery. There is
-no model here, so these tests do not establish prompt-injection immunity.
+Against the real simulation backend, see the [README walkthrough](../../README.md#the-shopper).
 
-Next work is a separately bounded model driver and a coordinated CLI command.
-Stock assignment/confirmation integration remains in Danny's ledger scope; see
-[the handoff](CONFIRMATION_HANDOFF.md). The future worker must also run without
-payment secrets and with process isolation: module separation and these tests do
-not prove that deployment boundary. See `AGENTS.md`.
+For a live model, set `ANTHROPIC_API_KEY` in `.env` and omit `--scripted`. The shopper
+reads only that one name from `.env`, because loading the whole file would put PayPal
+credentials in its process; it refuses to start if any `PAYPAL_*` variable is set. It
+uses `claude-opus-5-5` unless `--model` says otherwise, at `medium` effort, with server-side
+refusal fallback (`fallbacks: "default"`) enabled. The task states the host's current time
+so the model can flag a passed deadline; the backend's own clock still decides every
+deadline.
+
+To try a live model on any machine, use the practice mandate, which allows both stores and
+has a deadline of November 16, 2026. This example includes the hostile listing:
+
+```powershell
+npm.cmd run --silent shop -- run --run-id two-store-live --mandate-id engineering-hires-practice --mock-mandate services/agent/fixtures/practice-mandate.json --catalog services/suppliers/fixtures/store-a.json --catalog services/suppliers/fixtures/store-b-hostile.json
+```
+
+The contract mock checks no policy, budget, evidence or deadlines. Acceptance there is not a
+checker decision, even when a model's summary calls it one, because the model cannot tell
+which backend answered.
+
+Scripted runs use `fixtures/*-shopping-calls.json`. `demo-shopping-calls.json` compares
+both stores and buys from the cheaper one (`--run-id demo`).
+`compromised-shopping-calls.json` plays a model obeying the hostile listing
+(`--run-id compromised`): every attempt is refused and nothing is reserved.
+
+### Not established
+
+- **Live model behavior is barely tested.** Claude has run once, on November 6, 2026,
+  against the contract mock with one store and only one possible cart. That confirmed the
+  live connection and tool use, and it predates the current-time context. No live run has
+  yet chosen between stores, read the hostile listing or used the real backend, so there
+  is no claim of prompt-injection immunity. `src/anthropic.test.ts` proves the request and
+  response mapping with a stubbed `fetch`, and the scripted model proves the host's bounds.
+  The protection tested here is that obeying the listing achieves nothing.
+- **No acceptance gate is passed by this.** M4 still needs a live hostile-listing run,
+  CLI review and approval, and bounded exceptions.
+- **Run state is not durable.** An interrupted worker keeps nothing but its optional trace.
+  The ledger holds the facts, and a rerun with the same run ID reads them. Nothing here
+  looks up an operation by cart ID, so an `unknown_submission` needs the same run rerun or
+  an operator check.
+- **No deployment isolation.** The worker should run without payment secrets under its own
+  OS identity; the environment guard and module boundary do not prove that alone.
+
+## Tests
+
+From the repository root:
+
+```powershell
+node --test "services/agent/src/*.test.ts" "services/suppliers/src/*.test.ts" apps/cli/src/shop.test.ts apps/cli/src/backend-transport.test.ts
+```
+
+`apps/cli/src/shop.test.ts` runs the worker against the real checker core and a real
+SQLite ledger: normal purchase, a shipping jump then recovery, a split across suppliers,
+unknown evidence, a lost response, reuse of a run ID, competing runs, and a compromised
+model. Its full-process walk is skipped on Windows; see
+[the handoff](CONFIRMATION_HANDOFF.md).
+
+`createOfflineShoppingSession` remains as a single-cart rehearsal that never contacts a
+backend. Its receipt always says `eligible` with zero placeholder amounts and an `unknown`
+`OFFLINE_STUB` check. **That is not an eligibility decision.** Keep the wrapper and warning
+when rendering it, and never pass it off as a checker result.

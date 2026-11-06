@@ -57,6 +57,11 @@ npm run cli -- check --catalog services/suppliers/state/store-a.json --now 2026-
 npm run cli -- store reset --catalog services/suppliers/state/store-a.json
 ```
 
+`store reset --seed NAME` chooses the baseline: `store-a` (the default), `store-b`, or
+`store-b-hostile`, which is store-b with a prompt-injection listing. Add `--now
+ISO_TIMESTAMP` to re-date all of its evidence, which runs under the backend's real clock
+need. It keeps every status and source as written.
+
 `store set` accepts one or more of these changes:
 
 | Option | Effect |
@@ -78,8 +83,8 @@ explicitly changed. Shipping or price alone does not refresh evidence, so use
 
 Changes are validated together before replacing the working catalog. Unknown SKUs,
 invalid values and unsupported options fail without changing the file. Seed files,
-symlink destinations and existing non-catalog files cannot be overwritten. `reset`
-restores the dated store-a seed exactly; it does not refresh evidence. A later
+symlink destinations and existing non-catalog files cannot be overwritten. Without
+`--now`, `reset` restores the dated seed exactly and does not refresh evidence. A later
 `check` loads a fresh supplier snapshot, while an already-created adapter keeps its
 original snapshot. Store controls exit `0` on success and `1` on errors; `--json`
 emits one JSON result, and diagnostics go to stderr. In Windows PowerShell, use
@@ -116,14 +121,57 @@ as confirmed mandates by `check`. Stock assignment, human confirmation, quote
 eligibility and execution are still separate work, and M1 is incomplete.
 
 The digest above is not the one the backend confirms. To take a draft to confirmation,
-pass only its `proposal` to the backend's `mandate-draft`, then confirm the digest the
-backend prints. See the [confirmation/stock handoff](services/agent/CONFIRMATION_HANDOFF.md).
+save its proposal with `mandate draft --proposal-out FILE`, pass that file to the
+backend's `mandate-draft`, then confirm the digest the backend prints. See the
+[confirmation/stock handoff](services/agent/CONFIRMATION_HANDOFF.md).
 
 Exit codes: `draft` uses 0 for a produced draft and 1 for invalid input; `review`
 uses 0 for `draft_valid`, 2 for `needs_revision` and 1 for invalid input. JSON mode
 keeps stdout machine-readable and sends errors to stderr. See
 [agent planning details](services/agent/README.md) and the
 [confirmation/stock handoff](services/agent/CONFIRMATION_HANDOFF.md).
+
+## The shopper
+
+`npm run shop -- run` lets a model compare approved suppliers and propose price-free
+carts. The checker prices each cart independently and reserves budget in its ledger. A
+reservation is not payment, an order or delivery. Limits, tools, outcomes and what is
+still unproven are in the [agent README](services/agent/README.md#the-shopper).
+
+This PowerShell walkthrough uses the scripted model, so it needs no API key. **It stops
+at the second backend command on Windows**, because of the runtime-directory check
+described in the [handoff](services/agent/CONFIRMATION_HANDOFF.md#blocked-on-windows).
+The contract-mock command in the agent README works everywhere.
+
+```powershell
+$now = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+$config = "services/agent/fixtures/backend-demo-config.json"
+
+# Control panel: two working catalogs, re-dated for the backend's real clock.
+npm.cmd run --silent cli -- store reset --catalog services/suppliers/state/store-a.json --seed store-a --now $now
+npm.cmd run --silent cli -- store reset --catalog services/suppliers/state/store-b.json --seed store-b-hostile --now $now
+
+# Plan, then the operator stores, reviews and confirms the exact revision.
+npm.cmd run --silent cli -- mandate draft --request services/agent/fixtures/demo-hire-request.json --now $now --proposal-out services/agent/state/proposal.json
+$draft = npm.cmd run --silent backend -- --db .runtime/app.db --config $config mandate-draft --file services/agent/state/proposal.json | ConvertFrom-Json
+npm.cmd run --silent backend -- --db .runtime/app.db --config $config mandate-review --id engineering-hires-demo --revision 1
+npm.cmd run --silent backend -- --db .runtime/app.db --config $config mandate-confirm --id engineering-hires-demo --revision 1 --digest $draft.digest
+
+# A compromised model obeys the hostile listing. Everything is refused, nothing reserved.
+npm.cmd run --silent shop -- run --run-id compromised --mandate-id engineering-hires-demo --backend-db .runtime/app.db --backend-config $config --scripted services/agent/fixtures/compromised-shopping-calls.json
+
+# An honest run compares both stores and reserves the cheaper cart. Prints the operation ID.
+npm.cmd run --silent shop -- run --run-id demo --mandate-id engineering-hires-demo --backend-db .runtime/app.db --backend-config $config --scripted services/agent/fixtures/demo-shopping-calls.json
+
+# Only the operator's backend process executes, here against fake providers.
+npm.cmd run --silent backend -- --db .runtime/app.db --config $config operation-run --id OPERATION_ID
+npm.cmd run --silent backend -- --db .runtime/app.db --config $config audit --id OPERATION_ID
+```
+
+To use Claude, add `ANTHROPIC_API_KEY` to `.env` and drop `--scripted`. Delete `.runtime/`
+and the `state` files to start again. Change a store between runs with `store set`: a
+shipping jump, for example, makes the checker reject a cart the model had estimated
+within budget.
 
 ## Status
 
@@ -133,9 +181,12 @@ behavior tests, plus deterministic mandate draft/review planning. The checker ad
 SQLite ledger for mandate authority and atomic reservations, and a simulation-only
 backend CLI (`npm run backend`) with local operator confirmation and durable execution
 over fake providers; see [its limits](services/checker/src/ledger/README.md). The
-original sandbox PayPal client, money helpers and spike remain intact.
+bounded shopper worker (`npm run shop`) submits through the shared client to that
+backend. It is tested with scripted models against the real checker core, and has had
+one live Claude run so far, against the contract mock with a single store. The original
+sandbox PayPal client, money helpers and spike remain intact.
 
-**Planned:** stock assignment, bounded AI shopper, PayPal and real supplier execution
+**Planned:** model-drafted mandates, stock assignment, PayPal and real supplier execution
 through the ledger, exceptions and equipment-readiness tracking. All will be tested
 through the CLI. No website scaffold or frontend dependencies are included.
 
