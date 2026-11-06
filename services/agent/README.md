@@ -66,16 +66,16 @@ npm.cmd run cli -- mandate review --draft services/agent/state/draft.json --now 
 Add `--scripted services/agent/fixtures/draft-request-calls.json --now 2026-11-06T09:00:00Z`
 to rehearse with no key or network. Without `--scripted`, the command spends API credit.
 `--text` takes the request inline, and `--json` prints one report. Run
-`npm run shop -- --help` for all options. Output files are never overwritten, and that is
-checked before the model call. Review with a time after the draft's creation time, or
+`npm run shop -- --help` for all options. Output files must be two different new files in a
+directory that exists, and that is checked before the model call. Review with a time after the draft's creation time, or
 `DRAFT_TIME` fails.
 
 | Outcome | Exit | Meaning |
 | --- | --- | --- |
 | `drafted` | 0 | A policy-checked draft exists. It still needs human review and confirmation |
 | `needs_input` | 2 | The model asked for something instead of drafting. Nothing was guessed |
-| `policy_refused` | 2 | The request as read breaks policy or a deadline |
-| `invalid_output` | 2 | The model's output did not fit the format in 3 turns |
+| `policy_refused` | 2 | The request as read breaks policy or a deadline, exceeds what a mandate can hold, or names an unlisted location |
+| `invalid_output` | 2 | The output did not fit the format in 3 turns, gave an unusable value for something the manager asked for, or changed one on a retry |
 | `model_refused` | 2 | The model declined |
 | `failed` | 1 | The model call failed or was truncated, or the input was invalid |
 
@@ -84,9 +84,13 @@ How the host treats the model's answer:
 - **It passes through `createMandateDraft`,** so policy, the kit and deadlines apply exactly
   as they do to a hand-written request. The tool's schema has no field for an approval,
   confirmation or stock assignment, and extra fields are rejected.
-- **Malformed output may be corrected. A policy refusal may not.** The model sees format
-  errors and can retry. It never sees a policy refusal, because it could lower the numbers
-  until they passed, and it is not told the policy limits.
+- **A retry can correct a format, not what was asked for.** The model sees format errors and
+  can retry, but the run ends if it gives an unusable value for hires, budget, dates, location,
+  suppliers or the kit, or changes one of them on a retry. A changed value would reach the
+  reviewer looking like a clean draft. It never sees a policy refusal, and it is not told the
+  policy limits, so it cannot lower the numbers until they pass.
+- **The deadline is checked when the model answers.** The clock is read again after the
+  reply, because a slow reply can outlast a deadline. `--now` stays fixed for rehearsals.
 - **Guesses are recorded.** The draft keeps the request text, each value the model says it
   chose and everything it could not capture, and its digest covers them. `shop draft` and
   `mandate review` both print them. When a request does not say, the prompt sets the
@@ -94,7 +98,8 @@ How the host treats the model's answer:
   at the delivery location.
 - **IDs and locations are limited.** Model-chosen mandate IDs use only lowercase letters,
   digits and hyphens. Locations must be ones the operator lists with `--location`, because
-  neither policy nor the kit lists them. The default is `singapore-office`.
+  neither policy nor the kit lists them, and any other location ends the run. The default
+  is `singapore-office`.
 
 Claude has run this twice, on November 6, 2026, with the default model. For
 `hire-request-text.txt` it read each stated value correctly, flagged the values it chose,

@@ -43,12 +43,15 @@ The backend CLI refuses its runtime directory after first use on Windows, becaus
 Windows does not report. This blocks the steps above on Windows, and 8 of the 12 tests
 in `apps/cli/src/backend.test.ts` fail there, including on a clean `main`.
 
-That code is Danny's, so it is unchanged here. Skipping only the mode check on `win32`
-in a scratch copy made the full process walk in `apps/cli/src/shop.test.ts` pass, and
-cleared 3 of those 8 tests. The other 5 need their own decisions (lines 336, 353, 379,
-402 and 437 of the test file). That skip would leave a Windows runtime directory with
-no owner-only check, so whether to accept it for a local prototype or to check ACLs is
-also Danny's decision. The walk has not been run on Linux or macOS.
+That code is Danny's, so it is unchanged here, and issue #9 tracks his fix. Skipping only
+the mode check on `win32` in a scratch copy made the full process walk in
+`apps/cli/src/shop.test.ts` pass, and cleared 3 of those 8 tests. The other 5 need their own
+decisions (lines 336, 353, 379, 402 and 437 of the test file). That skip would leave a
+Windows runtime directory with no owner-only check, so issue #9 rules out shipping it and
+asks for a check of the real Windows access rules.
+
+Danny reports `npm test` passing on Linux at commit `ba3cbc4`, which includes the walk there.
+It has not been run on macOS.
 
 ## Decisions for Pranav and Danny
 
@@ -56,7 +59,7 @@ also Danny's decision. The walk has not been run on Linux or macOS.
 | --- | --- | --- |
 | Shared draft | Agent and checker each have their own draft schema and digest | Keep the proposal file handoff, or agree shared schemas and one digest in `packages/contracts/`. Keep draft and confirmed states distinct; model output must never supply authoritative confirmation metadata. |
 | Confirmation | Backend checks the exact digest and policy, and records OS-derived identity and trusted time | Decide whether the confirmed digest must also bind the kit revision and request. Caller-provided `approvedBy` is not identity. |
-| Model assumptions | `shop draft` and `mandate review` show what a model assumed and could not capture. The backend's `mandate-review` and confirmation digest do not cover them, so someone confirming from the backend alone would not see them | Decide whether the backend should show them before confirmation, which would change what it stores. |
+| Model assumptions | `shop draft` and `mandate review` show what a model assumed and could not capture. The backend's `mandate-review` and confirmation digest do not cover them, so someone confirming from the backend alone would not see them | Both agree the reviewer should see the request, assumptions and omissions alongside the proposal. Agree how to bind that context to the confirmation, which would change what the backend stores. |
 | Revision | Backend refuses changed content under an existing version, and replacement revisions after the first reservation | Agree who allocates revision numbers. |
 | Stock attestation | Not implemented | Record a unique unit ID, exact vetted SKU, serviceability/compatibility, location and readiness evidence, attestor and observation time. Unknown or stale mandatory facts cannot reduce purchasing needs automatically. |
 | Stock assignment | Not implemented | The storage owner atomically binds a unit to one active request/revision. Competing requests and restart must not assign it twice. A supplied stock list, preview or JSON file cannot prove this. |

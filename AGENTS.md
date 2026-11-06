@@ -40,7 +40,7 @@ recorded as passed; see `docs/project-scope.md`.
 
 **Known problem:** on Windows, `apps/cli/src/backend.ts` refuses its runtime directory after
 first use because of a POSIX permission check, and 8 tests in
-`apps/cli/src/backend.test.ts` fail. Report these as already known, and do not weaken the
+`apps/cli/src/backend.test.ts` fail. Issue #9 tracks the fix. Report these as already known, and do not weaken the
 check without Role A's agreement. Details are in `services/agent/CONFIRMATION_HANDOFF.md`.
 
 ## Team, ownership and branches
