@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createMandateDraft, reviewMandateDraft } from '../../../services/agent/src/mandate.ts';
-import type { MandateDraft } from '../../../services/agent/src/mandate.ts';
+import type { DraftOrigin, MandateDraft } from '../../../services/agent/src/mandate.ts';
 
 const HELP = `Mandate draft and review (offline planning only)
 
@@ -26,8 +26,13 @@ The digest identifies content; it is not a signature or approval. These commands
 do not confirm mandates, assign stock, establish authority or execute purchases.
 `;
 
-function bundled(path: string): string {
+export function bundled(path: string): string {
   return fileURLToPath(new URL(`../../../${path}`, import.meta.url));
+}
+
+/** Supplier and model text can carry terminal escape sequences; show it inert. */
+export function printable(text: string): string {
+  return text.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, ' ');
 }
 
 function readJson(path: string): unknown {
@@ -35,7 +40,19 @@ function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path === '-' ? 0 : path, 'utf8').replace(/^\uFEFF/, ''));
 }
 
-function printProposal(proposal: MandateDraft['proposal']): void {
+/** A model's guesses and omissions, shown so a person can catch them before confirming. */
+export function printOrigin(origin: DraftOrigin): void {
+  console.log(`Drafted by a model (${printable(origin.requestedModel)}) from this request:`);
+  console.log(`  ${printable(origin.requestText)}`);
+  console.log('Assumptions the model declared (check each before confirming):');
+  if (origin.assumptions.length === 0) console.log('  none declared, which does not mean there are none');
+  for (const { field, reason } of origin.assumptions) console.log(`  ${field}: ${printable(reason)}`);
+  console.log('Asked for but NOT captured in this draft:');
+  if (origin.notCaptured.length === 0) console.log('  none declared, which does not mean there are none');
+  for (const item of origin.notCaptured) console.log(`  - ${printable(item)}`);
+}
+
+export function printProposal(proposal: MandateDraft['proposal']): void {
   console.log(`${proposal.id} v${proposal.version} | policy ${proposal.policyId} v${proposal.policyVersion}`);
   console.log(`  budget: ${proposal.budgetMinor} SGD cents (all-in)`);
   console.log(`  purchase by: ${proposal.purchaseBy} | ready by: ${proposal.readyBy}`);
@@ -101,6 +118,7 @@ export function runMandate(args: string[]): void {
     console.log(`${review.decision} | draft ${review.draftDigest}`);
     printProposal(review.proposal);
     for (const check of review.checks) console.log(`  ${check.status} ${check.code}: ${check.message}`);
+    if (review.origin) printOrigin(review.origin);
     console.log('Draft review only. Human confirmation and stock assignment remain pending.');
   }
   process.exitCode = review.decision === 'draft_valid' ? 0 : 2;
