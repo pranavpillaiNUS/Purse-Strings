@@ -30,11 +30,10 @@ Everything runnable is a simulation: no real money, suppliers or orders.
 | --- | --- |
 | `npm run cli` | Offline eligibility (`check`, `demo`), fixture-store controls (`store`), deterministic mandate planning (`mandate draft/review`) |
 | `npm run backend` | SQLite ledger with atomic budget and quantity reservations, local operator confirmation, and durable execution with crash recovery over **fake** payment and supplier providers |
-| `npm run shop` | The bounded shopper: a model or a scripted stand-in proposes price-free carts to that backend through the shared client |
+| `npm run shop` | The bounded shopper (`run`): a model or a scripted stand-in proposes price-free carts to that backend through the shared client. Mandate drafting (`draft`): a model turns a plain-English request into a policy-checked draft |
 | `npm run spike:paypal` | A separate, interactive PayPal sandbox spike connected to none of the above. `docs/paypal-spike.md` records no results yet |
 
-**Not built:** PayPal in the purchase path, real suppliers, model-drafted mandates, stock
-attestation and assignment, CLI approvals and exceptions, delivery and readiness tracking,
+**Not built:** PayPal in the purchase path, real suppliers, stock attestation and assignment, CLI approvals and exceptions, delivery and readiness tracking,
 production authentication. Never describe these as implemented. Fake-provider results such
 as `ordered` are not real orders, and a reservation is not payment. No gate after M0 is
 recorded as passed; see `docs/project-scope.md`.
@@ -61,7 +60,7 @@ which person you are working for, ask.
   other role's code needs a change, say so and stop.
 - Don't change `packages/contracts/` unless your user confirms both people agreed.
 - Only Role A's code calls PayPal. `services/agent/` never imports checker or payment
-  code; its only tools are catalog search, product view, cart building and price-free
+  code; the shopper's only tools are catalog search, product view, cart building and price-free
   cart submission.
 - Check PayPal behavior against PayPal's current developer docs, not memory.
 - Work on a branch, not `main`: `role-b-shop`, `role-a-money` or a focused branch for one
@@ -92,8 +91,8 @@ use the sandbox; 5) approval and exception flow.
 
 **Role B build order:** 1) fake stores and a control panel that changes price, shipping and
 stock on cue (`store` commands; `store-a`, `store-b` and a hostile seed exist); 2) mandate
-drafting and confirmation (deterministic draft/review and the file handoff to the backend
-exist; model drafting from a plain-English request does not); 3) the agent with its bounded
+drafting and confirmation (deterministic draft/review, model drafting from a plain-English
+request (`shop draft`) and the file handoff to the backend exist); 3) the agent with its bounded
 tools (`npm run shop` exists; for what live runs have shown, see
 `services/agent/README.md`); 4) review and dashboard output, as CLI output until both people
 agree to start the stage-two website (`shop run` prints a run report); 5) a prompt-injection

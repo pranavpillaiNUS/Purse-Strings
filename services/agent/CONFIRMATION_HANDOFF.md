@@ -17,7 +17,8 @@ can recompute it. `draft_valid` never authorizes a purchase.
 
 `services/agent` must not import checker code, so the handoff is a file:
 
-1. Run `mandate draft --proposal-out proposal.json` to save the proposal on its own.
+1. Run `mandate draft --proposal-out proposal.json` to save the proposal on its own, or
+   `shop draft --proposal-out proposal.json` to have a model write the request first.
    The backend refuses the whole draft artifact.
 2. Run `npm run backend -- --db PATH --config PATH mandate-draft --file proposal.json`.
    It stores a revision and prints the digest to confirm.
@@ -55,6 +56,7 @@ also Danny's decision. The walk has not been run on Linux or macOS.
 | --- | --- | --- |
 | Shared draft | Agent and checker each have their own draft schema and digest | Keep the proposal file handoff, or agree shared schemas and one digest in `packages/contracts/`. Keep draft and confirmed states distinct; model output must never supply authoritative confirmation metadata. |
 | Confirmation | Backend checks the exact digest and policy, and records OS-derived identity and trusted time | Decide whether the confirmed digest must also bind the kit revision and request. Caller-provided `approvedBy` is not identity. |
+| Model assumptions | `shop draft` and `mandate review` show what a model assumed and could not capture. The backend's `mandate-review` and confirmation digest do not cover them, so someone confirming from the backend alone would not see them | Decide whether the backend should show them before confirmation, which would change what it stores. |
 | Revision | Backend refuses changed content under an existing version, and replacement revisions after the first reservation | Agree who allocates revision numbers. |
 | Stock attestation | Not implemented | Record a unique unit ID, exact vetted SKU, serviceability/compatibility, location and readiness evidence, attestor and observation time. Unknown or stale mandatory facts cannot reduce purchasing needs automatically. |
 | Stock assignment | Not implemented | The storage owner atomically binds a unit to one active request/revision. Competing requests and restart must not assign it twice. A supplied stock list, preview or JSON file cannot prove this. |

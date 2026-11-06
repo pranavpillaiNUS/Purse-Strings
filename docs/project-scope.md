@@ -137,12 +137,15 @@ reviewable proposed changes, separated into facts, preferences, exceptions and p
 M0 is delivered by this scaffold. A partial M1 slice now supports deterministic CLI
 mandate draft/review from structured hire requests and kit templates, with runtime
 validation and policy narrowing. That slice establishes no confirmation or stock
-authority, and M1 is incomplete. M2 implementation exists: a SQLite ledger with atomic
+authority, and M1 is incomplete. A model can also draft from a plain-English request
+(`npm run shop -- draft`), with two live runs so far; its output is checked the same way
+and stays a draft. M2 implementation exists: a SQLite ledger with atomic
 reservations, plus a simulation-only backend CLI with local operator confirmation and
 durable execution over fake providers (see `services/checker/src/ledger/README.md`).
 A partial M4 slice adds the bounded shopper worker over the shared client, tested
-against the real checker core with scripted models. It has had one live model run,
-against the contract mock, and its CLI approval and exception flows do not exist. No
+against the real checker core with scripted models. It has had four live model runs,
+all against the contract mock, two of them with the hostile listing, and its CLI
+approval and exception flows do not exist. No
 gate after M0 is recorded as passed,
 and M3 and M5 are planned. PayPal feasibility is unverified
 until `docs/paypal-spike.md` records observed results. The original hackathon schedule
