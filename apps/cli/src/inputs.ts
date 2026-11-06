@@ -18,7 +18,8 @@ export interface InputOptions {
 
 function readJson(override: string | undefined, bundledPath: string): unknown {
   const path = override ?? fileURLToPath(new URL(`../../../${bundledPath}`, import.meta.url));
-  return JSON.parse(readFileSync(path === '-' ? 0 : path, 'utf8'));
+  // Windows PowerShell's UTF-8 Set-Content may write a BOM; it is not part of JSON content.
+  return JSON.parse(readFileSync(path === '-' ? 0 : path, 'utf8').replace(/^\uFEFF/, ''));
 }
 
 /** Local offline experiments only: files do not establish real execution authority. */

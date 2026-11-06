@@ -1,0 +1,10 @@
+{
+  "name": "@purse/agent",
+  "private": true,
+  "type": "module",
+  "description": "Policy-constrained mandate planning; no execution authority or payment access.",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
+    "zod": "^4.0.0"
+  }
+}
