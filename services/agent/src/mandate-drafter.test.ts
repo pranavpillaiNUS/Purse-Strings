@@ -19,7 +19,7 @@ const kit = fixture('../fixtures/engineering-kit.json');
 const requestText = readFileSync(new URL('../fixtures/hire-request-text.txt', import.meta.url), 'utf8').trim();
 const [scriptedCall] = fixture('../fixtures/draft-request-calls.json') as Array<{ tool: string; args: { request: Record<string, unknown>; assumptions: unknown[]; notCaptured: string[] } }>;
 const goodArgs = scriptedCall!.args;
-const input: MandateDraftInput = { requestText, policy, kit, now, locations: ['singapore-office'], requestedModel: 'scripted' };
+const input: MandateDraftInput = { requestText, policy, kit, clock: () => now, locations: ['singapore-office'], requestedModel: 'scripted' };
 
 const propose = (args: unknown): ScriptedStep => ({ tool: DRAFT_TOOL_NAME, args });
 const withRequest = (patch: Record<string, unknown>) => ({ ...goodArgs, request: { ...goodArgs.request, ...patch } });
@@ -103,24 +103,116 @@ test('the model is given the request, clock, kit and choices, but no policy limi
 test('the host still rejects impossible dates, though the model-facing schema omits the regex', async () => {
   assert.doesNotMatch(JSON.stringify(DRAFT_MODEL_TOOLS), /"pattern"/);
   assert.match(JSON.stringify(DRAFT_MODEL_TOOLS), /"format":"date-time"/);
-  const run = await draftMandateWithModel(input, recording([
-    propose(withRequest({ readyBy: '2026-11-31T09:00:00Z' })),
-    propose(withRequest({ readyBy: '2026-11-19' })),
-    propose(withRequest({ purchaseBy: 'soon' })),
-  ]).model);
-  assert.equal(run.outcome, 'invalid_output');
+  for (const patch of [{ readyBy: '2026-11-31T09:00:00Z' }, { readyBy: '2026-11-19' }, { purchaseBy: 'soon' }]) {
+    const run = await draftMandateWithModel(input, recording([propose(withRequest(patch))]).model);
+    assert.equal(run.outcome, 'invalid_output', JSON.stringify(patch));
+    assert.equal(run.draft, null);
+  }
+});
+
+test('a number the format cannot hold ends the run, so a retry cannot turn it into a different request', async () => {
+  for (const [patch, field] of [
+    [{ hireCount: 1001 }, 'hireCount'], [{ hireCount: 0 }, 'hireCount'], [{ hireCount: 1.5 }, 'hireCount'],
+    [{ budgetMinor: 2_000_000_000 }, 'budgetMinor'], [{ budgetMinor: -1 }, 'budgetMinor'],
+    [{ kitVersion: 0 }, 'kitVersion'],
+  ] as const) {
+    // The second step would pass. It must never be asked for.
+    const { model, results } = recording([propose(withRequest(patch)), propose(goodArgs)]);
+    const run = await draftMandateWithModel(input, model);
+    assert.equal(run.outcome, 'policy_refused', JSON.stringify(patch));
+    assert.match(run.detail!, new RegExp(field));
+    assert.equal(run.draft, null);
+    assert.equal(results.length, 1, 'The model must not get another turn');
+  }
+});
+
+test('a stated value of the wrong type ends the run too', async () => {
+  for (const patch of [{ hireCount: 'five' }, { budgetMinor: '8000' }, { allowedSuppliers: [] }, { allowedSuppliers: 'store-a' }, { kitVersion: 'one' }]) {
+    const { model, results } = recording([propose(withRequest(patch)), propose(goodArgs)]);
+    const run = await draftMandateWithModel(input, model);
+    assert.equal(run.outcome, 'invalid_output', JSON.stringify(patch));
+    assert.equal(run.draft, null);
+    assert.equal(results.length, 1, 'The model must not get another turn');
+  }
+});
+
+test('a retry can correct the format but cannot change what the manager asked for', async () => {
+  // The first attempt is rejected for a reason that has nothing to do with these values.
+  const { notCaptured: _omitted, ...malformed } = goodArgs;
+  for (const [field, value] of [
+    ['hireCount', 4], ['budgetMinor', 700000], ['purchaseBy', '2026-11-15T09:00:00Z'], ['readyBy', '2026-11-20T09:00:00Z'],
+    ['deliveryLocationId', 'other-office'], ['allowedSuppliers', ['store-a']], ['kitId', 'other'], ['kitVersion', 2],
+  ] as const) {
+    const { model, results } = recording([propose(malformed), propose(withRequest({ [field]: value }))]);
+    const run = await draftMandateWithModel({ ...input, locations: ['singapore-office', 'other-office'] }, model);
+    assert.equal(run.outcome, 'invalid_output', field);
+    assert.match(run.detail!, new RegExp(`changed ${field}`));
+    assert.equal(run.draft, null);
+    assert.equal(results.length, 2);
+  }
+});
+
+test('a value missing on the first attempt can still be supplied on the retry', async () => {
+  const { purchaseBy: _omitted, ...request } = goodArgs.request;
+  const run = await draftMandateWithModel(input, recording([propose({ ...goodArgs, request }), propose(goodArgs)]).model);
+  assert.equal(run.outcome, 'drafted');
+  assert.equal(run.draft!.request.purchaseBy, goodArgs.request.purchaseBy);
+});
+
+test('the deadline is checked against the time the model answered, not the time it was asked', async () => {
+  let time = now;
+  const prompts: ModelPrompt[] = [];
+  const inner = createScriptedModel([propose(goodArgs)]);
+  const model: ShoppingModel = {
+    open(prompt) {
+      prompts.push(prompt);
+      const conversation = inner.open(prompt);
+      return {
+        next(results) {
+          // One second past goodArgs' purchase deadline of 2026-11-16T09:00:00Z.
+          time = '2026-11-16T09:00:01Z';
+          return conversation.next(results);
+        },
+      };
+    },
+  };
+  const run = await draftMandateWithModel({ ...input, clock: () => time }, model);
+  assert.equal(run.outcome, 'policy_refused');
+  assert.match(run.detail!, /deadline has passed/);
   assert.equal(run.draft, null);
+  // The model was asked before the deadline, so only the second reading catches this.
+  assert.match(prompts[0]!.task, /"currentTime":"2026-11-06T09:00:00Z"/);
+});
+
+test('the draft records when the model answered, and a fixed clock stays fixed for rehearsals', async () => {
+  let time = now;
+  const inner = createScriptedModel([propose(goodArgs)]);
+  const model: ShoppingModel = {
+    open(prompt) {
+      const conversation = inner.open(prompt);
+      return {
+        next(results) {
+          time = '2026-11-06T09:05:00Z';
+          return conversation.next(results);
+        },
+      };
+    },
+  };
+  const moved = await draftMandateWithModel({ ...input, clock: () => time }, model);
+  assert.equal(moved.draft!.createdAt, '2026-11-06T09:05:00Z');
+  const fixed = await draftMandateWithModel(input, recording([propose(goodArgs)]).model);
+  assert.equal(fixed.draft!.createdAt, now);
 });
 
 test('malformed output goes back to the model with the reason, and a correction can succeed', async () => {
-  const { model, results } = recording([propose(withRequest({ budgetMinor: '8000' })), propose(goodArgs)]);
+  const { model, results } = recording([propose({ ...goodArgs, notCaptured: 'nothing' }), propose(goodArgs)]);
   const run = await draftMandateWithModel(input, model);
   assert.equal(run.outcome, 'drafted');
   assert.equal(run.usage.modelTurns, 2);
   const [failure] = results[1]!;
   assert.equal(failure!.isError, true);
   assert.match(failure!.content, /INVALID_REQUEST/);
-  assert.match(failure!.content, /request\.budgetMinor/);
+  assert.match(failure!.content, /notCaptured/);
 });
 
 test('invented authority and unknown fields never reach a draft', async () => {
@@ -138,7 +230,7 @@ test('invented authority and unknown fields never reach a draft', async () => {
 });
 
 test('retries stop at the turn limit', async () => {
-  const bad = propose(withRequest({ hireCount: 'five' }));
+  const bad = propose({ ...goodArgs, notCaptured: 'nothing' });
   const { model, results } = recording([bad, bad, bad, bad, bad]);
   const run = await draftMandateWithModel(input, model);
   assert.equal(run.outcome, 'invalid_output');
@@ -167,23 +259,29 @@ test('a policy refusal ends the run, so the model cannot adjust numbers until th
   }
 });
 
-test('locations and IDs are limited to what the operator knows and a terminal can show', async () => {
-  for (const patch of [
-    { deliveryLocationId: 'jakarta-office' },
-    { id: 'Engineering Hires' },
-    { id: 'engineering\u001b[31m-hires' },
-    { id: 'a'.repeat(65) },
-  ]) {
-    const { model, results } = recording([propose(withRequest(patch)), propose(goodArgs)]);
+test('a location the operator has not listed ends the run, and is never swapped for one that is', async () => {
+  const { model, results } = recording([propose(withRequest({ deliveryLocationId: 'jakarta-office' })), propose(goodArgs)]);
+  const run = await draftMandateWithModel(input, model);
+  assert.equal(run.outcome, 'policy_refused');
+  assert.match(run.detail!, /jakarta-office/);
+  assert.equal(run.draft, null);
+  assert.equal(run.refused?.request.deliveryLocationId, 'jakarta-office');
+  assert.equal(results.length, 1, 'The model must not get another turn');
+
+  const listed = await draftMandateWithModel({ ...input, locations: ['jakarta-office'] }, recording([
+    propose(withRequest({ deliveryLocationId: 'jakarta-office' })),
+  ]).model);
+  assert.equal(listed.outcome, 'drafted');
+});
+
+test('model-chosen IDs are limited to what a terminal can show, and only they can be retried freely', async () => {
+  for (const id of ['Engineering Hires', 'engineering\u001b[31m-hires', 'a'.repeat(65)]) {
+    const { model, results } = recording([propose(withRequest({ id })), propose(goodArgs)]);
     const run = await draftMandateWithModel(input, model);
-    assert.equal(run.outcome, 'drafted', JSON.stringify(patch));
+    assert.equal(run.outcome, 'drafted', id);
     assert.equal(run.draft!.request.id, goodArgs.request.id);
     assert.equal(results[1]![0]!.isError, true);
   }
-  const run = await draftMandateWithModel({ ...input, locations: ['jakarta-office'] }, recording([
-    propose(withRequest({ deliveryLocationId: 'jakarta-office' })),
-  ]).model);
-  assert.equal(run.outcome, 'drafted');
 });
 
 test('a model that asks a question produces no draft and its question is passed on', async () => {
@@ -203,16 +301,20 @@ test('calls in a truncated or refused turn are never used', async () => {
   }
 });
 
-test('anything other than one call to the one tool is refused', async () => {
-  const two = { calls: [{ tool: DRAFT_TOOL_NAME, args: goodArgs }, { tool: DRAFT_TOOL_NAME, args: withRequest({ hireCount: 1 }) }] };
-  const other = { tool: 'cart_submit', args: { cartId: 'x' } };
-  for (const step of [two, other]) {
-    const { model, results } = recording([step, propose(goodArgs)]);
-    const run = await draftMandateWithModel(input, model);
-    assert.equal(run.outcome, 'drafted');
-    assert.equal(run.draft!.request.hireCount, 5);
-    assert.ok(results[1]!.every(({ isError, content }) => isError && /INVALID_TOOL_CALL/.test(content)));
-  }
+test('two proposals in one turn could be two readings of the request, so neither is used', async () => {
+  const two = { calls: [{ tool: DRAFT_TOOL_NAME, args: withRequest({ hireCount: 1001 }) }, { tool: DRAFT_TOOL_NAME, args: goodArgs }] };
+  const { model, results } = recording([two, propose(goodArgs)]);
+  const run = await draftMandateWithModel(input, model);
+  assert.equal(run.outcome, 'invalid_output');
+  assert.equal(run.draft, null);
+  assert.equal(results.length, 1, 'The model must not get another turn');
+});
+
+test('a call to any other tool is refused, and the model can then call the right one', async () => {
+  const { model, results } = recording([{ tool: 'cart_submit', args: { cartId: 'x' } }, propose(goodArgs)]);
+  const run = await draftMandateWithModel(input, model);
+  assert.equal(run.outcome, 'drafted');
+  assert.ok(results[1]!.every(({ isError, content }) => isError && /INVALID_TOOL_CALL/.test(content)));
 });
 
 test('a failed model call reports only fixed wording', async () => {
@@ -234,7 +336,7 @@ test('bad local input fails before any model call', async () => {
     { policy: { id: 'not a policy' } },
     { kit: { id: 'not a kit' } },
     { locations: [] },
-    { now: 'tomorrow' },
+    { clock: () => 'tomorrow' },
   ]) {
     const { model, prompts } = recording([propose(goodArgs)]);
     await assert.rejects(draftMandateWithModel({ ...input, ...patch }, model), JSON.stringify(patch));

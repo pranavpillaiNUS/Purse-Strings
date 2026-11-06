@@ -10,6 +10,13 @@ export const DRAFT_TOOL_NAME = 'propose_mandate_request';
 
 /** Malformed output may be retried, so this leaves room for the first try and two corrections. */
 const MAX_DRAFT_TURNS = 3;
+/**
+ * What the manager asked for. A retry may correct a format but never one of these,
+ * because a changed value would reach the reviewer looking like a clean draft.
+ */
+const STATED_FIELDS: ReadonlySet<string> = new Set([
+  'hireCount', 'budgetMinor', 'purchaseBy', 'readyBy', 'deliveryLocationId', 'allowedSuppliers', 'kitId', 'kitVersion',
+]);
 /** Model-chosen IDs reach terminals and later commands, so they stay plain. */
 const MODEL_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -56,8 +63,8 @@ If you cannot tell the number of hires, the budget or the ready-by date, or the 
 export type MandateDraftOutcome =
   | 'drafted' // A policy-checked draft exists. It still needs human review and confirmation.
   | 'needs_input' // The model stopped and asked for something instead of drafting.
-  | 'policy_refused' // The request as read breaks policy or a deadline. Never sent back for the model to adjust.
-  | 'invalid_output' // The model kept producing output that does not fit the format.
+  | 'policy_refused' // The request as read is outside what is allowed. Never sent back for the model to adjust.
+  | 'invalid_output' // The output kept failing the format, gave an unusable value or changed one on a retry.
   | 'model_refused' // The model declined the request.
   | 'failed'; // The model call failed or its output was truncated.
 
@@ -78,7 +85,8 @@ export interface MandateDraftInput {
   requestText: string;
   policy: unknown;
   kit: unknown;
-  now: string;
+  /** Read before the model call and again after it answers, because a reply can outlast a deadline. */
+  clock: () => string;
   /** Delivery locations the operator knows about. Neither policy nor the kit lists these. */
   locations: readonly string[];
   /** Recorded in the draft's origin. */
@@ -87,7 +95,6 @@ export interface MandateDraftInput {
 
 const InputSchema = z.object({
   requestText: DraftOriginSchema.shape.requestText,
-  now: MandateRequestSchema.shape.purchaseBy,
   locations: z.array(MandateRequestSchema.shape.deliveryLocationId).min(1).max(100),
   requestedModel: DraftOriginSchema.shape.requestedModel,
 });
@@ -96,13 +103,21 @@ function toolError(id: string, code: string, issues: string[]): ModelToolResult 
   return { id, content: JSON.stringify({ error: { code, issues: issues.slice(0, 10) } }), isError: true };
 }
 
+/** The values a call gives for what the manager asked for, whether or not they are valid. */
+function statedValues(input: unknown): Map<string, unknown> {
+  const request = (input as { request?: unknown } | null)?.request;
+  if (request === null || typeof request !== 'object') return new Map();
+  return new Map(Object.entries(request).filter(([field, value]) => STATED_FIELDS.has(field) && value !== undefined));
+}
+
 /**
  * Asks a model to read a plain-English request, then puts its answer through the same
  * policy checks as a hand-written request. Model output only ever becomes a draft.
  */
 export async function draftMandateWithModel(input: MandateDraftInput, model: ShoppingModel): Promise<MandateDraftRun> {
   // Bad local input fails here, before any request to a model.
-  const { requestText, now, locations, requestedModel } = InputSchema.parse(input);
+  const { requestText, locations, requestedModel } = InputSchema.parse(input);
+  const currentTime = MandateRequestSchema.shape.purchaseBy.parse(input.clock());
   const policy = PolicySchema.parse(input.policy);
   const kit = KitTemplateSchema.parse(input.kit);
 
@@ -118,7 +133,7 @@ export async function draftMandateWithModel(input: MandateDraftInput, model: Sho
     system: MANDATE_DRAFTER_SYSTEM_PROMPT,
     tools: DRAFT_MODEL_TOOLS,
     task: `Draft a mandate request from this.\n${JSON.stringify({
-      currentTime: now,
+      currentTime,
       requestText,
       kit: { id: kit.id, version: kit.version, lines: kit.lines.map(({ role, unitsPerHire, allowedSkus }) => ({ role, unitsPerHire, allowedSkus })) },
       approvedSuppliers: policy.allowedSuppliers,
@@ -126,6 +141,7 @@ export async function draftMandateWithModel(input: MandateDraftInput, model: Sho
     })}`,
   });
 
+  const firstStated = new Map<string, string>();
   let results: ModelToolResult[] = [];
   while (usage.modelTurns < MAX_DRAFT_TURNS) {
     let turn;
@@ -146,28 +162,50 @@ export async function draftMandateWithModel(input: MandateDraftInput, model: Sho
       return finish('needs_input', 'The model asked for more information instead of drafting', { modelText: turn.text.trim().slice(0, 4000) || null });
     }
 
+    // Two proposals in one turn could be two readings of the request, so neither is used.
+    if (turn.calls.length > 1) return finish('invalid_output', 'The model made more than one call in a turn, so nothing was drafted');
     const [call] = turn.calls;
-    if (turn.calls.length > 1 || call!.name !== DRAFT_TOOL_NAME) {
-      results = turn.calls.map(({ id }) => toolError(id, 'INVALID_TOOL_CALL', [`Call ${DRAFT_TOOL_NAME} exactly once`]));
+    if (call!.name !== DRAFT_TOOL_NAME) {
+      results = [toolError(call!.id, 'INVALID_TOOL_CALL', [`Call ${DRAFT_TOOL_NAME} exactly once`])];
       continue;
     }
+
+    const stated = statedValues(call!.input);
+    for (const [field, value] of stated) {
+      const serialized = JSON.stringify(value);
+      const first = firstStated.get(field);
+      if (first !== undefined && first !== serialized) {
+        return finish('invalid_output', `The model changed ${field} while correcting its output, so nothing was drafted`);
+      }
+      firstStated.set(field, serialized);
+    }
+
     const parsed = ProposalSchema.safeParse(call!.input);
     if (!parsed.success) {
+      // A retry could only replace this value with a different one, so the run ends here.
+      const unusable = parsed.error.issues.find(({ path }) => path[0] === 'request' && stated.has(String(path[1])));
+      if (unusable) {
+        const field = String(unusable.path[1]);
+        const value = stated.get(field);
+        const shown = JSON.stringify(value).slice(0, 100);
+        return typeof value === 'number'
+          ? finish('policy_refused', `The request as read gives ${field} as ${shown}, which is outside what a mandate can hold`)
+          : finish('invalid_output', `The model gave ${field} as ${shown}, which does not fit the format, so nothing was drafted`);
+      }
       results = [toolError(call!.id, 'INVALID_REQUEST', parsed.error.issues.map(({ path, message }) => `${path.join('.') || 'input'}: ${message}`))];
       continue;
     }
     const { request, assumptions, notCaptured } = parsed.data;
-    const issues = [
-      ...(MODEL_ID_PATTERN.test(request.id) && request.id.length <= 64 ? [] : ['request.id: use at most 64 lowercase letters, digits and single hyphens']),
-      ...(locations.includes(request.deliveryLocationId) ? [] : [`request.deliveryLocationId: must be one of ${locations.join(', ')}`]),
-    ];
-    if (issues.length > 0) {
-      results = [toolError(call!.id, 'INVALID_REQUEST', issues)];
+    if (!locations.includes(request.deliveryLocationId)) {
+      return finish('policy_refused', `The request names a delivery location the operator has not listed: ${request.deliveryLocationId}`, { refused: parsed.data });
+    }
+    if (!MODEL_ID_PATTERN.test(request.id) || request.id.length > 64) {
+      results = [toolError(call!.id, 'INVALID_REQUEST', ['request.id: use at most 64 lowercase letters, digits and single hyphens'])];
       continue;
     }
 
     try {
-      const draft = createMandateDraft(policy, request, kit, now, {
+      const draft = createMandateDraft(policy, request, kit, input.clock(), {
         kind: 'model-drafted', requestedModel, requestText, assumptions, notCaptured,
       });
       return { kind: 'mandate-draft-run', outcome: 'drafted', detail: null, draft, refused: null, modelText: null, usage };

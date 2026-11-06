@@ -109,6 +109,31 @@ test('an existing output file is refused before any model call', (t) => {
   assert.equal(readFileSync(existing, 'utf8'), 'keep me');
 });
 
+test('the same file for both outputs is refused before any model call', (t) => {
+  const directory = tempDir(t);
+  const missing = join(directory, 'missing.json');
+  // Each pair names one new file, including through a relative path and different case.
+  for (const [first, second] of [
+    [join(directory, 'same.json'), join(directory, 'same.json')],
+    [join(directory, 'same.json'), join(directory, '.', 'x', '..', 'same.json')],
+    [join(directory, 'same.json'), join(directory, 'SAME.JSON')],
+  ] as const) {
+    // A broken script path would fail later, so this error can only come from the early check.
+    const result = draft(['--text-file', textFile, '--scripted', missing, '--now', now, '--draft-out', first, '--proposal-out', second]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /must be different files/);
+    assert.equal(result.stdout, '');
+    assert.throws(() => readFileSync(first));
+  }
+});
+
+test('an output directory that does not exist is refused before any model call', (t) => {
+  const directory = tempDir(t);
+  const result = draft(['--text-file', textFile, '--scripted', join(directory, 'missing.json'), '--now', now, '--draft-out', join(directory, 'nowhere', 'draft.json')]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Output directory does not exist/);
+});
+
 test('invalid command lines exit 1 with empty stdout', () => {
   for (const args of [
     ['--scripted', calls, '--now', now],

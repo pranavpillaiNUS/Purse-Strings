@@ -1,4 +1,5 @@
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, parseEnv } from 'node:util';
 import { z } from 'zod';
@@ -232,6 +233,15 @@ function buildTransport(values: {
   return (request) => backend.handle(request);
 }
 
+/** Where an output file will land. Lowercased because Windows and macOS usually ignore case. */
+function outputTarget(path: string): string {
+  try {
+    return join(realpathSync.native(dirname(resolve(path))), basename(path)).toLowerCase();
+  } catch {
+    throw new Error(`Output directory does not exist: ${dirname(path)}`);
+  }
+}
+
 async function runDraft(args: string[]): Promise<void> {
   const { values } = parseArgs({
     args,
@@ -266,10 +276,13 @@ async function runDraft(args: string[]): Promise<void> {
       throw new Error(`Request text could not be read: ${values['text-file']}`);
     }
   }
-  // Checked before the model call, so a clashing file cannot waste a paid run.
+  // Checked before the model call, so a bad destination cannot waste a paid run.
   const outputs = [values['draft-out'], values['proposal-out']].filter((path) => path !== undefined);
   for (const path of outputs) {
     if (existsSync(path)) throw new Error(`Refusing to overwrite an existing file: ${path}`);
+  }
+  if (new Set(outputs.map(outputTarget)).size < outputs.length) {
+    throw new Error('--draft-out and --proposal-out must be different files');
   }
 
   const policy = readJson(values.policy ?? bundled('config/policies/hardware.example.json'), 'Policy');
@@ -278,11 +291,12 @@ async function runDraft(args: string[]): Promise<void> {
   const requestedModel = values.scripted !== undefined
     ? 'scripted'
     : values.model ?? (await import('../../../services/agent/src/anthropic.ts')).DEFAULT_SHOPPER_MODEL;
+  const fixedNow = values.now;
   const run = await draftMandateWithModel({
     requestText: requestText ?? '',
     policy,
     kit,
-    now: values.now ?? new Date().toISOString(),
+    clock: () => fixedNow ?? new Date().toISOString(),
     locations: values.location ?? ['singapore-office'],
     requestedModel,
   }, model);
