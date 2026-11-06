@@ -30,7 +30,29 @@ export interface PayPalConfig {
   clientSecret: string;
   /** Called after every API call (not token fetches); feeds spike logs now, the audit log later. */
   onExchange?: (exchange: PayPalExchange) => void;
+  /**
+   * Unit 4: injected fetch (defaults to the platform fetch) and a finite per-call
+   * timeout, so contract tests run against a fake fetch with no network and the
+   * gateway never waits on a provider indefinitely. Request/URL behavior and every
+   * existing export are unchanged for the spike.
+   */
+  fetchFn?: typeof fetch;
+  /** Finite timeout in ms applied to each HTTP call, including token fetches. */
+  timeoutMs?: number;
 }
+
+/** A call exceeded its finite timeout. Never confused with a provider error. */
+export class PayPalTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`PayPal call exceeded its ${ms}ms timeout`);
+    this.name = 'PayPalTimeoutError';
+  }
+}
+
+// Matches the execution seam's simulated call budget (execution/gateway.ts
+// PROVIDER_CALL_TIMEOUT_MS); duplicated here to keep the client independent of
+// execution imports.
+const DEFAULT_TIMEOUT_MS = 10_000;
 
 export interface PayPalLink {
   href: string;
@@ -120,21 +142,48 @@ export class PayPalApiError extends Error {
 
 export function createPayPalClient(config: PayPalConfig) {
   const baseUrl = BASE_URLS[config.environment];
+  const fetchFn = config.fetchFn ?? fetch;
+  const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let token: { value: string; expiresAt: number } | undefined;
+
+  /**
+   * Races one HTTP call against a finite timer. Real callers that honor
+   * AbortSignal get aborted; a fetch that ignores the signal still loses the
+   * race at `timeoutMs` instead of hanging forever. A losing branch's late
+   * rejection gets a no-op observer so it can never crash the process.
+   */
+  async function withTimeout<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new PayPalTimeoutError(timeoutMs));
+      }, timeoutMs);
+    });
+    const attempt = run(controller.signal);
+    attempt.catch(() => {});
+    try {
+      return await Promise.race([attempt, expired]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   async function accessToken(): Promise<string> {
     if (token && Date.now() < token.expiresAt) return token.value;
-    const res = await fetch(`${baseUrl}/v1/oauth2/token`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64')}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: 'grant_type=client_credentials',
-    });
-    const body = (await res.json().catch(() => undefined)) as
-      | { access_token: string; expires_in: number }
-      | undefined;
+    const result = await withTimeout((signal) =>
+      fetchFn(`${baseUrl}/v1/oauth2/token`, {
+        method: 'POST',
+        signal,
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64')}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'grant_type=client_credentials',
+      }).then(async (res) => ({ res, body: await res.json().catch(() => undefined) })),
+    );
+    const { res, body } = result as { res: Response; body: { access_token: string; expires_in: number } | undefined };
     if (!res.ok || !body?.access_token) {
       throw new PayPalApiError(res.status, body, res.headers.get('paypal-debug-id') ?? undefined);
     }
@@ -152,19 +201,32 @@ export function createPayPalClient(config: PayPalConfig) {
     if (requestId) headers['PayPal-Request-Id'] = requestId;
 
     const started = Date.now();
-    const res = await fetch(`${baseUrl}${path}`, {
-      method,
-      headers,
-      body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
-    });
-    const text = await res.text();
-    let responseBody: unknown;
-    try {
-      responseBody = text ? JSON.parse(text) : undefined;
-    } catch {
-      responseBody = text;
-    }
-    const debugId = res.headers.get('paypal-debug-id') ?? undefined;
+    const outcome = await withTimeout((signal) =>
+      fetchFn(`${baseUrl}${path}`, {
+        method,
+        signal,
+        headers,
+        body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+      }).then(async (res) => {
+        const text = await res.text();
+        let responseBody: unknown;
+        try {
+          responseBody = text ? JSON.parse(text) : undefined;
+        } catch {
+          responseBody = text;
+        }
+        return {
+          res,
+          responseBody,
+          debugId: res.headers.get('paypal-debug-id') ?? undefined,
+        };
+      }),
+    );
+    const { res, responseBody, debugId } = outcome as {
+      res: Response;
+      responseBody: unknown;
+      debugId: string | undefined;
+    };
 
     config.onExchange?.({
       at: new Date(started).toISOString(),
@@ -221,6 +283,10 @@ export function createPayPalClient(config: PayPalConfig) {
 
     getCapture: (captureId: string) =>
       call<Capture>('GET', `/v2/payments/captures/${encodeURIComponent(captureId)}`),
+
+    /** Unit 4: read-side refund lookup, strictly mirroring the other GET helpers. */
+    getRefund: (refundId: string) =>
+      call<Refund>('GET', `/v2/payments/refunds/${encodeURIComponent(refundId)}`),
 
     refundCapture: (captureId: string, amount: PayPalMoney, requestId: string, noteToPayer?: string) =>
       call<Refund>('POST', `/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, requestId, {
