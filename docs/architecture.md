@@ -37,7 +37,7 @@ optional sandbox spike.
 | `services/checker/src/paypal/` | Trusted provider adapter | Existing sandbox client (spike); unit-4 gateway with mocked-fetch contract tests, not wired into execution |
 | `services/suppliers/src/` | Supplier interface, fixture quotes and local catalog controls | Offline simulation implemented |
 | `services/suppliers/fixtures/` | Synthetic catalog and evidence | Demo data |
-| `services/agent/` | Deterministic mandate draft/review; bounded shopper worker over the shared client | Implemented; one live model run, against the contract mock |
+| `services/agent/` | Mandate draft/review, written by hand or by a model from plain English; bounded shopper worker over the shared client | Implemented; four live shopper runs, all against the contract mock, and two live drafting runs |
 
 ## Technology decisions
 

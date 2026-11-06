@@ -1,0 +1,28 @@
+[
+  {
+    "tool": "propose_mandate_request",
+    "args": {
+      "request": {
+        "id": "engineering-hires-november",
+        "version": 1,
+        "hireCount": 5,
+        "kitId": "engineering",
+        "kitVersion": 1,
+        "budgetMinor": 800000,
+        "purchaseBy": "2026-11-16T09:00:00Z",
+        "readyBy": "2026-11-19T09:00:00Z",
+        "deliveryLocationId": "singapore-office",
+        "allowedSuppliers": ["store-a", "store-b"]
+      },
+      "assumptions": [
+        { "field": "purchaseBy", "reason": "No purchase deadline was given, so this is three days before readyBy." },
+        { "field": "readyBy", "reason": "No time of day was given, so this is 17:00 in Singapore." },
+        { "field": "allowedSuppliers", "reason": "No suppliers were named, so this is every approved supplier." }
+      ],
+      "notCaptured": [
+        "Reuse suitable stock first: this format has no stock field, so the draft covers all five hires.",
+        "The November 20 start date has no field; only the ready-by date is recorded."
+      ]
+    }
+  }
+]

@@ -47,7 +47,7 @@ stock/assignment subtracting from requirements, approval/exception flows,
 production authentication of the confirming operator (the OS-user identity is
 explicitly a prototype boundary).
 
-### M2 — delivered on real-storage evidence
+### M2 — ledger and recovery slice on real-storage evidence
 
 `services/checker/src/ledger/` + tests prove, over real SQLite files and fresh
 child processes: atomic amount and per-requirement quantity reservations that cap
@@ -77,14 +77,15 @@ claimed beyond what those tests exercise.
 
 ### Milestones M4/M5
 
-- **M4 shared-contract only:** the bounded shopper worker
+- **M4 partial:** the bounded shopper worker
   (`services/agent`, merged from main via role-b-shop) submits price-free carts
   through the shared client (`createBackendClient`) to this backend and its
   contract mock; the demo/handoff files describe what its scripted and live-mock
   runs reached. Its CLI approval/exception commands, payment secrets and any
-  claim about model behaviour beyond what the run reports show are absent. The
-  mandated model-drafting flow for mandates (plain-English request → confirmed
-  mandate through the model) is not part of this runway's delivered scope.
+  claim about model behaviour beyond what the run reports show are absent.
+  Model-assisted drafting from a plain-English request is available via
+  `npm run shop -- draft`. Its output remains a draft until the operator reviews
+  and confirms it through the backend; full M1 acceptance remains incomplete.
 - **M5 (delivery/readiness/close-out) is deferred; nothing is claimed beyond
   readiness `not_assessed`.**
 
@@ -146,7 +147,6 @@ node --test services/checker/src/paypal/client.test.ts services/checker/src/payp
   including overcapture behavior, in `docs/paypal-spike.md` first.
 - Real supplier adapters with the same contract treatment as the PayPal gateway.
 - Approval/exception CLI flows; delivery/return/readiness attestations (M5).
-- Model-drafted mandates from plain-English requests; per-run verification of
-  hosted buyer consent inside any demo path.
+- Per-run verification of hosted buyer consent inside any demo path.
 - Windows runtime-directory support (known problem documented in
   `services/agent/CONFIRMATION_HANDOFF.md`; unchanged here).

@@ -5,7 +5,8 @@ hardware, suppliers and an all-in budget. The AI proposes; independent rules and
 human-confirmed authority govern execution. The name is provisional.
 
 **Stage one is terminal input/output only.** Prove the purchasing core before building
-a website. This scaffold implements offline eligibility checking, not payment execution.
+a website. The checker supports offline eligibility and simulated payment execution
+using fake providers.
 
 ## Start here
 
@@ -98,8 +99,8 @@ or payment execution. Run `npm run cli -- store --help` for all options.
 
 Plan requirements from a structured hire request, a versioned kit and company
 policy. The sample request produces five laptops and five monitors with exact
-approved SKUs and policy price/warranty limits. This is deterministic JSON planning;
-model integration is still planned.
+approved SKUs and policy price/warranty limits. This command uses deterministic JSON
+planning; model-assisted drafting is described below.
 
 For PowerShell, save a draft and review it:
 
@@ -118,13 +119,19 @@ Review compares the current policy and kit, re-derives the requirements and dete
 changed content, modified proposals and expired drafts. A content digest identifies
 the draft; it is not a signature or approval. A review result of `draft_valid`
 means only that the supplied planning records are consistent. Drafts cannot be used
-as confirmed mandates by `check`. Stock assignment, human confirmation, quote
-eligibility and execution are still separate work, and M1 is incomplete.
+as confirmed mandates by `check`. Stock assignment remains planned; backend
+confirmation, quote eligibility and simulated execution are separate steps, and M1
+is incomplete.
 
 The digest above is not the one the backend confirms. To take a draft to confirmation,
 save its proposal with `mandate draft --proposal-out FILE`, pass that file to the
 backend's `mandate-draft`, then confirm the digest the backend prints. See the
 [confirmation/stock handoff](services/agent/CONFIRMATION_HANDOFF.md).
+
+To draft from plain English instead, `npm run shop -- draft` asks Claude to fill in the
+request and applies the same policy checks. The result is still only a draft, and it lists
+what Claude assumed and could not capture. See
+[drafting from plain English](services/agent/README.md#drafting-from-plain-english).
 
 Exit codes: `draft` uses 0 for a produced draft and 1 for invalid input; `review`
 uses 0 for `draft_valid`, 2 for `needs_revision` and 1 for invalid input. JSON mode
@@ -184,8 +191,10 @@ backend CLI (`npm run backend`) with local operator confirmation and durable exe
 over fake providers; see [its limits](services/checker/src/ledger/README.md). The
 bounded shopper worker (`npm run shop`) submits through the shared client to that
 backend. It is tested with scripted models against the real checker core, and has had
-one live Claude run so far, against the contract mock with a single store. The original sandbox PayPal
-client, money helpers and spike remain intact. Unit 4 adds a separate PayPal gateway
+four live Claude runs so far, all against the contract mock, two of them with both stores
+and the hostile listing. Mandates can also be drafted from plain English (`npm run shop --
+draft`), which has had two live Claude runs. The original sandbox PayPal client, money
+helpers and spike remain intact. Unit 4 adds a separate PayPal gateway
 ([docs/backend-api.md](docs/backend-api.md#unit-4-paypal-gateway-contract-only--not-wired-into-execution))
 with capture/refund read-and-write contracts — sandbox host only, injected fetch,
 finite timeouts, `SGD`/minor-unit money at the edge — proven by fetch-mocked tests
@@ -193,7 +202,7 @@ only. It is not wired into execution, and nothing has been verified against a re
 PayPal account; [delivery evidence](docs/backend-delivery-review.md) separates
 simulated execution and contract coverage from account feasibility.
 
-**Planned:** model-drafted mandates, stock assignment, PayPal in the purchase path
+**Planned:** stock assignment, PayPal in the purchase path
 through the ledger (the gateway contract above is not connected to it), real supplier
 execution, exceptions and equipment-readiness tracking. All will be tested through the
 CLI. No custom website is in the scaffold or stage-one acceptance; the only browser
