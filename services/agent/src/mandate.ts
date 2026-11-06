@@ -34,6 +34,23 @@ export const MandateRequestSchema = MandateSchema.pick({
 
 export const UnconfirmedMandateSchema = MandateSchema.omit({ approvedBy: true, confirmedAt: true });
 
+export const MAX_REQUEST_TEXT_LENGTH = 4000;
+
+/** A value the model chose that the request text did not state. */
+export const DraftAssumptionSchema = z.object({
+  field: MandateRequestSchema.keyof(),
+  reason: z.string().trim().min(1).max(500),
+}).strict();
+
+/** Where a model-drafted request came from, for the human reviewer. It grants no authority. */
+export const DraftOriginSchema = z.object({
+  kind: z.literal('model-drafted'),
+  requestedModel: z.string().trim().min(1).max(200),
+  requestText: z.string().trim().min(1).max(MAX_REQUEST_TEXT_LENGTH),
+  assumptions: z.array(DraftAssumptionSchema).max(20),
+  notCaptured: z.array(z.string().trim().min(1).max(500)).max(20),
+}).strict();
+
 export const MandateDraftSchema = z.object({
   schemaVersion: z.literal(1),
   kind: z.literal('mandate-draft'),
@@ -43,10 +60,12 @@ export const MandateDraftSchema = z.object({
   request: MandateRequestSchema,
   kit: KitTemplateSchema,
   proposal: UnconfirmedMandateSchema,
+  origin: DraftOriginSchema.optional(),
   digest,
 }).strict();
 
 export type MandateDraft = z.infer<typeof MandateDraftSchema>;
+export type DraftOrigin = z.infer<typeof DraftOriginSchema>;
 type Request = z.infer<typeof MandateRequestSchema>;
 type Kit = z.infer<typeof KitTemplateSchema>;
 type Proposal = z.infer<typeof UnconfirmedMandateSchema>;
@@ -107,17 +126,22 @@ function compileProposal(policy: Policy, request: Request, kit: Kit): Proposal {
   });
 }
 
-/** Deterministic planning only. No model, stock assignment, confirmation or payment. */
-export function createMandateDraft(rawPolicy: unknown, rawRequest: unknown, rawKit: unknown, now: string): MandateDraft {
+/**
+ * Deterministic planning only: no stock assignment, confirmation or payment. A model may
+ * have written the request (see `origin`), but it passes through these same checks.
+ */
+export function createMandateDraft(rawPolicy: unknown, rawRequest: unknown, rawKit: unknown, now: string, rawOrigin?: unknown): MandateDraft {
   const policy = PolicySchema.parse(rawPolicy);
   const request = MandateRequestSchema.parse(rawRequest);
   const kit = KitTemplateSchema.parse(rawKit);
   const createdAt = timestamp.parse(now);
+  const origin = rawOrigin === undefined ? undefined : DraftOriginSchema.parse(rawOrigin);
   const proposal = compileProposal(policy, request, kit);
   if (Date.parse(proposal.purchaseBy) <= Date.parse(createdAt)) throw new Error('Purchase deadline has passed');
   const content = {
     schemaVersion: 1 as const, kind: 'mandate-draft' as const, status: 'draft' as const,
     createdAt, policyDigest: contentDigest(policy), request, kit, proposal,
+    ...(origin === undefined ? {} : { origin }),
   };
   return MandateDraftSchema.parse({ ...content, digest: contentDigest(content) });
 }
@@ -135,6 +159,8 @@ export interface MandateDraftReview {
   reviewedAt: string;
   checks: DraftReviewCheck[];
   proposal: Proposal;
+  /** Present on model drafts, so the reviewer sees the assumptions and what was left out. */
+  origin?: DraftOrigin;
 }
 
 /** Re-derive under current policy and kit references; hashes grant no authority. */
@@ -167,5 +193,6 @@ export function reviewMandateDraft(rawDraft: unknown, rawPolicy: unknown, rawKit
   return {
     kind: 'mandate-draft-review', decision: checks.every((item) => item.status === 'pass') ? 'draft_valid' : 'needs_revision',
     draftDigest, reviewedAt, checks, proposal: draft.proposal,
+    ...(draft.origin === undefined ? {} : { origin: draft.origin }),
   };
 }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAnthropicModel, DEFAULT_SHOPPER_MODEL } from './anthropic.ts';
+import { DRAFT_MODEL_TOOLS, MANDATE_DRAFTER_SYSTEM_PROMPT } from './mandate-drafter.ts';
 import { ModelCallError, type ModelPrompt } from './model.ts';
 import { SHOPPER_SYSTEM_PROMPT, SHOPPING_MODEL_TOOLS } from './worker.ts';
 
@@ -61,6 +62,27 @@ test('sends the expected model, tools, system prompt and refusal fallback', asyn
     assert.doesNotMatch(tool.name, /[^a-zA-Z0-9_-]/);
   }
   assert.deepEqual(body.messages, [{ role: 'user', content: 'Shop for this mandate.' }]);
+});
+
+test('the drafting tool reaches the API as one schema-checked tool, with nothing forced', async () => {
+  const { fetchStub, requests } = stubFetch([{ body: message([{ type: 'text', text: 'What is the budget?' }]) }]);
+  await createAnthropicModel({ apiKey: 'test-key', fetch: fetchStub }).open({
+    system: MANDATE_DRAFTER_SYSTEM_PROMPT, tools: DRAFT_MODEL_TOOLS, task: 'Draft this.',
+  }).next([]);
+  const { body } = requests[0]!;
+  // Forcing a tool returns a 400 on this model, so the prompt asks for the call instead.
+  assert.equal('tool_choice' in body, false);
+  assert.equal(body.system, MANDATE_DRAFTER_SYSTEM_PROMPT);
+  const tools = body.tools as Array<{ name: string; input_schema: Record<string, unknown> & { properties: Record<string, { properties: Record<string, unknown> }> } }>;
+  assert.deepEqual(tools.map(({ name }) => name), ['propose_mandate_request']);
+  const schema = tools[0]!.input_schema;
+  assert.equal(schema.type, 'object');
+  assert.equal(schema.additionalProperties, false);
+  assert.equal('$schema' in schema, false);
+  assert.deepEqual(Object.keys(schema.properties).sort(), ['assumptions', 'notCaptured', 'request']);
+  assert.deepEqual(Object.keys(schema.properties.request!.properties).sort(), [
+    'allowedSuppliers', 'budgetMinor', 'deliveryLocationId', 'hireCount', 'id', 'kitId', 'kitVersion', 'purchaseBy', 'readyBy', 'version',
+  ]);
 });
 
 test('the transcript is append-only: thinking replays unchanged and results follow their calls', async () => {
