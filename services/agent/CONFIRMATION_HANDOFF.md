@@ -40,8 +40,9 @@ from the OS user, which is not production authentication. See
 
 The backend CLI refuses its runtime directory after first use on Windows, because
 `checkPrivateRuntimeDirectory` in `apps/cli/src/backend.ts` tests POSIX mode bits that
-Windows does not report. This blocks the steps above on Windows, and 8 of the 12 tests
-in `apps/cli/src/backend.test.ts` fail there, including on a clean `main`.
+Windows does not report. This blocks the steps above and `npm run demo:flow` on Windows,
+and 8 of the 12 tests in `apps/cli/src/backend.test.ts` fail there, including on a clean
+`main`.
 
 That code is Danny's, so it is unchanged here, and issue #9 tracks his fix. Skipping only
 the mode check on `win32` in a scratch copy made the full process walk in
