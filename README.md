@@ -11,6 +11,7 @@ a website. This scaffold implements offline eligibility checking, not payment ex
 
 - [Project scope and acceptance gates](docs/project-scope.md)
 - [Architecture and implementation status](docs/architecture.md)
+- [Backend delivery: specification, wire API and evidence](docs/backend-delivery-review.md)
 - [Instructions for coding agents](AGENTS.md)
 - [Original hackathon plan](docs/hackathon-plan.md) — historical, superseded by scope
 
@@ -183,12 +184,21 @@ backend CLI (`npm run backend`) with local operator confirmation and durable exe
 over fake providers; see [its limits](services/checker/src/ledger/README.md). The
 bounded shopper worker (`npm run shop`) submits through the shared client to that
 backend. It is tested with scripted models against the real checker core, and has had
-one live Claude run so far, against the contract mock with a single store. The original
-sandbox PayPal client, money helpers and spike remain intact.
+one live Claude run so far, against the contract mock with a single store. The original sandbox PayPal
+client, money helpers and spike remain intact. Unit 4 adds a separate PayPal gateway
+([docs/backend-api.md](docs/backend-api.md#unit-4-paypal-gateway-contract-only--not-wired-into-execution))
+with capture/refund read-and-write contracts — sandbox host only, injected fetch,
+finite timeouts, `SGD`/minor-unit money at the edge — proven by fetch-mocked tests
+only. It is not wired into execution, and nothing has been verified against a real
+PayPal account; [delivery evidence](docs/backend-delivery-review.md) separates
+simulated execution and contract coverage from account feasibility.
 
-**Planned:** model-drafted mandates, stock assignment, PayPal and real supplier execution
-through the ledger, exceptions and equipment-readiness tracking. All will be tested
-through the CLI. No website scaffold or frontend dependencies are included.
+**Planned:** model-drafted mandates, stock assignment, PayPal in the purchase path
+through the ledger (the gateway contract above is not connected to it), real supplier
+execution, exceptions and equipment-readiness tracking. All will be tested through the
+CLI. No custom website is in the scaffold or stage-one acceptance; the only browser
+page involved anywhere is PayPal's own hosted buyer-consent screen during the
+optional sandbox spike.
 
 ## Separate PayPal feasibility spike
 
