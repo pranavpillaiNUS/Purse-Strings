@@ -147,6 +147,17 @@ carts. The checker prices each cart independently and reserves budget in its led
 reservation is not payment, an order or delivery. Limits, tools, outcomes and what is
 still unproven are in the [agent README](services/agent/README.md#the-shopper).
 
+A run closes with a [review](services/agent/README.md#what-a-run-prints): the outcome, a
+budget bar, requirement coverage, what the checker decided per store in plain language,
+refused attempts with reasons, and the exact command for the operator's next step. `--json`
+prints only the worker's report. `npm run shop -- status` is a
+[read-only view](services/agent/README.md#read-only-status) of the same ledger numbers and of
+named operations, with no model or key.
+
+`--brief` on `shop run` keeps the facts while shortening the review for a recording;
+it cannot be combined with `--json`. The bars show money and units **allocated**,
+meaning reserved or committed, not delivered. A reservation sets budget aside; it makes no payment.
+
 This PowerShell walkthrough uses the scripted model, so it needs no API key. **It stops
 at the second backend command on Windows**, because of the runtime-directory check
 described in the [handoff](services/agent/CONFIRMATION_HANDOFF.md#blocked-on-windows).
@@ -174,6 +185,9 @@ npm.cmd run --silent cli -- store reset --catalog services/suppliers/state/store
 
 # An honest run compares both stores and reserves the cheaper cart. Prints the operation ID.
 npm.cmd run --silent shop -- run --run-id demo --mandate-id engineering-hires-demo --backend-db .runtime/app.db --backend-config $config --scripted services/agent/fixtures/demo-shopping-calls.json
+
+# A read-only look: the ledger's numbers and this operation, with each fact on its own line.
+npm.cmd run --silent shop -- status --mandate-id engineering-hires-demo --backend-db .runtime/app.db --backend-config $config --operation OPERATION_ID
 
 # Only the operator's backend process executes, here against fake providers.
 npm.cmd run --silent backend -- --db .runtime/app.db --config $config operation-run --id OPERATION_ID
@@ -208,9 +222,9 @@ backend CLI (`npm run backend`) with local operator confirmation and durable exe
 over fake providers; see [its limits](services/checker/src/ledger/README.md). The
 bounded shopper worker (`npm run shop`) submits through the shared client to that
 backend. It is tested with scripted models against the real checker core, and has had
-six live Claude runs so far: four against the contract mock and two against the real backend
-in a temporary copy with its Windows check skipped. Mandates can also be drafted from plain
-English (`npm run shop -- draft`), which has had three live Claude runs. `npm run demo:flow`
+eight live Claude runs so far: four against the contract mock and four against the real backend
+in temporary copies with its Windows check skipped. Mandates can also be drafted from plain
+English (`npm run shop -- draft`), which has had four live Claude runs. `npm run demo:flow`
 runs the whole story. The original sandbox PayPal client, money helpers and spike remain
 intact. Unit 4 adds a separate PayPal gateway
 ([docs/backend-api.md](docs/backend-api.md#unit-4-paypal-gateway-contract-only--not-wired-into-execution))

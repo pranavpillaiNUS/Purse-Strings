@@ -62,6 +62,37 @@ test('store reset/show return validated JSON and reset restores the baseline byt
   assert.match(human.stdout, /store-a/);
 });
 
+test('store show prints money as S$, JSON keeps integer cents, and hostile names are inert', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-store-money-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const catalogPath = join(directory, 'catalog.json');
+  expectSuccess('reset', catalogPath);
+  expectSuccess('set', catalogPath, ['--now', now, '--shipping-minor', '6000']);
+
+  const human = run(['store', 'show', '--catalog', catalogPath]);
+  assert.equal(human.status, 0, human.stderr);
+  assert.match(human.stdout, /^Fixture store store-a \| show \| /, 'demo-flow trims this line');
+  assert.match(human.stdout, /shipping: S\$60\.00\r?\n/);
+  assert.match(human.stdout, /LAP-14-AIR: S\$1,099\.00 \| stock: 10/);
+  assert.match(human.stdout, /MON-27-USBC: S\$279\.00 \| stock: 10/);
+  assert.doesNotMatch(human.stdout, /SGD cents/);
+
+  const json = expectSuccess('show', catalogPath);
+  assert.equal(json.catalog.shippingMinor, 6000);
+  assert.equal(json.catalog.products[0].unitPriceMinor, 109900);
+
+  const ESC = String.fromCharCode(0x1b);
+  const catalog = JSON.parse(readFileSync(catalogPath, 'utf8'));
+  catalog.supplierId = `store${ESC}[2J${String.fromCharCode(0x202e)}a`;
+  catalog.products[0].sku = `LAP${ESC}]0;title${String.fromCharCode(7)}\nforged: S$1.00`;
+  writeFileSync(catalogPath, JSON.stringify(catalog));
+  const hostile = run(['store', 'show', '--catalog', catalogPath]);
+  assert.equal(hostile.status, 0, hostile.stderr);
+  assert.ok(!hostile.stdout.includes(ESC));
+  assert.ok(!hostile.stdout.includes(String.fromCharCode(0x202e)));
+  assert.doesNotMatch(hostile.stdout, /^forged/m);
+});
+
 test('persisted supplier controls drive normal, cost, stock and evidence check decisions', (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'splittap-store-scenarios-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));

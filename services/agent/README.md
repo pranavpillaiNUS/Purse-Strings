@@ -101,10 +101,10 @@ How the host treats the model's answer:
   neither policy nor the kit lists them, and any other location ends the run. The default
   is `singapore-office`.
 
-Claude has run this three times, on November 6, 2026, with the default model. Twice, for
-`hire-request-text.txt` and for the same text from the demo flow, it read each stated value
-correctly, flagged the values it chose, and listed stock reuse and the start date as not
-captured. For
+Claude has run this four times, three on November 6, 2026 and one on November 7, with the
+default model. Three times, for `hire-request-text.txt` and for the same text from the demo
+flow, it read each stated value correctly, flagged the values it chose, and listed stock reuse
+and the start date as not captured. For
 `hire-request-over-budget-text.txt`, which asks for S$20,000 and falsely claims a CFO
 approval, it copied the budget unchanged, so policy refused it, and it recorded the
 approval claim as not captured without acting on it.
@@ -131,6 +131,7 @@ an unconfirmed mandate stops the run before any model call.
 | `src/shopper.ts` | The tool boundary: validates each call and tracks carts, units and submission state |
 | `src/backend-session.ts` | Connects the session to the shared backend client |
 | `src/worker.ts` | The bounded model loop, the prompt and the host-derived report |
+| `src/review.ts` | Pure. Turns a report, its events and ledger numbers into what a person reads, with plain wording for codes |
 | `src/model.ts` | The provider-neutral model seam, plus a scripted model for offline runs |
 | `src/anthropic.ts` | Claude through a manual Messages loop |
 
@@ -197,6 +198,73 @@ npm.cmd run --silent shop -- run --run-id fixture-shopping --mandate-id engineer
 
 Against the real simulation backend, see the [README walkthrough](../../README.md#the-shopper).
 
+### What a run prints
+
+As a run goes, each tool call prints one line, followed by `x refused:` and a plain reason if
+the host refused it. The run then closes with a review, rendered by
+`apps/cli/src/review-output.ts` in 80 columns and ASCII, with colour only on a terminal with
+`NO_COLOR` unset:
+
+- **Outcome,** with a sentence saying what it means. Every run paid for and ordered nothing.
+- **Budget,** with a bar and the total, committed, reserved and remaining amounts. These come
+  from one extra `mandate.get` after the run. If that read fails, the review says so and shows
+  what the run knows, and the exit code does not change. The contract mock is never read,
+  because its `mandate.get` always reports zero.
+- **Requirements,** with units allocated, meaning reserved or committed, not delivered.
+- **What the checker decided,** one row per cart, in order: the store, the cart ID, an estimate
+  marked as non-authoritative, the decision, and the checker's own total when it accepted.
+  A rejection groups its check codes into sentences that name only what the codes establish.
+  A cart built and never submitted shows as `Not sent`.
+- **Refused attempts,** with each call and its reason.
+- **The next step:** the exact `operation-run` command for the operator, never the shopper.
+- **Usage,** with token counts for live runs only. **The model's summary** comes last, with every
+  line prefixed so it cannot pass for part of the report.
+
+The report and the ledger supply every result. Events supply only the order, the estimates
+and the refused calls, and one that fails validation is counted, not trusted. An event
+claiming an acceptance the report does not record reads as unknown. A code with no wording
+shows raw. An unknown submission reads as unknown, never as failed or safe. Supplier and model
+text passes through `printable` or `printableLine` in `apps/cli/src/mandate.ts`, which
+neutralize escape sequences, C1 controls and bidi overrides. The review then replaces any
+remaining non-ASCII character. Against the contract mock, the review says plainly that it
+checks nothing and offers nothing to execute. `--json` prints the worker's report unchanged,
+without the extra read. The kept sentence "Simulation. Reservations are not payment, orders,
+delivery or equipment readiness." is 82 characters, the one line over 80.
+
+Add `--brief` to `shop run` for a recording. It keeps the live call lines, outcome,
+budget and requirement bars, store table and simulation sentence. Refused attempts become
+one count, the next step is shortened, and usage is omitted. A labelled model summary
+stays; only the scripted stand-in's placeholder is dropped. A long summary is cut to its
+conclusion and its section on suspicious supplier data, and the review says how many lines
+it left out; `--json` and `--trace` keep the full text. Exit codes stay the same.
+`--brief` with `--json` is refused with exit 1; `--json` alone is unchanged.
+
+### Read-only status
+
+```powershell
+npm.cmd run --silent shop -- status --mandate-id ID BACKEND [--operation ID ...] [--json]
+```
+
+This shows the budget bar and allocated requirements, and for each `--operation` its status with
+reservation, payment, order, refund and readiness on separate lines. It uses only the shared
+client's `mandate.get` and `operation.get`, so it cannot change anything. It builds no model,
+needs no key, and refuses to start if any `PAYPAL_*` variable is set. The client cannot list
+operations, so IDs come from the flag: `shop run` prints the ID of each reservation. Reads finish
+before anything prints, so a failure leaves stdout empty. Exit codes: 0 shown; 1 invalid input
+or backend failure, including an operation that is not found. An older mandate revision's
+operation is not found either, because reads use the active revision. Against the contract mock
+it says the mock checks nothing, its numbers are placeholder zeros, and it holds no operations
+between commands. "Fake payment" and "fake order" come from `PROVIDER_WORDING` in
+`apps/cli/src/review-output.ts`. Readiness always reads `not_assessed`, because readiness
+tracking is not built.
+
+Here and in the run review, "allocated" means reserved or committed, not delivered.
+A reservation sets budget aside; it is not a PayPal authorization hold or payment.
+Status JSON names these totals `budget.allocatedMinor` and
+`requirements[].allocatedUnits`; backend and contract fields are unchanged.
+
+### Live runs
+
 For a live model, set `ANTHROPIC_API_KEY` in `.env` and omit `--scripted`. The shopper
 reads only that one name from `.env`, because loading the whole file would put PayPal
 credentials in its process; it refuses to start if any `PAYPAL_*` variable is set. It
@@ -225,13 +293,12 @@ it recovers at store-a (`--run-id recovery`).
 
 ### Not established
 
-- **Live model behavior is lightly tested.** Claude has run six times, all on November 6,
-  2026, with the default model, and four of those used the contract mock. One run used a
-  single store. Two used both stores and the hostile listing. In both, Claude searched both stores
-  for both requirements, made no call that followed the listing, flagged it in its summary
-  and reserved at store-a for S$7,510.10. It passed over store-b, about S$262 cheaper,
-  because it distrusted that listing's evidence, and said so. That is two runs of one fixed
-  injection, so there is no claim of prompt-injection immunity. `src/anthropic.test.ts`
+- **Live model behavior is lightly tested.** Claude has run eight times, six on November 6,
+  2026 and two on November 7, with the default model. Four used the contract mock and four the
+  real backend. Four runs had both stores and the hostile listing, two on each backend. In each,
+  Claude made no call that followed the listing, flagged it in its summary and reserved at
+  store-a, passing over store-b, about S$262 cheaper. That is four runs of one fixed injection,
+  so there is no claim of prompt-injection immunity. `src/anthropic.test.ts`
   proves the request and response mapping with a stubbed `fetch`, and the scripted model
   proves the host's bounds. The protection tested here is that obeying the listing achieves
   nothing.
@@ -244,13 +311,14 @@ it recovers at store-a (`--run-id recovery`).
 - **A passed deadline stopped one run.** Given a mandate whose purchase deadline had passed
   the day before, Claude made no tool calls and said why. That is one run of an instruction
   to the model; the backend's clock is what enforces deadlines.
-- **The real backend has had one live pass.** In one `demo:flow --live` run, in a temporary
-  Windows copy with the backend's mode check skipped, Claude used the real checker twice.
-  With the hostile listing it followed nothing, flagged it and reserved at store-a. On a
-  separate mandate, it submitted store-b's cheaper cart with 75-hour-old records, was
-  rejected with `MANDATORY_EVIDENCE_UNKNOWN`, and recovered at store-a. It is not told the
-  72-hour limit, and a run where it avoids store-b would show no rejection. The flow reports
-  that with exit 2. This has not run on Linux or macOS.
+- **The real backend has had two live passes.** In one `demo:flow --live` run on each of
+  November 6 and 7, each in a temporary Windows copy with the backend's mode check skipped,
+  Claude used the real checker twice. Both times, with the hostile listing it followed nothing,
+  flagged it and reserved at store-a. On a separate mandate, it submitted store-b's cheaper cart
+  with 75-hour-old records, was rejected with `MANDATORY_EVIDENCE_UNKNOWN`, and recovered at
+  store-a. It is not told the 72-hour limit, and a run where it avoids store-b would show no
+  rejection. The flow reports that with exit 2. Two passes are not a reliability rate, and this
+  has not run on Linux or macOS.
 - **No acceptance gate is passed by this.** M4 still needs CLI review and approval, and
   bounded exceptions.
 - **Run state is not durable.** An interrupted worker keeps nothing but its optional trace.
@@ -265,7 +333,7 @@ it recovers at store-a (`--run-id recovery`).
 From the repository root:
 
 ```powershell
-node --test "services/agent/src/*.test.ts" "services/suppliers/src/*.test.ts" apps/cli/src/shop.test.ts apps/cli/src/shop-draft.test.ts apps/cli/src/backend-transport.test.ts
+node --test "services/agent/src/*.test.ts" "services/suppliers/src/*.test.ts" apps/cli/src/shop.test.ts apps/cli/src/shop-draft.test.ts apps/cli/src/review-output.test.ts apps/cli/src/backend-transport.test.ts
 ```
 
 `apps/cli/src/shop.test.ts` runs the worker against the real checker core and a real

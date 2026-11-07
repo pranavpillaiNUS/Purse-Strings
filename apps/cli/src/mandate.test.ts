@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { MandateDraftSchema } from '../../../services/agent/src/mandate.ts';
+import { printable, printableLine } from './mandate.ts';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const entry = join(root, 'apps/cli/src/main.ts');
@@ -111,6 +112,60 @@ test('tampered or expired drafts need revision and human output explains the pla
   assert.match(humanDraft.stdout, /5 hires/);
   assert.match(humanDraft.stdout, /5 laptop/);
   assert.match(humanDraft.stdout, /Draft only/);
+});
+
+test('human draft and review output show money as S$, and JSON keeps integer cents', () => {
+  const human = run(['mandate', 'draft', '--request', requestPath, '--now', now]);
+  assert.equal(human.status, 0, human.stderr);
+  assert.match(human.stdout, /budget: S\$\d[\d,]*\.\d{2} \(all-in\)/);
+  assert.match(human.stdout, /cap: S\$\d[\d,]*\.\d{2} each/);
+  assert.doesNotMatch(human.stdout, /SGD cents/);
+  const artifact = draft();
+  assert.ok(Number.isInteger(artifact.proposal.budgetMinor));
+  const review = run(['mandate', 'review', '--draft', '-', '--now', now], JSON.stringify(artifact));
+  assert.equal(review.status, 0, review.stderr);
+  assert.match(review.stdout, /budget: S\$/);
+  assert.doesNotMatch(review.stdout, /SGD cents/);
+});
+
+test('printable neutralizes escape sequences, C1 controls and bidi overrides, and keeps ordinary text', () => {
+  const ESC = String.fromCharCode(0x1b);
+  const BEL = String.fromCharCode(0x07);
+  const c1 = (code: number): string => String.fromCharCode(code);
+  const inert = (text: string): string => printable(text).replace(/ +/g, ' ').trim();
+  // CSI, in 7-bit and C1 form, takes its parameters and final byte with it.
+  assert.equal(inert(`a${ESC}[2Jb`), 'a b');
+  assert.equal(inert(`a${ESC}[38;5;196mb`), 'a b');
+  assert.equal(inert(`a${c1(0x9b)}31mb`), 'a b');
+  // OSC, DCS and APC strings go whole, with either terminator, including a clipboard write.
+  assert.equal(inert(`a${ESC}]52;c;ZXZpbA==${BEL}b`), 'a b');
+  assert.equal(inert(`a${ESC}]0;title${ESC}\\b`), 'a b');
+  assert.equal(inert(`a${ESC}Ppayload${ESC}\\b`), 'a b');
+  assert.equal(inert(`a${ESC}_payload${c1(0x9c)}b`), 'a b');
+  assert.equal(inert(`a${c1(0x9d)}title${c1(0x9c)}b`), 'a b');
+  // Other ESC sequences and a lone ESC.
+  assert.equal(inert(`a${ESC}cb`), 'a b');
+  assert.equal(inert(`a${ESC}(0b`), 'a b');
+  assert.equal(inert(`a${ESC}`), 'a');
+  // An unterminated string loses its introducer, not the text after it.
+  assert.equal(inert(`a${ESC}]0;still visible`), 'a 0;still visible');
+  // Every C1 control and every bidi override.
+  for (let code = 0x80; code <= 0x9f; code += 1) {
+    assert.ok(!printable(`a${c1(code)}b`).includes(c1(code)), code.toString(16));
+  }
+  for (const code of [0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069, 0x200e, 0x200f, 0x061c, 0x2028, 0x2029]) {
+    assert.equal(printable(`a${c1(code)}b`), 'a b', code.toString(16));
+  }
+  // Nothing dangerous can be reassembled from what is left.
+  const nested = printable(`${ESC}${ESC}[2J${c1(0x9b)}${ESC}]0;x${BEL}`);
+  assert.ok(![...nested].some((character) => character.charCodeAt(0) < 0x20 || (character.charCodeAt(0) >= 0x7f && character.charCodeAt(0) <= 0x9f)));
+  // Tabs and carriage returns are controls too, while a newline stays for multi-line text.
+  assert.equal(printable('a\tb\rc\nd'), 'a b c\nd');
+  assert.equal(printableLine('a\nb\r\nc'), 'a b  c');
+  // Ordinary text is untouched, including non-English text.
+  const text = `Caf${c1(0xe9)} ${c1(0x4e2d)}${c1(0x6587)} S$8,000 (all-in)`;
+  assert.equal(printable(text), text);
+  assert.equal(printableLine(text), text);
 });
 
 test('draft artifacts and bare proposals cannot be passed as confirmed mandates to check', (t) => {

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createMandateDraft, reviewMandateDraft } from '../../../services/agent/src/mandate.ts';
 import type { DraftOrigin, MandateDraft } from '../../../services/agent/src/mandate.ts';
+import { formatSgd } from './format.ts';
 
 const HELP = `Mandate draft and review (offline planning only)
 
@@ -30,9 +31,23 @@ export function bundled(path: string): string {
   return fileURLToPath(new URL(`../../../${path}`, import.meta.url));
 }
 
-/** Supplier and model text can carry terminal escape sequences; show it inert. */
+/**
+ * Terminal escape sequences in their 7-bit and C1 forms: CSI, then OSC, DCS, SOS, PM and
+ * APC strings with a terminator, then any other ESC sequence. An unterminated string
+ * loses only its introducer, so its text stays visible instead of vanishing.
+ */
+const ESCAPE_SEQUENCES = /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]?|(?:\u001b[\]PX^_]|[\u0090\u0098\u009d-\u009f])[^\u0007\u001b\u009c]*(?:\u0007|\u001b\\|\u009c)|\u001b[ -/]*[0-~]?/g;
+/** Newlines stay, because model text can be several lines. Use printableLine for one field. */
+const CONTROLS_AND_BIDI = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+
+/** Supplier and model text can carry escape sequences and bidi overrides; show it inert. */
 export function printable(text: string): string {
-  return text.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, ' ');
+  return text.replace(ESCAPE_SEQUENCES, ' ').replace(CONTROLS_AND_BIDI, ' ');
+}
+
+/** For anything shown on one line: a newline here could forge a line of the report. */
+export function printableLine(text: string): string {
+  return printable(text).replace(/\n/g, ' ');
 }
 
 function readJson(path: string): unknown {
@@ -42,24 +57,24 @@ function readJson(path: string): unknown {
 
 /** A model's guesses and omissions, shown so a person can catch them before confirming. */
 export function printOrigin(origin: DraftOrigin): void {
-  console.log(`Drafted by a model (${printable(origin.requestedModel)}) from this request:`);
-  console.log(`  ${printable(origin.requestText)}`);
+  console.log(`Drafted by a model (${printableLine(origin.requestedModel)}) from this request:`);
+  console.log(`  ${printableLine(origin.requestText)}`);
   console.log('Assumptions the model declared (check each before confirming):');
   if (origin.assumptions.length === 0) console.log('  none declared, which does not mean there are none');
-  for (const { field, reason } of origin.assumptions) console.log(`  ${field}: ${printable(reason)}`);
+  for (const { field, reason } of origin.assumptions) console.log(`  ${printableLine(field)}: ${printableLine(reason)}`);
   console.log('Asked for but NOT captured in this draft:');
   if (origin.notCaptured.length === 0) console.log('  none declared, which does not mean there are none');
-  for (const item of origin.notCaptured) console.log(`  - ${printable(item)}`);
+  for (const item of origin.notCaptured) console.log(`  - ${printableLine(item)}`);
 }
 
 export function printProposal(proposal: MandateDraft['proposal']): void {
-  console.log(`${proposal.id} v${proposal.version} | policy ${proposal.policyId} v${proposal.policyVersion}`);
-  console.log(`  budget: ${proposal.budgetMinor} SGD cents (all-in)`);
+  console.log(printableLine(`${proposal.id} v${proposal.version} | policy ${proposal.policyId} v${proposal.policyVersion}`));
+  console.log(`  budget: ${formatSgd(proposal.budgetMinor)} (all-in)`);
   console.log(`  purchase by: ${proposal.purchaseBy} | ready by: ${proposal.readyBy}`);
-  console.log(`  location: ${proposal.deliveryLocationId} | suppliers: ${proposal.allowedSuppliers.join(', ')}`);
+  console.log(printableLine(`  location: ${proposal.deliveryLocationId} | suppliers: ${proposal.allowedSuppliers.join(', ')}`));
   for (const line of proposal.requirements) {
-    console.log(`  ${line.id}: ${line.quantity} ${line.role}(s) | SKUs: ${line.allowedSkus.join(', ')}`);
-    console.log(`    cap: ${line.maxUnitPriceMinor} SGD cents each | warranty: ${line.minWarrantyMonths} months minimum`);
+    console.log(printableLine(`  ${line.id}: ${line.quantity} ${line.role}(s) | SKUs: ${line.allowedSkus.join(', ')}`));
+    console.log(`    cap: ${formatSgd(line.maxUnitPriceMinor)} each | warranty: ${line.minWarrantyMonths} months minimum`);
   }
 }
 

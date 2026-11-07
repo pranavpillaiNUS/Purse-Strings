@@ -30,7 +30,7 @@ Everything runnable is a simulation: no real money, suppliers or orders.
 | --- | --- |
 | `npm run cli` | Offline eligibility (`check`, `demo`), fixture-store controls (`store`), deterministic mandate planning (`mandate draft/review`) |
 | `npm run backend` | SQLite ledger with atomic budget and quantity reservations, local operator confirmation, and durable execution with crash recovery over **fake** payment and supplier providers |
-| `npm run shop` | The bounded shopper (`run`): a model or a scripted stand-in proposes price-free carts to that backend through the shared client. Mandate drafting (`draft`): a model turns a plain-English request into a policy-checked draft |
+| `npm run shop` | The bounded shopper (`run`): a model or a scripted stand-in proposes price-free carts to that backend through the shared client, and the run closes with a plain-language review. Mandate drafting (`draft`): a model turns a plain-English request into a policy-checked draft. A read-only view (`status`) of ledger numbers and named operations, with no model or key |
 | `npm run demo:flow` | The whole story in one command, with dates generated from today: control panel, plain-English request, confirmation, hostile listing, store change, rejection and recovery, and execution over **fake** providers. `--live` uses Claude. See `docs/demo-script.md` |
 | `npm run spike:paypal` | A separate, interactive PayPal sandbox spike connected to none of the above. `docs/paypal-spike.md` records no results yet |
 
@@ -102,7 +102,8 @@ drafting and confirmation (deterministic draft/review, model drafting from a pla
 request (`shop draft`) and the file handoff to the backend exist); 3) the agent with its bounded
 tools (`npm run shop` exists; for what live runs have shown, see
 `services/agent/README.md`); 4) review and dashboard output, as CLI output until both people
-agree to start the stage-two website (`shop run` prints a run report); 5) a prompt-injection
+agree to start the stage-two website (`shop run` closes with a review and `shop status` is a
+read-only view; neither approves, excepts or executes anything); 5) a prompt-injection
 listing for the demo (the seed and a scripted compromised run exist).
 
 | Target date | Milestone |
