@@ -173,25 +173,25 @@ npm.cmd run --silent cli -- store reset --catalog services/suppliers/state/store
 
 # Plan, then the operator stores, reviews and confirms the exact revision.
 npm.cmd run --silent cli -- mandate draft --request services/agent/fixtures/demo-hire-request.json --now $now --proposal-out services/agent/state/proposal.json
-$draft = npm.cmd run --silent backend -- --db .runtime/app.db --config $config mandate-draft --file services/agent/state/proposal.json | ConvertFrom-Json
-npm.cmd run --silent backend -- --db .runtime/app.db --config $config mandate-review --id engineering-hires-demo --revision 1
-npm.cmd run --silent backend -- --db .runtime/app.db --config $config mandate-confirm --id engineering-hires-demo --revision 1 --digest $draft.digest
+$draft = npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config mandate-draft --file services/agent/state/proposal.json | ConvertFrom-Json
+npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config mandate-review --id engineering-hires-demo --revision 1
+npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config mandate-confirm --id engineering-hires-demo --revision 1 --digest $draft.digest
 
 # A compromised model obeys the hostile listing. Everything is refused, nothing reserved.
-npm.cmd run --silent shop -- run --run-id compromised --mandate-id engineering-hires-demo --backend-db .runtime/app.db --backend-config $config --scripted services/agent/fixtures/compromised-shopping-calls.json
+npm.cmd run --silent shop -- run --run-id compromised --mandate-id engineering-hires-demo --backend-db .runtime/backend/app.db --backend-config $config --scripted services/agent/fixtures/compromised-shopping-calls.json
 
 # Store-b removes the listing. Live Claude would not buy from it while the listing was there.
 npm.cmd run --silent cli -- store reset --catalog services/suppliers/state/store-b.json --seed store-b --now $now
 
 # An honest run compares both stores and reserves the cheaper cart. Prints the operation ID.
-npm.cmd run --silent shop -- run --run-id demo --mandate-id engineering-hires-demo --backend-db .runtime/app.db --backend-config $config --scripted services/agent/fixtures/demo-shopping-calls.json
+npm.cmd run --silent shop -- run --run-id demo --mandate-id engineering-hires-demo --backend-db .runtime/backend/app.db --backend-config $config --scripted services/agent/fixtures/demo-shopping-calls.json
 
 # A read-only look: the ledger's numbers and this operation, with each fact on its own line.
-npm.cmd run --silent shop -- status --mandate-id engineering-hires-demo --backend-db .runtime/app.db --backend-config $config --operation OPERATION_ID
+npm.cmd run --silent shop -- status --mandate-id engineering-hires-demo --backend-db .runtime/backend/app.db --backend-config $config --operation OPERATION_ID
 
 # Only the operator's backend process executes, here against fake providers.
-npm.cmd run --silent backend -- --db .runtime/app.db --config $config operation-run --id OPERATION_ID
-npm.cmd run --silent backend -- --db .runtime/app.db --config $config audit --id OPERATION_ID
+npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config operation-run --id OPERATION_ID
+npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config audit --id OPERATION_ID
 ```
 
 To use Claude, add `ANTHROPIC_API_KEY` to `.env` and drop `--scripted`. Delete `.runtime/`

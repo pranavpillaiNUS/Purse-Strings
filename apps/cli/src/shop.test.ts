@@ -737,11 +737,7 @@ test('invalid invocations exit 1 with empty stdout', (t) => {
 
 // --- Every real process: the planner, the operator CLI, the shopper and execution.
 
-const backendRefusedOnWindows = process.platform === 'win32'
-  ? 'The backend CLI refuses its runtime directory on Windows after first use (POSIX permission check)'
-  : false;
-
-test('full process walk: draft, operator confirmation, shopping over rpc, then simulated execution', { skip: backendRefusedOnWindows }, (t) => {
+test('full process walk: draft, operator confirmation, shopping over rpc, then simulated execution', (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'splittap-shop-e2e-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const nowDate = new Date();

@@ -14,13 +14,17 @@ concurrency:
 
 jobs:
   checks:
-    # Linux only for now: add windows-latest once issue #9 is fixed, or it stays red.
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         node-version: ['24', '26']
+        # One job only: macOS minutes count ten times over on a private repo.
+        include:
+          - os: macos-latest
+            node-version: '26'
     # Every step is offline: no secrets, no model key, no PayPal, scripted stand-ins only.
     steps:
       - uses: actions/checkout@v7

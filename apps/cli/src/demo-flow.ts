@@ -297,13 +297,6 @@ export function childEnvironment(entry: 'main' | 'backend' | 'shop', args: reado
   return copy;
 }
 
-/** The backend's known Windows refusal gets a pointer, wherever in the flow it first appears. */
-function withWindowsHint(reason: string): string {
-  return /permissions are too open/.test(reason)
-    ? `${reason}\nThis is the known Windows problem with the backend (issue #9). See services/agent/CONFIRMATION_HANDOFF.md.`
-    : reason;
-}
-
 function waitForEnter(prompt: string): void {
   process.stdout.write(`\n[${prompt}]`);
   const buffer = Buffer.alloc(1);
@@ -393,7 +386,7 @@ async function main(): Promise<void> {
     });
     if (result.error) throw new DemoFailure(`The command could not start: ${result.error.message}`);
     if (!(options.accept ?? [0]).includes(result.status ?? -1)) {
-      throw new DemoFailure(withWindowsHint(result.stderr?.trim() || `exit code ${result.status}`));
+      throw new DemoFailure(result.stderr?.trim() || `exit code ${result.status}`);
     }
     return { status: result.status ?? -1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
   }
@@ -467,7 +460,7 @@ async function main(): Promise<void> {
     capture: true,
     accept: [1],
   });
-  if (!/no confirmed active revision/.test(early.stderr)) throw new DemoFailure(withWindowsHint(`The shopper was not refused as expected: ${early.stderr.trim()}`));
+  if (!/no confirmed active revision/.test(early.stderr)) throw new DemoFailure(`The shopper was not refused as expected: ${early.stderr.trim()}`);
   console.log(`Refused: ${early.stderr.trim().replace(/^shop: /, '')}`);
   const revision = backend<{ draft: Parameters<typeof revisionSummary>[0] }>('mandate-review', ['--id', mandateId, '--revision', '1']);
   console.log(revisionSummary(revision.draft));

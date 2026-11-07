@@ -18,7 +18,7 @@ shopper-supplied: they point at private runtime state and snapshot files on this
 machine.
 
 ```sh
-npm run backend -- --db .runtime/app.db --config services/agent/fixtures/backend-demo-config.json COMMAND
+npm run backend -- --db .runtime/backend/app.db --config services/agent/fixtures/backend-demo-config.json COMMAND
 ```
 
 | Command | Purpose | Prints | Exit |
@@ -48,7 +48,7 @@ config file's directory, each file ≤ 1 MiB:
   "version": 1,
   "policyFiles": ["../../../config/policies/hardware.example.json"],
   "catalogFiles": ["../../suppliers/state/store-a.json", "../../suppliers/state/store-b.json"],
-  "fakeProviderDb": "../../../.runtime/providers.db"
+  "fakeProviderDb": "../../../.runtime/backend/providers.db"
 }
 ```
 

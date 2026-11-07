@@ -111,18 +111,18 @@ npm run --silent cli -- store reset --catalog services/suppliers/state/store-a.j
 npm run --silent cli -- store reset --catalog services/suppliers/state/store-b.json --seed store-b-hostile --now $now
 npm run --silent cli -- mandate draft --request services/agent/fixtures/demo-hire-request.json \
   --now $now --proposal-out services/agent/state/proposal.json
-npm run --silent backend -- --db .runtime/app.db --config $config mandate-draft --file services/agent/state/proposal.json
+npm run --silent backend -- --db .runtime/backend/app.db --config $config mandate-draft --file services/agent/state/proposal.json
 # copy the digest the above printed
-npm run --silent backend -- --db .runtime/app.db --config $config mandate-review --id engineering-hires-demo --revision 1
-npm run --silent backend -- --db .runtime/app.db --config $config mandate-confirm --id engineering-hires-demo --revision 1 --digest DIGEST
+npm run --silent backend -- --db .runtime/backend/app.db --config $config mandate-review --id engineering-hires-demo --revision 1
+npm run --silent backend -- --db .runtime/backend/app.db --config $config mandate-confirm --id engineering-hires-demo --revision 1 --digest DIGEST
 # compromised shopper: refused, nothing reserved (exit 2)
 npm run --silent shop -- run --run-id compromised --mandate-id engineering-hires-demo \
-  --backend-db .runtime/app.db --backend-config $config --scripted services/agent/fixtures/compromised-shopping-calls.json
+  --backend-db .runtime/backend/app.db --backend-config $config --scripted services/agent/fixtures/compromised-shopping-calls.json
 # honest shopper: reserves
 npm run --silent shop -- run --run-id demo --mandate-id engineering-hires-demo \
-  --backend-db .runtime/app.db --backend-config $config --scripted services/agent/fixtures/demo-shopping-calls.json
-npm run --silent backend -- --db .runtime/app.db --config $config operation-run --id OPERATION_ID
-npm run --silent backend -- --db .runtime/app.db --config $config audit --id OPERATION_ID
+  --backend-db .runtime/backend/app.db --backend-config $config --scripted services/agent/fixtures/demo-shopping-calls.json
+npm run --silent backend -- --db .runtime/backend/app.db --config $config operation-run --id OPERATION_ID
+npm run --silent backend -- --db .runtime/backend/app.db --config $config audit --id OPERATION_ID
 ```
 
 Observed on this branch (2026-11-06): command chain completes exit 0; the
