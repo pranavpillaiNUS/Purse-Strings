@@ -19,7 +19,7 @@ using fake providers.
 
 ## Run
 
-Requires Node 24+ and npm. No API keys or network calls are used by the offline commands.
+Requires Node 24.15+ or 26+, and npm. No API keys or network calls are used by the offline commands.
 
 ```sh
 npm ci
@@ -208,7 +208,7 @@ cart rejected followed by recovery, and execution over fake providers. It needs 
 network. Add `--live` for Claude, which spends API credit, and `--pause` for recording. The
 scene-by-scene recording plan is in [the demo script](docs/demo-script.md).
 
-The scripted flow passes in CI on Linux and Windows with Node 24 and 26, and on macOS with
+The scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and on macOS with
 Node 26. Live Claude has run it only in temporary Windows copies with the backend's folder check
 skipped.
 

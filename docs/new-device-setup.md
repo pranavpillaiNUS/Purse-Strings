@@ -7,7 +7,7 @@ On Windows PowerShell, use `npm.cmd` wherever this says `npm`.
 
 ## 1. Install the tools
 
-- **Node 24 or newer**, and **Git**.
+- **Node 24.15 or newer** (Node 25 is untested), and **Git**.
 - **GitHub CLI**, then sign in with `gh auth login`. The repo is private, so this also lets
   Git clone it.
 - **graphify** (optional): `uv tool install graphifyy`, which needs

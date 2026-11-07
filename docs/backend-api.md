@@ -64,7 +64,8 @@ The backend directory layout used by the demo fixtures:
 ```
 
 Rules that hold today: the application DB and the fake-provider DB must resolve to
-distinct files; duplicate identical snapshot files are allowed, conflicting
+distinct files, including spellings the filesystem treats as one name, such as a change of
+case on Windows or macOS; duplicate identical snapshot files are allowed, conflicting
 identities are rejected; catalogs are reloaded per invocation; no command accepts a
 provider selector, URLs, credentials, clock overrides, scenario selectors or approval
 metadata. A shopper never names these paths — only the operator's launch options do.
@@ -88,6 +89,8 @@ it uses the PowerShell that ships with Windows, which adds about half a second p
 - **Refused:** any other allow entry, even read-only, and anything the backend can't read or parse.
   That includes a machine where PowerShell can't run or is locked to Constrained Language Mode,
   a drive with no access lists, and accounts Windows writes in a short form, such as Guest.
+- **New files:** a folder must also have an allow entry that new files inherit. With none, Windows
+  gives a new database the creating process's default access, which can reach further.
 - **Links:** a junction or link is judged by the folder it reaches.
 - **Database files:** an existing database or sidecar file must pass the same rules, because Windows
   lets an account open a file by its full path even when the folder blocks it.
@@ -100,7 +103,8 @@ parent folders, and nothing stops access changing after the check. Administrator
 always reach the files. This is not production authentication or multi-user isolation.
 
 **How it was checked:** `apps/cli/src/backend.test.ts` uses real Windows permissions for inherited
-and direct access, open database files, junctions and an unreadable descriptor. A folder owned by another account is
+and direct access, folders that don't pass access on, open database files, junctions and an
+unreadable descriptor. A folder owned by another account is
 covered only by a logic test in `apps/cli/src/windows-acl.test.ts`, because creating a real one needs
 admin rights.
 

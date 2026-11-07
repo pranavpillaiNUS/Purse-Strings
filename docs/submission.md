@@ -47,7 +47,7 @@ The rules do not require a separate AI tools list. We keep one below as accurate
 | Repo made public | Both. Pranav changes the setting | Not done. The repo is private. A scan of its history on Nov 7 found no real secrets. It did find personal details you should both see first. The report is outside the repo. Scan again before the change, because commits are still landing |
 | License visible | Both | In place. `LICENSE` is MIT and GitHub detects it. The copyright line names only `pranavpillaiNUS`, so Danny should confirm that is fine. The public can see it only once the repo is public |
 | Complete setup and run instructions | Pranav | Partly done. `README.md` has run commands. `docs/new-device-setup.md` is a team guide and still says the repo is private. The opening below is not pasted in yet |
-| Working demo instructions | Both | Not ready. `npm run demo:flow` is documented. The scripted flow passes in CI on Linux and Windows with Node 24 and 26, and on macOS with Node 26, once PR #15 merges. Live Claude has run it only in temporary Windows copies with the backend's folder check skipped. It runs on fake providers |
+| Working demo instructions | Both | Not ready. `npm run demo:flow` is documented. The scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and on macOS with Node 26, once PR #15 merges. Live Claude has run it only in temporary Windows copies with the backend's folder check skipped. It runs on fake providers |
 | Judge access until judging ends on Dec 15, with any credentials they need | Both | Not done. The repo must stay public and the instructions must keep working. The scripted flow needs no key. `--live` needs an Anthropic key. **[PAYPAL, Danny and Pranav: decide how judges run the PayPal path, using sandbox details only and committing no secret to the repo. See the proposal below.]** |
 | Name the platform it runs on | Both | Not decided. The rules require consistent running on the intended platform. The tests and the scripted flow pass in CI on Linux, Windows and macOS, once PR #15 merges. Name only platforms where the PayPal path has also run, because the rules hold us to what we name |
 | Video under 3 minutes, public on YouTube | Pranav, with Danny for scene 6 | Not done. `docs/demo-script.md` is the recording plan and targets 2:45. No video exists. Scene 6 has to be recorded after PayPal is in the purchase path |
@@ -65,7 +65,7 @@ video alone.
 
 | Path | What a judge needs | Proposal |
 | --- | --- | --- |
-| Scripted flow | Node 24 or newer | The first command in the README. It needs no key or network, so PayPal must stay opt-in for this to keep working |
+| Scripted flow | Node 24.15+ or 26+ | The first command in the README. It needs no key or network, so PayPal must stay opt-in for this to keep working |
 | PayPal sandbox path | A sandbox client ID and secret, and a sandbox buyer login to approve the hold | A separate sandbox app and buyer just for judges, so nothing they do affects Danny's. Sandbox only, given privately and never in the repo. Delete them after winners are announced |
 | Live Claude | An Anthropic key | Their own key, or a separate key with a low spend limit, given privately. A run costs about 30 cents |
 
@@ -268,7 +268,7 @@ mandate, and shops within that mandate using four bounded tools.
 
 ## Run the story
 
-Needs Node 24 or newer and npm. After `npm ci`, one command runs it:
+Needs Node 24.15+ or 26+, and npm. After `npm ci`, one command runs it:
 
 ```sh
 npm run demo:flow
@@ -278,7 +278,7 @@ It needs no API key or network. It runs six scenes, with every date generated fr
 panel for two fake stores, a plain-English request, a person confirming it, a hostile listing, a store
 change that gets a cart rejected followed by recovery, and execution over fake providers.
 
-[PLATFORMS: as of Nov 7, the scripted flow passes in CI on Linux and Windows with Node 24 and 26, and on
+[PLATFORMS: as of Nov 8, the scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and on
 macOS with Node 26. Update this, then state what you saw.]
 
 ## What this proves

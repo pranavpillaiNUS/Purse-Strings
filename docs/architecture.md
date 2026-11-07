@@ -41,7 +41,7 @@ optional sandbox spike.
 
 ## Technology decisions
 
-Keep Node 24+, erasable TypeScript and ESM. Use Zod for runtime validation and
+Keep Node 24.15+ or 26+, erasable TypeScript and ESM. Use Zod for runtime validation and
 `node:test` for behavior tests. Node built-ins handle CLI arguments/files; no CLI,
 server or agent framework is needed for M0. Stdout in JSON mode contains a single
 JSON result; operational errors go to stderr. No frontend dependencies.

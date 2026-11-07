@@ -19,10 +19,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # 24.15.0 is the lowest supported version in package.json. Older 24.x prints a
+        # node:sqlite warning into the backend's stderr, which is meant to stay sanitized.
         os: [ubuntu-latest, windows-latest]
-        node-version: ['24', '26']
-        # One job only: macOS minutes count ten times over on a private repo.
+        node-version: ['24.15.0', '26']
         include:
+          - os: ubuntu-latest
+            node-version: '24'
+          # One job only: macOS minutes count ten times over on a private repo.
           - os: macos-latest
             node-version: '26'
     # Every step is offline: no secrets, no model key, no PayPal, scripted stand-ins only.

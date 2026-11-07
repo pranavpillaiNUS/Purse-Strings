@@ -187,7 +187,7 @@ aim to reach them.
 
 - Inspect `git status` and applicable instructions before editing. Preserve unrelated
   work and the existing PayPal spike unless the task requires a change.
-- Use Node 24+, erasable TypeScript and ESM. Validate external data with runtime
+- Use Node 24.15+ or 26+, erasable TypeScript and ESM. Validate external data with runtime
   schemas; TypeScript types do not validate model, file or network input.
 - CLI parsing/output lives in `apps/cli/`; pure policy checks in
   `services/checker/src/rules/`; suppliers in `services/suppliers/`; model calls in
