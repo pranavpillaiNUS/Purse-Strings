@@ -209,8 +209,9 @@ network. Add `--live` for Claude, which spends API credit, and `--pause` for rec
 scene-by-scene recording plan is in [the demo script](docs/demo-script.md).
 
 **It stops at scene 3 on Windows**, because of the same
-[runtime-directory check](services/agent/CONFIRMATION_HANDOFF.md#blocked-on-windows). So far
-it has run only in a temporary Windows copy with that check skipped, never on Linux or macOS.
+[runtime-directory check](services/agent/CONFIRMATION_HANDOFF.md#blocked-on-windows). The
+scripted flow passes in CI on Linux with Node 24 and 26. Live Claude has run it only in temporary
+Windows copies with that check skipped, and it has not run on macOS.
 
 ## Status
 

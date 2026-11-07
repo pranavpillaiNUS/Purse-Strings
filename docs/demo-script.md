@@ -24,8 +24,8 @@ For a scripted rehearsal, say "the scripted stand-in" wherever the narration bel
 "Claude", and omit the live-only part of scene 4 that starts "Now Claude".
 
 **On Windows, the flow stops in scene 3** until the runtime-directory check in issue #9 is
-resolved. Record on Linux or macOS, or after that fix. The flow has not yet run on either,
-so rehearse there first.
+resolved. Record on Linux, or after that fix. The scripted flow passes in CI on Linux, but a live
+take has not run there, so rehearse one first. macOS is untested.
 
 ## The script
 

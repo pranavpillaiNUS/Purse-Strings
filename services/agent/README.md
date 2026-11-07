@@ -317,8 +317,8 @@ it recovers at store-a (`--run-id recovery`).
   flagged it and reserved at store-a. On a separate mandate, it submitted store-b's cheaper cart
   with 75-hour-old records, was rejected with `MANDATORY_EVIDENCE_UNKNOWN`, and recovered at
   store-a. It is not told the 72-hour limit, and a run where it avoids store-b would show no
-  rejection. The flow reports that with exit 2. Two passes are not a reliability rate, and this
-  has not run on Linux or macOS.
+  rejection. The flow reports that with exit 2. Two passes are not a reliability rate. The scripted
+  flow passes in CI on Linux, but no live run has happened on Linux or macOS.
 - **No acceptance gate is passed by this.** M4 still needs CLI review and approval, and
   bounded exceptions.
 - **Run state is not durable.** An interrupted worker keeps nothing but its optional trace.

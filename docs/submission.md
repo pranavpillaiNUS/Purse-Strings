@@ -47,9 +47,9 @@ The rules do not require a separate AI tools list. We keep one below as accurate
 | Repo made public | Both. Pranav changes the setting | Not done. The repo is private. A scan of its history on Nov 7 found no real secrets. It did find personal details you should both see first. The report is outside the repo. Scan again before the change, because commits are still landing |
 | License visible | Both | In place. `LICENSE` is MIT and GitHub detects it. The copyright line names only `pranavpillaiNUS`, so Danny should confirm that is fine. The public can see it only once the repo is public |
 | Complete setup and run instructions | Pranav | Partly done. `README.md` has run commands. `docs/new-device-setup.md` is a team guide and still says the repo is private. The opening below is not pasted in yet |
-| Working demo instructions | Both | Not ready. `npm run demo:flow` is documented. It stops at scene 3 on Windows (issue #9, Danny). It has run to the end only in temporary Windows copies with that check skipped, and never on Linux or macOS. It runs on fake providers |
+| Working demo instructions | Both | Not ready. `npm run demo:flow` is documented. It stops at scene 3 on Windows (issue #9, Danny). The scripted flow passes in CI on Linux with Node 24 and 26. Live Claude has run it only in temporary Windows copies with that check skipped. It has not run on macOS. It runs on fake providers |
 | Judge access until judging ends on Dec 15, with any credentials they need | Both | Not done. The repo must stay public and the instructions must keep working. The scripted flow needs no key. `--live` needs an Anthropic key. **[PAYPAL, Danny and Pranav: decide how judges run the PayPal path, using sandbox details only and committing no secret to the repo.]** |
-| Name the platform it runs on | Both | Not done. The rules require consistent running on the intended platform. Windows is blocked by issue #9, and Linux has no recorded result yet |
+| Name the platform it runs on | Both | Not decided. The rules require consistent running on the intended platform. The tests and the scripted flow pass in CI on Linux. Windows is blocked by issue #9, and macOS is untested |
 | Video under 3 minutes, public on YouTube | Pranav, with Danny for scene 6 | Not done. `docs/demo-script.md` is the recording plan and targets 2:45. No video exists. Scene 6 has to be recorded after PayPal is in the purchase path |
 | No copyrighted music or third-party trademarks | Pranav | Cannot be checked until a video exists. A search on Nov 7 found no common hardware brand names in the fixtures, examples, policy files or demo flow. SKUs are synthetic, such as `LAP-14-AIR`. The narration and screen name Claude, a third-party mark, and PayPal, the sponsor. Section 11 says to ask in writing if a term is ambiguous, so consider asking Devpost whether naming the AI tool you used is fine |
 | Devpost text | Both. Pranav drafts, Danny writes the PayPal parts | Draft below, with PayPal placeholders open. Nothing is entered on Devpost |
@@ -261,7 +261,8 @@ change that gets a cart rejected followed by recovery, and execution over fake p
 [WINDOWS, remove once issue #9 is fixed: on Windows it stops at scene 3, because of a runtime-directory
 permission check.]
 
-[LINUX AND MACOS: as of Nov 7 it had never run on either. Rehearse there, then state what you saw.]
+[PLATFORMS: as of Nov 7, the scripted flow passes in CI on Linux with Node 24 and 26, and macOS is
+untested. Update this, then state what you saw.]
 
 ## What this proves
 
