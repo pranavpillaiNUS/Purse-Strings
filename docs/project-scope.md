@@ -14,9 +14,11 @@ location on time, with spend reconciled and exceptions attributable to a human.
 transactional budget govern what can execute. Do not claim universal novelty or
 prompt-injection immunity.
 
-**Delivery constraint:** stage one uses CLI input/output exclusively. No website,
-frontend, web framework or browser-driven workflow. Build and test the purchasing
-implementation before adding any website. Later UI work calls the proven core.
+**Delivery constraint:** stage one uses CLI input/output exclusively. No custom
+website, frontend or web framework is built, and purchasing behavior is
+browser-free; the one browser step anywhere is PayPal's own hosted buyer-consent
+page during the optional sandbox spike, not a site we build. Build and test the
+purchasing implementation before adding any website. Later UI work calls the proven core.
 
 ## Representative task
 
@@ -145,8 +147,14 @@ durable execution over fake providers (see `services/checker/src/ledger/README.m
 A partial M4 slice adds the bounded shopper worker over the shared client, tested
 against the real checker core with scripted models. It has had four live model runs,
 all against the contract mock, two of them with the hostile listing, and its CLI
-approval and exception flows do not exist. No
-gate after M0 is recorded as passed,
-and M3 and M5 are planned. PayPal feasibility is unverified
+approval and exception flows do not exist. Unit 4 of the backend delivery adds a
+sandbox-only PayPal gateway contract
+(`services/checker/src/paypal/gateway.ts`, documented in
+`docs/backend-api.md`) with fetch-mocked capture/refund tests; it is not wired into
+the execution ledger, and PayPal feasibility on a real sandbox account remains
+unverified. No gate after M0 is recorded as passed,
+and M3 and M5 are planned. See `docs/backend-delivery-review.md` for the distinction
+between simulated execution, mocked contract coverage and real feasibility. PayPal
+feasibility is unverified
 until `docs/paypal-spike.md` records observed results. The original hackathon schedule
 is preserved in `docs/hackathon-plan.md`, not adopted as a current commitment.
