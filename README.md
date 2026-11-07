@@ -5,12 +5,14 @@ hardware, suppliers and an all-in budget. The AI proposes; independent rules and
 human-confirmed authority govern execution. The name is provisional.
 
 **Stage one is terminal input/output only.** Prove the purchasing core before building
-a website. This scaffold implements offline eligibility checking, not payment execution.
+a website. The checker supports offline eligibility and simulated payment execution
+using fake providers.
 
 ## Start here
 
 - [Project scope and acceptance gates](docs/project-scope.md)
 - [Architecture and implementation status](docs/architecture.md)
+- [Backend delivery: specification, wire API and evidence](docs/backend-delivery-review.md)
 - [Instructions for coding agents](AGENTS.md)
 - [Setting up a new device](docs/new-device-setup.md)
 - [Original hackathon plan](docs/hackathon-plan.md) — historical, superseded by scope
@@ -98,8 +100,8 @@ or payment execution. Run `npm run cli -- store --help` for all options.
 
 Plan requirements from a structured hire request, a versioned kit and company
 policy. The sample request produces five laptops and five monitors with exact
-approved SKUs and policy price/warranty limits. This is deterministic JSON planning;
-model integration is still planned.
+approved SKUs and policy price/warranty limits. This command uses deterministic JSON
+planning; model-assisted drafting is described below.
 
 For PowerShell, save a draft and review it:
 
@@ -118,8 +120,9 @@ Review compares the current policy and kit, re-derives the requirements and dete
 changed content, modified proposals and expired drafts. A content digest identifies
 the draft; it is not a signature or approval. A review result of `draft_valid`
 means only that the supplied planning records are consistent. Drafts cannot be used
-as confirmed mandates by `check`. Stock assignment, human confirmation, quote
-eligibility and execution are still separate work, and M1 is incomplete.
+as confirmed mandates by `check`. Stock assignment remains planned; backend
+confirmation, quote eligibility and simulated execution are separate steps, and M1
+is incomplete.
 
 The digest above is not the one the backend confirms. To take a draft to confirmation,
 save its proposal with `mandate draft --proposal-out FILE`, pass that file to the
@@ -209,11 +212,20 @@ six live Claude runs so far: four against the contract mock and two against the 
 in a temporary copy with its Windows check skipped. Mandates can also be drafted from plain
 English (`npm run shop -- draft`), which has had three live Claude runs. `npm run demo:flow`
 runs the whole story. The original sandbox PayPal client, money helpers and spike remain
-intact.
+intact. Unit 4 adds a separate PayPal gateway
+([docs/backend-api.md](docs/backend-api.md#unit-4-paypal-gateway-contract-only--not-wired-into-execution))
+with capture/refund read-and-write contracts — sandbox host only, injected fetch,
+finite timeouts, `SGD`/minor-unit money at the edge — proven by fetch-mocked tests
+only. It is not wired into execution, and nothing has been verified against a real
+PayPal account; [delivery evidence](docs/backend-delivery-review.md) separates
+simulated execution and contract coverage from account feasibility.
 
-**Planned:** stock assignment, PayPal and real supplier execution
-through the ledger, exceptions and equipment-readiness tracking. All will be tested
-through the CLI. No website scaffold or frontend dependencies are included.
+**Planned:** stock assignment, PayPal in the purchase path
+through the ledger (the gateway contract above is not connected to it), real supplier
+execution, exceptions and equipment-readiness tracking. All will be tested through the
+CLI. No custom website is in the scaffold or stage-one acceptance; the only browser
+page involved anywhere is PayPal's own hosted buyer-consent screen during the
+optional sandbox spike.
 
 ## Separate PayPal feasibility spike
 

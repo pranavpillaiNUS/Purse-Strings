@@ -39,6 +39,12 @@ production authentication. Never describe these as implemented. Fake-provider re
 as `ordered` are not real orders, and a reservation is not payment. No gate after M0 is
 recorded as passed; see `docs/project-scope.md`.
 
+A unit-4 PayPal gateway contract exists at `services/checker/src/paypal/gateway.ts`
+(sandbox-only, fetch-mocked capture/refund tests, documented in
+`docs/backend-api.md`), separate from execution and not wired into the purchase
+path; nothing about it is verified against a real PayPal account. Reproduction
+commands and proof-class distinctions live in `docs/backend-delivery-review.md`.
+
 **Known problem:** on Windows, `apps/cli/src/backend.ts` refuses its runtime directory after
 first use because of a POSIX permission check, and 8 tests in
 `apps/cli/src/backend.test.ts` fail. Issue #9 tracks the fix, and `npm run demo:flow` stops there too until then. Report these as already known, and do not weaken the

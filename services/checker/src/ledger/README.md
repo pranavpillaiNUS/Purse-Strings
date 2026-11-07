@@ -43,7 +43,12 @@ recovery is manual data repair, never a silent drop.
   run/reconcile, status, audit, strict stdin RPC).
 
 Not implemented yet (no code may claim it): real money or supplier effects —
-everything above is a labelled simulation over fake providers — PayPal
-integration through this ledger (the next unit), readiness assessment,
+everything above is a labelled simulation over fake providers — readiness assessment,
 production authentication, or any real spend. `ordered`/`compensated` are
 fake-provider facts and never mean delivered or ready.
+
+A unit-4 PayPal gateway contract now exists at `../paypal/gateway.ts` (sandbox-only,
+fetch-mocked contract tests, documented in `docs/backend-api.md`). It is deliberately
+NOT imported by the execution worker or this ledger: PayPal is still not wired into
+the purchase path here, and nothing about a real PayPal account has been verified.
+Wiring it as a provider behind the `ExecutionProvider` seam is future work.
