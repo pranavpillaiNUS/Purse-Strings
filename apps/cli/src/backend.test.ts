@@ -631,10 +631,12 @@ test('Windows: a private folder that would not pass its access on to new files i
   const fixture = buildFixture('win-no-inherit');
   try {
     const runtimeDir = join(fixture.directory, 'state');
-    mkdirSync(runtimeDir);
-    // Private, but its one entry doesn't reach new files, so they would get the process's default access.
-    const { userSid } = readWindowsSecurity(runtimeDir);
-    execFileSync('icacls', [runtimeDir, '/inheritance:r', '/grant:r', `*${userSid}:F`], { stdio: 'ignore' });
+    // Private, but its one entry doesn't reach new files, so they would get the process's default
+    // access. Built directly, because the same icacls command leaves a different list on Windows Server.
+    const { userSid } = readWindowsSecurity(fixture.directory);
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      `$s=[Security.AccessControl.DirectorySecurity]::new();$s.SetSecurityDescriptorSddlForm('O:${userSid}D:P(A;;FA;;;${userSid})');[void][IO.Directory]::CreateDirectory($env:SPLITTAP_TEST_FOLDER,$s)`,
+    ], { env: { ...process.env, SPLITTAP_TEST_FOLDER: runtimeDir }, stdio: 'ignore' });
     const before = accessFingerprint(runtimeDir);
     assert.match(String(before), /D:P[A-Z]*\(A;;FA;;;/);
     for (const command of [['mandate-draft', '--file', fixture.draftPath], ['mandate-review', '--id', 'cli-mandate', '--revision', '1']]) {
