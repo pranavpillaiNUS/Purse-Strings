@@ -71,6 +71,10 @@ test('a deny entry naming this user gets its own refusal, after any wider access
   assert.equal(evaluateFileSecurity(`${owner}D:P${denied}`, USER), 'denies_user');
   assert.equal(evaluateDirectorySecurity(`${owner}D:P${denied}(A;OICI;FA;;;WD)`, USER), 'too_open');
   assert.equal(evaluateDirectorySecurity(`${owner}D:P(D;OICI;FA;;;${OTHER})(A;OICI;FA;;;${USER})`, USER), 'ok');
+  // The built-in Administrator's own entry reads as LA, which names nobody else's account.
+  const namedByShortForm = 'O:LAD:P(D;OICI;FA;;;LA)(A;OICI;FA;;;LA)';
+  assert.equal(evaluateFileSecurity(namedByShortForm, 'S-1-5-21-1-2-3-500'), 'denies_user');
+  assert.equal(evaluateFileSecurity(namedByShortForm, USER), 'ok');
 });
 
 test('entry flags that are not whole pairs of capitals fail closed, even beside an inherit flag', () => {

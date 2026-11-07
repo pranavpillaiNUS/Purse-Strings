@@ -53,7 +53,8 @@ export function evaluateFileSecurity(sddl: string, userSid: string): DirectoryVe
     if (!ACE_FLAGS.test(flags!)) return 'unverifiable';
     if (type === 'D') {
       // Not unsafe, but this user can't work here, so say that rather than fail later.
-      if (resolve(sid!) === userSid) deniesUser = true;
+      // Windows writes the built-in Administrator's own entry as LA.
+      if (resolve(sid!) === userSid || (sid === 'LA' && userSid.endsWith('-500'))) deniesUser = true;
       continue;
     }
     if (type !== 'A') return 'unverifiable';
