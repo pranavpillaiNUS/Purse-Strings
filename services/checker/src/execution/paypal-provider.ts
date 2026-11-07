@@ -329,7 +329,8 @@ export function createExecutionProvider(config: CompositeProviderConfig): Execut
  * Opens a read-capable connection to the application ledger WITHOUT re-running
  * migrations: the process that owns the store runs the schema, so the provider
  * adapter only needs to read binding/effect facts (busy timeout is set;
- * foreign keys are enforced by the table definitions' STRICT/FK shapes here).
+ * STRICT/CHECK constraints hold regardless of the FK pragma, which this read
+ * connection deliberately leaves off — it never writes).
  */
 function openLedgerReadConnection(path: string): DatabaseSync {
   const database = new DatabaseSync(path);
@@ -370,7 +371,10 @@ export type AuthorizeHoldResult =
   | { kind: 'held'; orderId: string; authorizationId: string; amountMinor: number; currency: 'SGD'; providerState: 'authorization_held' }
   | { kind: 'refused'; code: HoldRefusalCode; message: string };
 
-const HOLD_IDENTITY_MAX = 122; // leaves room for `:<stage>` within the 127-char header bound
+const HOLD_IDENTITY_MAX = 127 - ':authorize'.length; // 117: `<id>:<stage>` must fit the
+// gateway's 127-char printable header bound; ':authorize' is the longest stage stem
+// ('hold', ':capture' and ':refund' are shorter), so 118 would push the request id
+// past what the gateway accepts and surface only as a provider-side unknown.
 
 function validateBindingIdentity(operationId: string):
   | { ok: true }
@@ -445,7 +449,7 @@ export async function authorizeOperationHold(config: HoldCommandConfig): Promise
       expected: { currency: 'SGD', amountMinor: existing.amountMinor },
     });
     if (replay.state !== 'succeeded') {
-      return refusal(replay.state === 'unknown' ? 'provider-unknown' : 'provider-unknown', describeUnknown(replay));
+      return refusal('provider-unknown', describeUnknown(replay));
     }
     if (replay.resource.orderId !== existing.orderId) {
       return refusal('binding-conflict',
@@ -471,23 +475,27 @@ export async function authorizeOperationHold(config: HoldCommandConfig): Promise
   }
   runTransaction(database, () => {
     // Re-check inside the transaction: a concurrent command may have bound first.
-    insertPayPalBindingRow(database, {
+    const outcome = insertPayPalBindingRow(database, {
       operationId,
       orderId: created.resource.orderId,
       invoiceId: operationId,
       amountMinor: reservation.amountMinor,
       createdAt: config.now,
     });
-    recordAuditEvent(database, row.mandateId, operationId, 'binding_created', {
-      operationId,
-      mandateId: row.mandateId,
-      paymentProvider: 'paypal-sandbox',
-      providerState: 'order_created',
-      orderId: created.resource.orderId,
-      invoiceId: operationId,
-      currency: 'SGD',
-      amountMinor: reservation.amountMinor,
-    }, config.now);
+    // Only a genuine first creation mints the audit event; a replay of an
+    // already-bound row (racer won) must not append a second binding_created.
+    if (outcome === 'created') {
+      recordAuditEvent(database, row.mandateId, operationId, 'binding_created', {
+        operationId,
+        mandateId: row.mandateId,
+        paymentProvider: 'paypal-sandbox',
+        providerState: 'order_created',
+        orderId: created.resource.orderId,
+        invoiceId: operationId,
+        currency: 'SGD',
+        amountMinor: reservation.amountMinor,
+      }, config.now);
+    }
   });
   return {
     kind: 'created',

@@ -599,7 +599,7 @@ test('sandbox hold commands refuse closed and sanitized without credentials, and
   try {
     const configPath = paypalConfigPath(fixture);
 
-    // No .env in the invocation cwd and no PAYLAB variables: sanitized refusal.
+    // No .env in the invocation cwd and no PAYPAL variables: sanitized refusal.
     const missing = runBackend(['--db', fixture.dbPath, '--config', configPath, 'operation-authorize', '--id', 'op-1']);
     assert.equal(missing.status, 2);
     assert.equal(missing.stdout, '');
@@ -639,8 +639,44 @@ test('sandbox hold commands refuse closed and sanitized without credentials, and
     const rpcLine = singleJsonLine(rpc.stdout, 'rpc') as { ok: boolean; error: { code: string; message: string } };
     assert.equal(rpcLine.ok, false);
     assert.equal(rpcLine.error.code, 'INVALID_REQUEST');
-    assert.doesNotMatch(rpc.stderr, /sandbox credentials|PAYLAB/i);
+    assert.doesNotMatch(rpc.stderr, /sandbox credentials|PAYPAL/i);
     assert.doesNotMatch(rpcLine.error.message, /sandbox credentials|env-cid|cid|sec/i);
+  } finally {
+    fixture.close();
+  }
+});
+
+test('a valid sentinel credential set reaches a post-load failure without any value leaking', () => {
+  const fixture = buildFixture('sentinel-containment');
+  try {
+    const configPath = paypalConfigPath(fixture);
+    // This path exercises a failure AFTER loadSandboxCredentials: the config
+    // selects paypal-sandbox and the command is routable (operation-authorize),
+    // but the id names no operation, so credentials load first and the refusal
+    // comes from the command core, dragging whatever the loader saw along it.
+    const dotenvDir = join(fixture.directory, 'sentinel-cwd');
+    mkdirSync(dotenvDir, { recursive: true });
+    writeFileSync(join(dotenvDir, '.env'),
+      'PAYPAL_CLIENT_ID="SENTINELID123"\nPAYPAL_CLIENT_SECRET="SENTINELSECRET456"\nPAYPAL_ENV=sandbox\n');
+
+    const cleanEnv = { ...process.env };
+    delete cleanEnv.PAYPAL_CLIENT_ID;
+    delete cleanEnv.PAYPAL_CLIENT_SECRET;
+    delete cleanEnv.PAYPAL_ENV;
+    const output = runBackend(
+      ['--db', fixture.dbPath, '--config', configPath, 'operation-authorize', '--id', 'op-no-such-operation'],
+      undefined,
+      { cwd: dotenvDir, env: cleanEnv },
+    );
+    // The loader must have succeeded and the failure must be the operation's.
+    assert.equal(output.status, 2);
+    assert.equal(output.stdout, '');
+    assert.match(output.stderr, /Operation was not found/);
+    assert.doesNotMatch(output.stderr, /Sandbox credentials are not configured/);
+    const combined = `${output.stderr}\n${output.stdout}`;
+    assert.doesNotMatch(combined, /SENTINELID123|SENTINELSECRET456/);
+    assert.doesNotMatch(combined, /PAYPAL_(CLIENT_ID|CLIENT_SECRET|ENV)[=\s]*SENTINEL|[A-Za-z0-9_-]{12,}=?$/m);
+    assert.doesNotMatch(combined, /cid-live|sec-live/i);
   } finally {
     fixture.close();
   }

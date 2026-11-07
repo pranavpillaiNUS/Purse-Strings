@@ -587,20 +587,26 @@ test('the crash-after-commit hook emits CRASHPOINT exactly at provider success a
 
 // --- Operator binding-command lifecycle (the CLI calls these cores) ---
 
-const holdCreateRoutes = [tokenRoute, {
-    pattern: /\/v2\/checkout\/orders$/,
-    reply: () => json({
-      id: ORDER_ID,
-      status: 'CREATED',
-      links: [{ rel: 'approve', href: APPROVAL_URL }],
-    }),
-  },
-] as Route[];
+/** PayPal's create response echoes the submitted purchase unit; the fake does too. */
+function holdCreateRoutes(harness: Harness): Route[] {
+  return [tokenRoute, {
+      pattern: /\/v2\/checkout\/orders$/,
+      reply: () => json({
+        id: ORDER_ID,
+        status: 'CREATED',
+        purchase_units: [{
+          amount: { currency_code: 'SGD', value: minorToDecimal(harness.amountMinor) },
+          invoice_id: harness.operationId,
+        }],
+        links: [{ rel: 'approve', href: APPROVAL_URL }],
+      }),
+    }];
+}
 
 test('authorizeOperationHold creates, then idempotently replays, the hold binding', async () => {
   const ledgerHarness = await createHarness('authorize-hold');
   try {
-    const { fetchFn } = harnessFetch(holdCreateRoutes);
+    const { fetchFn } = harnessFetch(holdCreateRoutes(ledgerHarness));
     const gateway = createPayPalGateway({ clientId: 'cid', clientSecret: 'sec', fetchFn, timeoutMs: 50 });
     const database = openLedgerStore(ledgerHarness.databasePath);
     try {
@@ -642,6 +648,70 @@ test('authorizeOperationHold creates, then idempotently replays, the hold bindin
   }
 });
 
+test('two racing authorize commands bind exactly once and append a single binding_created audit', async () => {
+  const ledgerHarness = await createHarness('authorize-race');
+  try {
+    const { fetchFn } = harnessFetch(holdCreateRoutes(ledgerHarness));
+    const gateway = createPayPalGateway({ clientId: 'cid', clientSecret: 'sec', fetchFn, timeoutMs: 50 });
+    const database = openLedgerStore(ledgerHarness.databasePath);
+    try {
+      await Promise.all([
+        authorizeOperationHold({ database, gateway, operationId: ledgerHarness.operationId, now: TEST_CLOCK }),
+        authorizeOperationHold({ database, gateway, operationId: ledgerHarness.operationId, now: TEST_CLOCK }),
+      ]);
+      const binding = loadPayPalBindingRow(database, ledgerHarness.operationId);
+      assert.equal(binding?.providerState, 'order_created');
+      assert.equal(binding?.orderId, ORDER_ID);
+      const audits = database.prepare(
+        "SELECT COUNT(*) AS total FROM audit_events WHERE operation_id = ? AND kind = 'binding_created'",
+      ).get(ledgerHarness.operationId) as { total: number };
+      assert.equal(audits.total, 1);
+    } finally {
+      database.close();
+    }
+  } finally {
+    closeHarness(ledgerHarness);
+  }
+});
+
+test('the operation-id bound is the longest stage stem (117): the bound is usable, one more is refused', async () => {
+  const ledgerHarness = await createHarness('identity-bound');
+  try {
+    const { calls, fetchFn } = harnessFetch([]);
+    const gateway = createPayPalGateway({ clientId: 'cid', clientSecret: 'sec', fetchFn, timeoutMs: 50 });
+    const database = openLedgerStore(ledgerHarness.databasePath);
+    try {
+      const bounded = 'x'.repeat(117);
+      // The bound id passes the identity gate and reaches the operation lookup
+      // (a not-found refusal after the credentials/config stage, no fetch).
+      const atBound = await authorizeOperationHold(
+        { database, gateway, operationId: bounded, now: TEST_CLOCK },
+      );
+      assert.deepEqual(atBound, {
+        kind: 'refused',
+        code: 'operation-not-found',
+        message: 'Operation was not found',
+      });
+      // One char more is refused before any fetch, for both command stages.
+      for (const run of [
+        authorizeOperationHold({ database, gateway, operationId: `${bounded}y`, now: TEST_CLOCK }),
+        completeAuthorizationHold({ database, gateway, operationId: `${bounded}y`, now: TEST_CLOCK }),
+      ]) {
+        assert.deepEqual(await run, {
+          kind: 'refused',
+          code: 'invalid-identity',
+          message: 'The operation id is not usable as a PayPal reference (binding identity refused)',
+        });
+      }
+      assert.equal(calls.length, 0);
+    } finally {
+      database.close();
+    }
+  } finally {
+    closeHarness(ledgerHarness);
+  }
+});
+
 test('authorizeOperationHold refuses upstream conflicts, changed terms and unusable ids', async () => {
   const ledgerHarness = await createHarness('authorize-conflict');
   try {
@@ -654,7 +724,7 @@ test('authorizeOperationHold refuses upstream conflicts, changed terms and unusa
         { kind: 'refused', code: 'operation-not-found', message: 'Operation was not found' },
       );
       // Unusable operation id characters never reach a fetch.
-      const { calls, fetchFn } = harnessFetch(holdCreateRoutes);
+      const { calls, fetchFn } = harnessFetch(holdCreateRoutes(ledgerHarness));
       const gateway = createPayPalGateway({ clientId: 'cid', clientSecret: 'sec', fetchFn, timeoutMs: 50 });
       const unusable = await authorizeOperationHold(
         { database, gateway, operationId: 'op with space', now: TEST_CLOCK },
@@ -672,6 +742,10 @@ test('authorizeOperationHold refuses upstream conflicts, changed terms and unusa
         tokenRoute,
         { pattern: /\/v2\/checkout\/orders$/, reply: () => json({
           id: 'ORDOTHER', status: 'CREATED',
+          purchase_units: [{
+            amount: { currency_code: 'SGD', value: minorToDecimal(ledgerHarness.amountMinor) },
+            invoice_id: ledgerHarness.operationId,
+          }],
           links: [{ rel: 'approve', href: 'https://www.sandbox.paypal.com/checkoutnow?token=OTHER' }],
         }) },
       ]);

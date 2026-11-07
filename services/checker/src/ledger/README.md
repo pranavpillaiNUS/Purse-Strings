@@ -9,7 +9,8 @@ closed on the row copy and stays stranded at version 1 when reopened;
 recovery is manual data repair, never a silent drop.
 
 - Connection facts: WAL, `synchronous=FULL`, `foreign_keys=ON`,
-  `busy_timeout=5000`, migrations through version 2, one short synchronous
+  `busy_timeout=5000`, migrations through version 3 (version 3 adds the
+  unit-5 `operation_paypal_bindings` table), one short synchronous
   `BEGIN IMMEDIATE` transaction per write with rollback; no awaits inside
   transactions; quotes are obtained outside the write transaction.
 - Authority: `../authority.ts` stores immutable policy snapshots, mandate
@@ -47,8 +48,13 @@ everything above is a labelled simulation over fake providers — readiness asse
 production authentication, or any real spend. `ordered`/`compensated` are
 fake-provider facts and never mean delivered or ready.
 
-A unit-4 PayPal gateway contract now exists at `../paypal/gateway.ts` (sandbox-only,
-fetch-mocked contract tests, documented in `docs/backend-api.md`). It is deliberately
-NOT imported by the execution worker or this ledger: PayPal is still not wired into
-the purchase path here, and nothing about a real PayPal account has been verified.
-Wiring it as a provider behind the `ExecutionProvider` seam is future work.
+A unit-4 PayPal gateway contract exists at `../paypal/gateway.ts` (sandbox-only,
+fetch-mocked contract tests, documented in `docs/backend-api.md`). Since unit 5 it
+IS wired into the purchase path here, behind a config-only opt-in:
+`paymentProvider: "paypal-sandbox"` in the backend config routes capture/refund
+effects through `../execution/paypal-provider.ts` over the unchanged
+`ExecutionProvider` seam, with the buyer-approval hold lifecycle
+(`operation-authorize` → `operation-complete-authorization`) persisted in the
+migration-3 `operation_paypal_bindings` table. All of that remains
+sandbox-verified-pending: every provider claim is a fetch-mocked/crash-test fact,
+and nothing has been verified against a real PayPal sandbox account.

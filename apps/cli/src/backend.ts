@@ -401,8 +401,9 @@ function providerFacts(database: DatabaseSync, operationId: string, paymentProvi
     return facts;
   }
   const binding = loadPayPalBindingRow(database, operationId);
-  if (binding !== null && binding.authorizationId !== null) {
-    facts.authorizationId = binding.authorizationId;
+  if (binding !== null) {
+    const authorizationId = providerIdFilter(binding.authorizationId);
+    if (authorizationId !== undefined) facts.authorizationId = authorizationId;
   }
   const effects: EffectStorageRow[] = loadEffectRows(database, operationId);
   const byKind = new Map(effects.map((effect) => [effect.kind, effect] as const));

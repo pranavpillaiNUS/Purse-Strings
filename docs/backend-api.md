@@ -33,9 +33,9 @@ npm run backend -- --db .runtime/app.db --config services/agent/fixtures/backend
 | `operation-authorize --id ID` | operator-only: create the sandbox PayPal hold for a reserved operation (requires config `paymentProvider:"paypal-sandbox"`) | `{simulation,paymentProvider,operationId,providerState:"order_created",currency,amountMinor,orderId,approvalUrl}` | 0 ok, 2 refusal/conflict, 1 internal |
 | `operation-complete-authorization --id ID` | operator-only: finalize the hold after the sandbox buyer approves it on PayPal's hosted page | `{simulation,paymentProvider,operationId,providerState:"authorization_held",currency,amountMinor,orderId,authorizationId}` | 0 ok, 2 refusal (incl. buyer-not-approved), 1 internal |
 | `operation-run --id ID` | execute a reserved operation against the configured providers (fake by default; sandbox capture needs an `authorization_held` binding) | `{simulation,paymentProvider,operation,providerIds?}` | 0 command ran; the business outcome lives in `operation.status` |
-| `operation-reconcile --id ID` | resolve ambiguous provider outcomes only | `{simulation,operation}` | 0 |
-| `status --id ID` | print the current operation | `{simulation,operation}` | 0 |
-| `audit --id ID` | print the operation's audit events | `{simulation,operationId,events:[{eventId,kind,createdAt,details}]}` | 0 |
+| `operation-reconcile --id ID` | resolve ambiguous provider outcomes only | `{simulation,paymentProvider,operation,providerIds?}` | 0 |
+| `status --id ID` | print the current operation | `{simulation,paymentProvider,operation,providerIds?}` | 0 |
+| `audit --id ID` | print the operation's audit events | `{simulation,paymentProvider,operationId,events:[{eventId,kind,createdAt,details}],providerIds?}` | 0 |
 | `rpc` | one JSON request (≤1 MiB) on stdin → exactly one JSON response line | share-client envelope | 0 ok, 2 validation/business, 1 internal |
 
 Errors print one sanitized JSON error envelope and exit `2`; `1` means an
@@ -72,7 +72,14 @@ Sandbox credentials flow (containment rules):
 | `rpc` | NEVER loads `.env` or touches credentials — the shopper's child process path stays credential-free |
 | Shape | The gateway is constructed sandbox-only regardless; production hosts cannot be reached |
 
-Recommended `.env` (gitignored; `.env.example` lists the names):
+Recommended `.env` (gitignored; `.env.example` lists the same names, plus the
+shopper's and spike's names):
+
+```sh
+PAYPAL_CLIENT_ID=...      # from a sandbox REST app at developer.paypal.com
+PAYPAL_CLIENT_SECRET=...
+PAYPAL_ENV=sandbox        # optional; any live value refuses the command
+```
 
 ## Config and private runtime state
 
@@ -142,9 +149,20 @@ on the backend-owned operator output: `operation-run`, `operation-reconcile`,
 (derived from config, constant per invocation), `audit` annotates every event's
 `details` with the same fact, and when sandbox identifiers exist in ledger facts
 the outputs add `providerIds: {authorizationId?, captureId?, refundId?}` —
-sanitized, from provider response evidence only. scene/demo screens and the run
-review can word their statements from this field ("Fake payment provider" and
-"fake supplier order" remain the truth under the default config).
+sanitized, from provider response evidence only. Backend-owned operator outputs
+(scene/demo screens and the run review, which read these CLI lines) can word
+their statements from this field ("Fake payment provider" and "fake supplier
+order" remain the truth under the default config). Shopper-side screens consume
+backend JSON through the shared `Operation` shape instead, which carries none of
+this — scope the statement to the surface before relying on the name.
+
+Unit-5 output changelog (default-config output compared to the pre-unit-5
+shape): `operation-run`, `operation-reconcile`, `status` and `audit` gained the
+backend-owned `paymentProvider` field on every invocation, plus an optional
+`providerIds` object on the `paypal-sandbox` selection when backend-owned ledger
+facts name sanitized sandbox identifiers. The nested `operation` object is the
+same shared shape as before; consumers that parse the old keys see the operation
+itself unchanged.
 
 ### The sandbox-authorization lifecycle (unit 5)
 
@@ -281,19 +299,27 @@ the authorization read:
 
 - `createAuthorizationOrder` posts `{intent:'AUTHORIZATION', purchase_units:[
   {amount, invoice_id}]}` with the caller's request id. Success requires an
-  order that parsed with status `CREATED` and exactly one extractable approval
-  link: parseable `https`, and a `paypal.com`/`*.paypal.com` host — links are
-  never followed. Returns `{orderId, approvalUrl}`; non-`CREATED` orders are
-  `unconfirmed_status`, a missing or non-paypal.com approve link is
+  order that parsed with status `CREATED`, an echoed `purchase_units[0]`
+  matching the submitted amount (currency + value) and `invoice_id`, and
+  exactly one extractable approval link: parseable `https`, on a sandbox
+  buyer-consent host (`www.sandbox.paypal.com` or `*.sandbox.paypal.com`
+  exactly) — links are never followed, and a production `paypal.com` checkout
+  URL is refused. Returns `{orderId, approvalUrl}`; non-`CREATED` orders are
+  `unconfirmed_status`; a malformed echo, a missing/non-sandbox approve link,
+  or multiple validated approve links (PayPal documents one) are
   `invalid_response`.
 - `authorizeOrder` posts to `/v2/checkout/orders/{orderId}/authorize` with the
   request id unchanged. Success requires the read-back to carry exactly one
-  validated authorization whose amount matches `expected`
-  (`binding_unverified`/`invalid_response` otherwise, order status gates apply).
-  PayPal's documented `ORDER_NOT_APPROVED` failure is surfaced distinctly as
-  `{state:'buyer_not_approved'}` because the receiver's next action (wait for
-  the buyer) differs from every unknown reason — it is never treated as
-  evidence about the money.
+  validated authorization whose amount matches `expected`, whose embedded
+  status is in the documented authorization vocabulary (an unmapped or missing
+  status is `invalid_response`), and whose status is the fresh mint `CREATED`:
+  `DENIED|VOIDED|EXPIRED|PENDING` (and any other recognized state) refuse as
+  `unconfirmed_status` — they never mint `authorization_held`
+  (`binding_unverified`/`invalid_response` otherwise, order status gates
+  apply). PayPal's documented `ORDER_NOT_APPROVED` failure is surfaced
+  distinctly as `{state:'buyer_not_approved'}` because the receiver's next
+  action (wait for the buyer) differs from every unknown reason — it is never
+  treated as evidence about the money.
 - `getAuthorization` GETs the authorization and succeeds when the read is
   verified: read-back id equals the requested id and the amount matches
   `expected`. `succeeded` here is a verified RESOURCE read, not a capture

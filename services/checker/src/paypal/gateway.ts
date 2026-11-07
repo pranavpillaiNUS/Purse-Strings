@@ -530,9 +530,11 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
      * Unit 5: creates an AUTHORIZATION-intent order for the buyer-approval step.
      * The gateway never stores anything; the caller decides what to persist. The
      * approval URL is extracted only from a parseable `rel: 'approve'` https link
-     * on a *.paypal.com host (sandbox buyer consent lives there); links are never
-     * fetched. POST `/v2/checkout/orders` is the trusted authenticated endpoint;
-     * status must be CREATED for an order that is ready for buyer approval.
+     * on a sandbox buyer-consent host (`www.sandbox.paypal.com` or
+     * `*.sandbox.paypal.com` exactly); links are never fetched. POST
+     * `/v2/checkout/orders` is the trusted authenticated endpoint; status must
+     * be CREATED for an order that is ready for buyer approval, and the echoed
+     * purchase_units amount and invoice_id must match the caller's input.
      */
     async createAuthorizationOrder(input: CreateAuthorizationOrderInput): Promise<CreateOrderOutcome> {
       validateInputObject(input, 'createAuthorizationOrder');
@@ -555,21 +557,50 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
         if (order.status !== 'CREATED') {
           return unknownOutcome({ kind: 'unconfirmed_status', hint });
         }
-        let approvalUrl: string | undefined;
+        // The echoed purchase unit must match the submitted money and invoice,
+        // or the response does not describe the order that was asked for.
+        const units = (order as { purchase_units?: unknown }).purchase_units;
+        if (!Array.isArray(units) || units.length !== 1) {
+          return unknownOutcome({ kind: 'invalid_response' });
+        }
+        const unit = units[0] as { amount?: unknown; invoice_id?: unknown } | null;
+        if (unit === null || typeof unit !== 'object') {
+          return unknownOutcome({ kind: 'invalid_response' });
+        }
+        const echoed = unit.amount as { currency_code?: unknown; value?: unknown } | null | undefined;
+        if (echoed === null || typeof echoed !== 'object'
+          || typeof echoed.currency_code !== 'string'
+          || typeof echoed.value !== 'string') {
+          return unknownOutcome({ kind: 'invalid_response' });
+        }
+        let echoedMinor: number;
+        try {
+          echoedMinor = toMinor(echoed.value);
+        } catch {
+          return unknownOutcome({ kind: 'invalid_response' });
+        }
+        if (echoed.currency_code !== expected.currency || echoedMinor !== expected.amountMinor
+          || unit.invoice_id !== invoiceId) {
+          return unknownOutcome({ kind: 'invalid_response' });
+        }
+        const approvalUrls: string[] = [];
         for (const link of order.links ?? []) {
           if (link?.rel !== 'approve' || typeof link.href !== 'string') continue;
           try {
             const url = new URL(link.href);
             if (url.protocol !== 'https:') continue;
             const host = url.hostname;
-            if (host !== 'paypal.com' && !host.endsWith('.paypal.com')) continue;
-            approvalUrl = link.href;
+            // Sandbox buyer consent only; a production checkout host is never accepted.
+            if (host !== 'www.sandbox.paypal.com' && !host.endsWith('.sandbox.paypal.com')) continue;
+            approvalUrls.push(link.href);
           } catch {
             // Unparseable links are never returned as the approval URL.
           }
         }
-        if (approvalUrl === undefined) return unknownOutcome({ kind: 'invalid_response' });
-        return { state: 'succeeded', resource: { orderId: hint, approvalUrl } };
+        // PayPal documents one approve link per order: multiple validated ones
+        // (or none) are a malformed consent surface, not a wider choice.
+        if (approvalUrls.length !== 1) return unknownOutcome({ kind: 'invalid_response' });
+        return { state: 'succeeded', resource: { orderId: hint, approvalUrl: approvalUrls[0]! } };
       } catch (error) {
         return unknownFromError(error);
       }
@@ -578,9 +609,12 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
     /**
      * Unit 5: authorizes a buyer-approved order, minting the hold. The read-back
      * must carry exactly one validated authorization whose amount matches the
-     * expected money; an order that PayPal says was not approved maps to the
-     * distinct `buyer_not_approved` state, and every other failure to a plain
-     * unknown. The POST `/authorize` endpoint is the trusted parent binding.
+     * expected money, with the authorization's own status verified against the
+     * documented vocabulary (a fresh CREATED mint succeeds; DENIED/VOIDED/
+     * EXPIRED/PENDING and unmapped statuses never mint a hold record). An
+     * order that PayPal says was not approved maps to the distinct
+     * `buyer_not_approved` state, and every other failure to a plain unknown.
+     * The POST `/authorize` endpoint is the trusted parent binding.
      */
     async authorizeOrder(input: AuthorizeOrderInput): Promise<AuthorizeOutcome> {
       validateInputObject(input, 'authorizeOrder');
@@ -623,6 +657,18 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
           return mismatch.kind === 'invalid_response'
             ? unknownOutcome({ kind: 'invalid_response' })
             : unknownOutcome({ kind: mismatch.kind, hint: authorizationId });
+        }
+        // The embedded authorization carries its own status: an unmapped or
+        // missing one is a malformed body, and DENIED/VOIDED/EXPIRED/PENDING
+        // (or any state other than a fresh mint) can never mint a hold record.
+        if (typeof authorization.status !== 'string') {
+          return unknownOutcome({ kind: 'invalid_response' });
+        }
+        if (!(AUTHORIZATION_STATUSES as readonly string[]).includes(authorization.status)) {
+          return unknownOutcome({ kind: 'invalid_response' });
+        }
+        if (authorization.status !== 'CREATED') {
+          return unknownOutcome({ kind: 'unconfirmed_status', hint: authorizationId });
         }
         return { state: 'succeeded', resource: { authorizationId } };
       } catch (error) {

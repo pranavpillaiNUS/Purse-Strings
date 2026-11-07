@@ -134,3 +134,119 @@ name so the shared-shape upgrade can alias it.
   swaps in a mixed async file silently removed sibling registrations; that hook
   pattern is NOT used in the new suites (each gateway always uses an injected
   fetch instead).
+
+## Review round 1 (2026-11-07)
+
+Codes accepted from the round-1 review (GATE-R1-001..005, CLI-R1-001..007,
+PROV-R1-001..004 plus observations) were implemented on this branch in one local
+commit. Exact output shapes above reflect the pre-round facts; the deltas are the
+round's own record here.
+
+### Applied
+
+- GATE-R1-001: `createAuthorizationOrder` now accepts an approve link only on
+  `www.sandbox.paypal.com` or `*.sandbox.paypal.com` exactly (https); any other
+  host, including production `paypal.com`/`*.paypal.com`, leaves the link
+  unaccepted (`invalid_response`). Tests: production-host + unrelated-host
+  refusals, sandbox-subdomain acceptance, sandbox-hosted happy path unchanged.
+- GATE-R1-002 (see deviation below for one branch): the nested authorization of
+  an authorized order is gated on the documented `AUTHORIZATION_STATUSES`
+  vocabulary — missing/unmapped status → `invalid_response`; `DENIED`/`VOIDED`/
+  `EXPIRED`/`PENDING` (and every recognized state other than a fresh mint) →
+  `unconfirmed_status`, never `succeeded`. Tests: DENIED and PENDING refuse, as
+  do CAPTURED/PARTIALLY_CAPTURED/unmapped/missing.
+- GATE-R1-003: the created order's echoed `purchase_units[0].amount` (currency +
+  value via the minor-unit edge conversion) and `invoice_id` must match the
+  input; missing/malformed/mismatched → `invalid_response`. The fake fixtures in
+  both test suites now mirror PayPal's real echo.
+- GATE-R1-004: `createAuthorizationOrder` and `authorizeOrder` gained the same
+  HTTP-500 → `provider_error` and timeout/lost-response → `transport` mapping
+  tests the unit-4 methods have.
+- GATE-R1-005: exactly one validated approve link is required; two valid
+  sandbox-origin ones are a deterministic `invalid_response`, not a wider
+  choice. Test with two distinct sandbox links.
+- PROV-R1-001: `MIGRATION_3` gains `operation_paypal_bindings_no_delete`
+  (BEFORE DELETE RAISE(ABORT) 'paypal bindings are never deleted'), symmetric
+  with the identity triggers; the store test asserts the delete refusal and the
+  fresh-parity trigger-set comparison covers it automatically.
+- PROV-R1-002: a racing second `operation-authorize` whose
+  `insertPayPalBindingRow` replays no longer appends a second
+  `binding_created` audit; proven by a two-call `Promise.all` race test
+  asserting exactly one audit with one binding row.
+- PROV-R1-003: the dead `provider-unknown` ternary is gone.
+- PROV-R1-004: `HOLD_IDENTITY_MAX` is derived as `127 - ':authorize'.length`
+  (117), the longest stage stem that rides the PayPal-Request-Id (':hold' and
+  the effect suffixes ':capture'/':refund' are shorter); stated in a comment.
+  Test: an id of exactly 117 passes the identity gate (reaches the
+  not-found refusal), 118 refuses `invalid-identity` for both command cores
+  with zero fetches.
+- CLI-R1-001: ONE real-process sentinel test drives
+  `operation-authorize` with a valid sandbox sentinel credential set in a
+  temp `.env` against a not-found operation (config selects `paypal-sandbox`,
+  so credentials load first and the refusal comes after the loader): combined
+  output carries neither sentinel string, neither `PAYPAL_*` name–value
+  mapping, and stdout stays empty.
+- CLI-R1-002: `ledger/README.md` lines 12 and the "wiring is future work"
+  paragraph now state the unit-5 truth (config opt-in via `paymentProvider`,
+  migration-3 binding table, hold lifecycle, sandbox-verified-pending);
+  `backend-delivery-design.md`'s unit-4 status line carries a unit-5 addendum
+  saying the same, with the historic body untouched.
+- CLI-R1-003/004: `backend-api.md` gained a default-config output changelog
+  bullet (run/reconcile/status/audit gained backend-owned `paymentProvider` +
+  optional `providerIds` relative to pre-unit-5), the screens sentence is
+  scoped to backend-owned operator outputs (shopper-side screens read the
+  shared `Operation` shape instead), the command table's reconcile/status/audit
+  rows show the real modern shapes, and the dangling `.env` sentence now shows
+  the recommended sample.
+- CLI-R1-005: `.env.example` documents `PAYPAL_ENV` (commented, sandbox-only).
+- CLI-R1-006: `providerFacts` routes `binding.authorizationId` through
+  `providerIdFilter` exactly like capture/refund ids.
+- CLI-R1-007: the two `PAYLAB` typos in `backend.test.ts` read `PAYPAL`.
+- PROV-R1-007 (trivial comment fix): the read-only connection's comment no
+  longer claims FKs are "enforced" there; it states that STRICT/CHECK bounds
+  hold regardless of the FK pragma this connection leaves off.
+
+### Deviation (disclosed)
+
+- GATE-R1-002, `CREATED` branch only: the accepted finding mapped
+  `CREATED`/`PENDING` embedded authorizations to `unconfirmed_status` ("the
+  hold is not yet held"), but PayPal's current Orders v2 documentation's own
+  authorize-order sample shows `purchase_units[].payments.authorizations[0].
+  status = "CREATED"` as the normal state of a minted, funds-holding
+  authorization. Refusing `CREATED` would leave `authorizeOrder` (and the
+  whole `operation-complete-authorization` upgrade) permanently unsatisfiable
+  and contradict the round constraint that every existing test stays green,
+  since existing success fixtures correctly embed `CREATED`. The deviation:
+  `CREATED` remains the one success state; `PENDING` and all other recognized
+  statuses refuse as `unconfirmed_status` exactly as specified. All other
+  branches of the finding (vocabulary gate, missing/unmapped →
+  `invalid_response`) are applied verbatim, using the documented set only.
+
+### Observations (records, no code)
+
+- GATE-R1-006: confirmed the adapter verifies the ledger identity before any
+  provider call — `authorizeOperationHold` re-checks the replayed order id
+  against the stored binding (`binding-conflict` on any difference) and
+  `authorizeOrder` requires the read-back id to equal the requested order id;
+  nothing mints facts from unbound responses.
+- PROV-R1-005: the two-state `provider_state` schema (`order_created` →
+  `authorization_held`) is the whole truth; some round-language mentioned an
+  `authorization_lost` state that does not exist anywhere in the tree.
+- PROV-R1-006: backend configs are reloaded per invocation, so there is no
+  config history to mix; convergence is conservative by construction of the
+  fake/paypal dispatch. Documented limitation, no change.
+- PROV-R1-007: comment fixed above (folded in with its gate).
+
+### Round-1 checks
+
+- Full `npm test`: 371 tests, 370 pass, 0 fail, 1 skipped (pre-existing skip
+  only; +8 tests against the unit's own baseline of 363/362/1 — 5 gateway,
+  2 provider-core, 1 CLI sentinel).
+- `npm run typecheck`: 0 errors.
+- `npm run demo`: exit 0 ("Offline checks only").
+- Standalone: worker tests + worker-paypal + migration-3 store tests = 50
+  pass; paypal client+gateway = 53 pass; provider core = 15 pass; backend CLI
+  = 18 pass.
+- Fake fetches only; global fetch stays denied in the gateway suites; no
+  sandbox or live PayPal request of any kind.
+- `git diff --check` clean.

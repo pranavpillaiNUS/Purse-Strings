@@ -260,6 +260,10 @@ CREATE TRIGGER operation_paypal_bindings_authorization_immutable
 BEFORE UPDATE OF authorization_id ON operation_paypal_bindings
 WHEN OLD.authorization_id IS NOT NULL
 BEGIN SELECT RAISE(ABORT, 'paypal binding authorization id is immutable'); END;
+
+CREATE TRIGGER operation_paypal_bindings_no_delete
+BEFORE DELETE ON operation_paypal_bindings
+BEGIN SELECT RAISE(ABORT, 'paypal bindings are never deleted'); END;
 `;
 
 export const MIGRATIONS: readonly LedgerMigration[] = [

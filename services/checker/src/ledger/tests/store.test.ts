@@ -648,6 +648,10 @@ test('migration 3 adds paypal binding storage with fresh-parity invariants and i
         'UPDATE operation_paypal_bindings SET order_id = ? WHERE operation_id = ?',
       ).run('ORD-OTHER', 'op-v3-up'), /identity columns are immutable/);
       // provider_state is the one controlled upgrade; the row is still readable.
+      // Rows are also never removable: even the owner of the row cannot DELETE it.
+      assert.throws(() => database.prepare(
+        'DELETE FROM operation_paypal_bindings WHERE operation_id = ?',
+      ).run('op-v3-up'), /never deleted/);
       const binding = database.prepare(
         'SELECT provider_state, authorization_id, amount_minor FROM operation_paypal_bindings WHERE operation_id = ?',
       ).get('op-v3-up') as { provider_state: string; authorization_id: string; amount_minor: number };

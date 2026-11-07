@@ -180,9 +180,9 @@
     "semantic_hash": ""
   },
   "services/checker/src/ledger/README.md": {
-    "mtime": 1794061146.8128757,
-    "seen": 1794064343.2367873,
-    "ast_hash": "5580eb0685c2b5a5578c8b36a2b817cf",
+    "mtime": 1794065598.5445445,
+    "seen": 1794065794.262733,
+    "ast_hash": "ac9e152c491c75db89de6d659203b3e8",
     "semantic_hash": ""
   },
   "packages/contracts/src/backend.test.ts": {
@@ -282,9 +282,9 @@
     "semantic_hash": ""
   },
   "services/checker/src/ledger/schema.ts": {
-    "mtime": 1794062894.7810137,
-    "seen": 1794064343.2367258,
-    "ast_hash": "8db534bf020e562806e5d4a7be010e93",
+    "mtime": 1794065506.1569526,
+    "seen": 1794065794.2626967,
+    "ast_hash": "593f0b2a7bd3df5672d9872f3ade2ba7",
     "semantic_hash": ""
   },
   "services/checker/src/ledger/store.ts": {
@@ -318,9 +318,9 @@
     "semantic_hash": ""
   },
   "services/checker/src/ledger/tests/store.test.ts": {
-    "mtime": 1794063683.6271493,
-    "seen": 1794064343.2367325,
-    "ast_hash": "9dccb5c8960d0e6282d1f31c96df8010",
+    "mtime": 1794065506.1569526,
+    "seen": 1794065794.2627006,
+    "ast_hash": "57c2d6d4a12353679a210a241c74070f",
     "semantic_hash": ""
   },
   "services/checker/src/ledger/tests/test-worker.ts": {
@@ -330,15 +330,15 @@
     "semantic_hash": ""
   },
   "apps/cli/src/backend.test.ts": {
-    "mtime": 1794063859.7179067,
-    "seen": 1794064343.2366042,
-    "ast_hash": "20884285ac5a5e8cf35ff62652685c87",
+    "mtime": 1794065551.721904,
+    "seen": 1794065794.2626507,
+    "ast_hash": "28d48a3e0704f0d9b9d77f6d1dbaa87b",
     "semantic_hash": ""
   },
   "apps/cli/src/backend.ts": {
-    "mtime": 1794063848.1611238,
-    "seen": 1794064343.2366068,
-    "ast_hash": "4a9d4f4b485ef92c75be20102774f644",
+    "mtime": 1794065542.6365104,
+    "seen": 1794065794.2626522,
+    "ast_hash": "ae0cc284e2b029e24417929f43ca491d",
     "semantic_hash": ""
   },
   "services/checker/src/execution/fake.ts": {
@@ -660,15 +660,15 @@
     "semantic_hash": ""
   },
   "services/checker/src/paypal/gateway.test.ts": {
-    "mtime": 1794062502.1819627,
-    "seen": 1794064343.2367394,
-    "ast_hash": "a0b96ac016f4621869807ed32acbefca",
+    "mtime": 1794065498.0899272,
+    "seen": 1794065794.2627044,
+    "ast_hash": "817a75ac0e76b812e38d64a317ba4d9e",
     "semantic_hash": ""
   },
   "services/checker/src/paypal/gateway.ts": {
-    "mtime": 1794062400.4339814,
-    "seen": 1794064343.2367406,
-    "ast_hash": "dbedc7d0e8687aab1ac261d19b625137",
+    "mtime": 1794065611.834652,
+    "seen": 1794065794.262705,
+    "ast_hash": "ee9e809ac449a71dba68798cf80b0e93",
     "semantic_hash": ""
   },
   ".audit/backend-delivery/unit4-result.md": {
@@ -678,15 +678,15 @@
     "semantic_hash": ""
   },
   "docs/backend-api.md": {
-    "mtime": 1794064168.7485769,
-    "seen": 1794064343.2367764,
-    "ast_hash": "0ef6f2e98f7fc10aa7b3fa47d9d04ca3",
+    "mtime": 1794065585.9974566,
+    "seen": 1794065794.262726,
+    "ast_hash": "1ec5785f2e6049e5fe54c9442e16089d",
     "semantic_hash": ""
   },
   "docs/backend-delivery-design.md": {
-    "mtime": 1794061146.7916892,
-    "seen": 1794064343.2367775,
-    "ast_hash": "7bd5f0d23a019459f03517c8ddef4470",
+    "mtime": 1794065598.53187,
+    "seen": 1794065794.262727,
+    "ast_hash": "c3117061cb3480f8adf1ddc4cedf1682",
     "semantic_hash": ""
   },
   "docs/backend-delivery-review.md": {
@@ -696,15 +696,15 @@
     "semantic_hash": ""
   },
   "services/checker/src/execution/paypal-provider.test.ts": {
-    "mtime": 1794063924.3290095,
-    "seen": 1794064343.2367175,
-    "ast_hash": "b29ed279b8d95de3a792a0b4217c62e1",
+    "mtime": 1794065672.1618147,
+    "seen": 1794065794.2626927,
+    "ast_hash": "fa5e750dbee22eafa85b5b525d3eee02",
     "semantic_hash": ""
   },
   "services/checker/src/execution/paypal-provider.ts": {
-    "mtime": 1794062365.3328705,
-    "seen": 1794064343.2367194,
-    "ast_hash": "be3139920d60c7d2c49fb15fedc801fd",
+    "mtime": 1794065517.135111,
+    "seen": 1794065794.2626936,
+    "ast_hash": "2fc909639deabc018dc72bb453d24ceb",
     "semantic_hash": ""
   },
   "services/checker/src/execution/worker-paypal.test.ts": {
@@ -714,9 +714,9 @@
     "semantic_hash": ""
   },
   ".audit/backend-delivery/unit5-result.md": {
-    "mtime": 1794064324.9767497,
-    "seen": 1794064343.2367716,
-    "ast_hash": "17b1e4745efc22549852efb3e8412ebc",
+    "mtime": 1794065788.3121688,
+    "seen": 1794065794.2627227,
+    "ast_hash": "0870f8b3f98f4c7d4aef1043c9bfb54e",
     "semantic_hash": ""
   }
 }
