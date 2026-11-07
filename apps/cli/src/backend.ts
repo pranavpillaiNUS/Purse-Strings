@@ -41,6 +41,7 @@ import {
   type ExecutionSupplier,
 } from '../../../services/checker/src/execution/worker.ts';
 import { createFixtureSupplier } from '../../../services/suppliers/src/fixture.ts';
+import { createWindowsPrivateDirectory, inspectWindowsDirectory, type DirectoryVerdict } from './windows-acl.ts';
 
 // Separate backend operator/RPC CLI. This entrypoint never reuses the offline
 // eligibility demo logic; it is the durable execution surface: operators store,
@@ -240,6 +241,10 @@ function checkPrivateRuntimeDirectory(directory: string, label: string): void {
   if (!stats.isDirectory()) {
     throw new CliError(`${label} is not a directory`);
   }
+  if (process.platform === 'win32') {
+    assertPrivateWindowsDirectory(directory, label);
+    return;
+  }
   const uid = process.getuid?.();
   if (uid !== undefined && stats.uid !== uid) {
     throw new CliError(`${label} is not owned by the operating-system user running this command`);
@@ -249,12 +254,49 @@ function checkPrivateRuntimeDirectory(directory: string, label: string): void {
   }
 }
 
-function createPrivateRuntimeDirectory(directory: string): void {
+/** One PowerShell start per directory per process: both databases usually share one. */
+const windowsVerdicts = new Map<string, DirectoryVerdict>();
+
+function assertPrivateWindowsDirectory(directory: string, label: string, fresh = false): void {
+  // Resolved first, like the POSIX stat: a junction or link is judged by what it reaches.
+  let real: string;
+  try {
+    real = realpathSync(directory);
+  } catch {
+    throw new CliError(`${label} could not be validated as a runtime directory`);
+  }
+  const verdict = (!fresh ? windowsVerdicts.get(real) : undefined) ?? inspectWindowsDirectory(real);
+  windowsVerdicts.set(real, verdict);
+  if (verdict === 'foreign_owner') {
+    throw new CliError(`${label} is not owned by the operating-system user running this command`);
+  }
+  if (verdict === 'too_open') {
+    throw new CliError(`${label} permissions are too open; refusing to chmod an existing unsafe directory`);
+  }
+  if (verdict !== 'ok') {
+    throw new CliError(`${label} could not be validated as a runtime directory`);
+  }
+}
+
+function createPrivateRuntimeDirectory(directory: string, label: string): void {
   try {
     statSync(directory);
+    return;
   } catch {
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    // Missing, and every pre-flight check has passed: create it below.
   }
+  try {
+    if (process.platform === 'win32') {
+      mkdirSync(dirname(directory), { recursive: true });
+      createWindowsPrivateDirectory(directory);
+    } else {
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+    }
+  } catch {
+    throw new CliError(`${label} could not be created`);
+  }
+  // Judge what now exists, not what was asked for: another process may have got there first.
+  if (process.platform === 'win32') assertPrivateWindowsDirectory(directory, label, true);
 }
 
 function assertDistinctDatabases(applicationPath: string, providerPath: string): void {
@@ -499,8 +541,8 @@ async function handleCommand(command: Command): Promise<number> {
   assertDistinctDatabases(dbPath, config.providerPath);
   checkPrivateRuntimeDirectory(dirname(config.providerPath), 'The fake provider database runtime directory');
   checkPrivateRuntimeDirectory(dirname(dbPath), 'The application runtime directory');
-  createPrivateRuntimeDirectory(dirname(config.providerPath));
-  createPrivateRuntimeDirectory(dirname(dbPath));
+  createPrivateRuntimeDirectory(dirname(config.providerPath), 'The fake provider database runtime directory');
+  createPrivateRuntimeDirectory(dirname(dbPath), 'The application runtime directory');
   // DB files under the private runtime directory inherit the 0600 umask set in main().
 
   switch (command.name) {

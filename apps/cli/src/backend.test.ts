@@ -1,10 +1,36 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+import { createWindowsPrivateDirectory, evaluateDirectorySecurity, readWindowsSecurity } from './windows-acl.ts';
+
+const isWindows = process.platform === 'win32';
+const windowsOnly = isWindows ? false : 'Windows access rules only';
+
+/** The real access boundary: mode bits on POSIX, the security descriptor on Windows. */
+function accessFingerprint(path: string): number | string {
+  return isWindows ? readWindowsSecurity(path).sddl : statSync(path).mode & 0o777;
+}
+
+function makeUnsafeDirectory(path: string): void {
+  mkdirSync(path, { mode: 0o700 });
+  // A real grant, not a mode number: Everyone may read.
+  if (isWindows) execFileSync('icacls', [path, '/grant', '*S-1-1-0:(OI)(CI)R'], { stdio: 'ignore' });
+  else chmodSync(path, 0o755); // umask-independent: the assertion pins 0o755 exactly
+}
+
+function makePrivateDirectory(path: string): void {
+  if (isWindows) createWindowsPrivateDirectory(path);
+  else mkdirSync(path, { mode: 0o700 });
+}
+
+function assertOwnerOnlyOnWindows(path: string): void {
+  const { sddl, userSid } = readWindowsSecurity(path);
+  assert.equal(evaluateDirectorySecurity(sddl, userSid), 'ok', sddl);
+}
 
 // Backend operator/RPC CLI contract: every step here is a FRESH node process.
 // The synthetic fixture data uses dates relative to the real current time so
@@ -337,14 +363,14 @@ test('an existing unsafe runtime directory is refused and never chmodded', () =>
   const fixture = buildFixture('unsafe-dir', { runtimeDirName: 'state-unsafe' });
   try {
     const runtimeDir = join(fixture.directory, 'state-unsafe');
-    mkdirSync(runtimeDir, { mode: 0o755 });
-    const before = statSync(runtimeDir).mode & 0o777;
-    assert.equal(before, 0o755);
+    makeUnsafeDirectory(runtimeDir);
+    const before = accessFingerprint(runtimeDir);
+    if (!isWindows) assert.equal(before, 0o755);
     const result = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
     assert.equal(result.status, 2);
     assert.equal(result.stdout, '');
     assert.match(result.stderr, /refusing to chmod/);
-    assert.equal(statSync(runtimeDir).mode & 0o777, before, 'the unsafe directory must remain untouched');
+    assert.equal(accessFingerprint(runtimeDir), before, 'the unsafe directory must remain untouched');
   } finally {
     fixture.close();
   }
@@ -357,8 +383,9 @@ test('both runtime parents are pre-flighted before any creation: a refused app p
     // the provider runtime parent stays missing/fresh while the application
     // runtime parent already exists as an unsafe 0o755 directory.
     const appRuntime = join(fixture.directory, 'state-unsafe');
-    mkdirSync(appRuntime, { mode: 0o700 });
-    chmodSync(appRuntime, 0o755); // umask-independent: the assertion pins 0o755 exactly
+    makeUnsafeDirectory(appRuntime);
+    const before = accessFingerprint(appRuntime);
+    if (!isWindows) assert.equal(before, 0o755);
     const providerRuntime = join(fixture.directory, 'providers-state');
     const original = JSON.parse(readFileSync(fixture.configPath, 'utf8')) as Record<string, unknown>;
     writeFileSync(fixture.configPath, JSON.stringify({
@@ -368,7 +395,7 @@ test('both runtime parents are pre-flighted before any creation: a refused app p
     assert.equal(refused.status, 2);
     assert.equal(refused.stdout, '');
     assert.match(refused.stderr, /refusing to chmod/);
-    assert.equal(statSync(appRuntime).mode & 0o777, 0o755, 'the unsafe application parent must remain untouched');
+    assert.equal(accessFingerprint(appRuntime), before, 'the unsafe application parent must remain untouched');
     assert.throws(() => statSync(providerRuntime),
       'the refusal must not create the provider runtime parent despite its successful pre-flight');
   } finally {
@@ -406,9 +433,12 @@ test('aliased application and provider database paths are refused', () => {
     mkdirSync(runtimeDir, { mode: 0o700 });
     const dbPath = join(runtimeDir, 'app.db');
     // Lexically distinct but resolving to the same real file through a symlink.
+    // Windows refuses file symlinks without Developer Mode or elevation, and a hard
+    // link is the alias any user can make there.
     writeFileSync(dbPath, '');
     const providerAlias = join(runtimeDir, 'providers.db');
-    symlinkSync(dbPath, providerAlias);
+    if (isWindows) linkSync(dbPath, providerAlias);
+    else symlinkSync(dbPath, providerAlias);
     const aliasedConfigPath = join(fixture.directory, 'aliased-config.json');
     const configRaw = readFileSync(fixture.configPath, 'utf8');
     const aliasedConfig = { ...JSON.parse(configRaw), fakeProviderDb: providerAlias };
@@ -440,15 +470,22 @@ test('fresh runtime state and database files are owner-only at first use', () =>
     const runtimeDir = join(fixture.directory, 'state');
     const draft = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
     assert.equal(draft.status, 0, draft.stderr);
-    assert.equal(statSync(runtimeDir).mode & 0o777, 0o700);
-    assert.equal(statSync(fixture.dbPath).mode & 0o777, 0o600);
+    if (isWindows) {
+      assert.match(readWindowsSecurity(runtimeDir).sddl, /D:P/, 'inheritance from the parent must be off');
+      assertOwnerOnlyOnWindows(runtimeDir);
+      assertOwnerOnlyOnWindows(fixture.dbPath);
+    } else {
+      assert.equal(statSync(runtimeDir).mode & 0o777, 0o700);
+      assert.equal(statSync(fixture.dbPath).mode & 0o777, 0o600);
+    }
 
     // The provider database opens on the first execution command even when the
     // operation is missing (exit 2 not-found leaves the file created).
     const run = runBackend([...rootArgs(fixture), 'operation-run', '--id', 'op-ghost']);
     assert.equal(run.status, 2);
     assert.equal(run.stdout, '');
-    assert.equal(statSync(join(fixture.directory, 'state', 'providers.db')).mode & 0o777, 0o600);
+    if (isWindows) assertOwnerOnlyOnWindows(join(fixture.directory, 'state', 'providers.db'));
+    else assert.equal(statSync(join(fixture.directory, 'state', 'providers.db')).mode & 0o777, 0o600);
   } finally {
     fixture.close();
   }
@@ -475,7 +512,7 @@ test('an uncategorized internal failure exits 1 with empty stdout and a sanitize
   const fixture = buildFixture('internal-failure');
   try {
     const runtimeDir = join(fixture.directory, 'state');
-    mkdirSync(runtimeDir, { mode: 0o700 });
+    makePrivateDirectory(runtimeDir);
     // The application database flag now names a DIRECTORY: opening it throws
     // outside every classified diagnostic family.
     mkdirSync(fixture.dbPath);
@@ -483,6 +520,107 @@ test('an uncategorized internal failure exits 1 with empty stdout and a sanitize
     assert.equal(status.status, 1);
     assert.equal(status.stdout, '');
     assert.equal(status.stderr.trim(), 'backend: the command failed unexpectedly');
+  } finally {
+    fixture.close();
+  }
+});
+
+test('Windows: access inherited from the parent counts, and is refused with the directory untouched', { skip: windowsOnly }, () => {
+  const fixture = buildFixture('win-inherited');
+  try {
+    const parent = join(fixture.directory, 'open-parent');
+    mkdirSync(parent);
+    execFileSync('icacls', [parent, '/grant', '*S-1-1-0:(OI)(CI)R'], { stdio: 'ignore' });
+    const runtimeDir = join(parent, 'state');
+    mkdirSync(runtimeDir);
+    const before = accessFingerprint(runtimeDir);
+    const original = JSON.parse(readFileSync(fixture.configPath, 'utf8')) as Record<string, unknown>;
+    writeFileSync(fixture.configPath, JSON.stringify({ ...original, fakeProviderDb: join(runtimeDir, 'providers.db') }));
+    const result = runBackend(['--db', join(runtimeDir, 'app.db'), '--config', fixture.configPath, 'mandate-draft', '--file', fixture.draftPath]);
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /too open/);
+    assert.equal(accessFingerprint(runtimeDir), before);
+    assert.throws(() => statSync(join(runtimeDir, 'app.db')), 'nothing may be created inside');
+  } finally {
+    fixture.close();
+  }
+});
+
+test('Windows: a fresh directory under an open parent shuts that inherited access out', { skip: windowsOnly }, () => {
+  const fixture = buildFixture('win-fresh-open-parent');
+  try {
+    const parent = join(fixture.directory, 'open-parent');
+    mkdirSync(parent);
+    execFileSync('icacls', [parent, '/grant', '*S-1-1-0:(OI)(CI)F'], { stdio: 'ignore' });
+    const runtimeDir = join(parent, 'state');
+    const original = JSON.parse(readFileSync(fixture.configPath, 'utf8')) as Record<string, unknown>;
+    writeFileSync(fixture.configPath, JSON.stringify({ ...original, fakeProviderDb: join(runtimeDir, 'providers.db') }));
+    const dbPath = join(runtimeDir, 'app.db');
+    const first = runBackend(['--db', dbPath, '--config', fixture.configPath, 'mandate-draft', '--file', fixture.draftPath]);
+    assert.equal(first.status, 0, first.stderr);
+    assertOwnerOnlyOnWindows(runtimeDir);
+    assertOwnerOnlyOnWindows(dbPath);
+    const second = runBackend(['--db', dbPath, '--config', fixture.configPath, 'mandate-review', '--id', 'cli-mandate', '--revision', '1']);
+    assert.equal(second.status, 0, second.stderr);
+  } finally {
+    fixture.close();
+  }
+});
+
+test('Windows: a junction is judged by what it reaches, and never changes that directory', { skip: windowsOnly }, () => {
+  const fixture = buildFixture('win-junction');
+  try {
+    const unsafeTarget = join(fixture.directory, 'unsafe-target');
+    makeUnsafeDirectory(unsafeTarget);
+    const before = accessFingerprint(unsafeTarget);
+    const junction = join(fixture.directory, 'junction');
+    symlinkSync(unsafeTarget, junction, 'junction');
+    assert.ok(statSync(junction).isDirectory());
+    const original = JSON.parse(readFileSync(fixture.configPath, 'utf8')) as Record<string, unknown>;
+    writeFileSync(fixture.configPath, JSON.stringify({ ...original, fakeProviderDb: join(junction, 'providers.db') }));
+    const refused = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
+    assert.equal(refused.status, 2, refused.stderr);
+    assert.match(refused.stderr, /too open/);
+    assert.equal(accessFingerprint(unsafeTarget), before);
+  } finally {
+    fixture.close();
+  }
+});
+
+test('Windows: both databases reached through a junction alias are one file and refused', { skip: windowsOnly }, () => {
+  const fixture = buildFixture('win-junction-alias');
+  try {
+    const runtimeDir = join(fixture.directory, 'state');
+    makePrivateDirectory(runtimeDir);
+    const junction = join(fixture.directory, 'alias');
+    symlinkSync(runtimeDir, junction, 'junction');
+    const original = JSON.parse(readFileSync(fixture.configPath, 'utf8')) as Record<string, unknown>;
+    writeFileSync(fixture.configPath, JSON.stringify({ ...original, fakeProviderDb: join(junction, 'app.db') }));
+    const result = runBackend([...rootArgs(fixture), 'status', '--id', 'op-x']);
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /must be distinct files/);
+  } finally {
+    fixture.close();
+  }
+});
+
+test('Windows: when the security descriptor cannot be read, the backend refuses rather than proceeds', { skip: windowsOnly }, () => {
+  const fixture = buildFixture('win-unverifiable');
+  try {
+    const runtimeDir = join(fixture.directory, 'state');
+    makePrivateDirectory(runtimeDir);
+    // Every spelling goes, because Windows names are case-insensitive and the first sorted one wins.
+    const env: NodeJS.ProcessEnv = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => name.toUpperCase() !== 'SYSTEMROOT'),
+    );
+    env.SYSTEMROOT = join(fixture.directory, 'no-such-windows');
+    const result = spawnSync(process.execPath, [entry, ...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath], {
+      cwd: root, encoding: 'utf8', env,
+    });
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /could not be validated/);
+    assert.throws(() => statSync(fixture.dbPath), 'nothing may be created inside');
   } finally {
     fixture.close();
   }
