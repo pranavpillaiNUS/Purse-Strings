@@ -36,23 +36,12 @@ The backend is a simulation over fake providers, and its operator identity comes
 from the OS user, which is not production authentication. See
 [the ledger README](../checker/src/ledger/README.md) for its limits.
 
-## Blocked on Windows
+## Platforms
 
-The backend CLI refuses its runtime directory after first use on Windows, because
-`checkPrivateRuntimeDirectory` in `apps/cli/src/backend.ts` tests POSIX mode bits that
-Windows does not report. This blocks the steps above and `npm run demo:flow` on Windows,
-and 8 of the 12 tests in `apps/cli/src/backend.test.ts` fail there, including on a clean
-`main`.
-
-That code is Danny's, so it is unchanged here, and issue #9 tracks his fix. Skipping only
-the mode check on `win32` in a scratch copy made the full process walk in
-`apps/cli/src/shop.test.ts` pass, and cleared 3 of those 8 tests. The other 5 need their own
-decisions (lines 336, 353, 379, 402 and 437 of the test file). That skip would leave a
-Windows runtime directory with no owner-only check, so issue #9 rules out shipping it and
-asks for a check of the real Windows access rules.
-
-Danny reports `npm test` passing on Linux at commit `ba3cbc4`, which includes the walk there.
-It has not been run on macOS.
+The steps above and `npm run demo:flow` run on Linux, macOS and Windows, with no bypass. The full
+process walk in `apps/cli/src/shop.test.ts` runs against the real backend on all three in CI. The
+backend's folder rules for each are in
+[the backend API](../../docs/backend-api.md#private-runtime-folders).
 
 ## Decisions for Pranav and Danny
 

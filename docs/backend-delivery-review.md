@@ -148,5 +148,3 @@ node --test services/checker/src/paypal/client.test.ts services/checker/src/payp
 - Real supplier adapters with the same contract treatment as the PayPal gateway.
 - Approval/exception CLI flows; delivery/return/readiness attestations (M5).
 - Per-run verification of hosted buyer consent inside any demo path.
-- Windows runtime-directory support (known problem documented in
-  `services/agent/CONFIRMATION_HANDOFF.md`; unchanged here).

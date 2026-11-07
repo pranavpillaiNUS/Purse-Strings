@@ -36,7 +36,8 @@ Errors print one sanitized JSON error envelope and exit `2`; `1` means an
 uncategorized internal failure. Operator flag misuse (unknown flags, duplicates,
 `--now`, empty values) exits `2` with empty stdout. Existing runtime directories
 whose permissions are too open are refused, never chmoded; created runtime
-directories are `0700` and database files `0600`.
+directories are `0700` and database files `0600`. Windows has its own rules, in
+[Private runtime folders](#private-runtime-folders).
 
 ## Config and private runtime state
 
@@ -56,9 +57,10 @@ The backend directory layout used by the demo fixtures:
 
 ```
 .runtime/
-  app.db          # application ledger: mandates, confirmations, operations,
-                  # reservations, effects, leases, audit_events (WAL sidecars beside it)
-  providers.db    # SEPARATE SQLite fake-provider database (see execution/fake.ts)
+  backend/          # created private by the backend, because .runtime/ may not be
+    app.db          # application ledger: mandates, confirmations, operations,
+                    # reservations, effects, leases, audit_events (WAL sidecars beside it)
+    providers.db    # SEPARATE SQLite fake-provider database (see execution/fake.ts)
 ```
 
 Rules that hold today: the application DB and the fake-provider DB must resolve to
@@ -66,6 +68,41 @@ distinct files; duplicate identical snapshot files are allowed, conflicting
 identities are rejected; catalogs are reloaded per invocation; no command accepts a
 provider selector, URLs, credentials, clock overrides, scenario selectors or approval
 metadata. A shopper never names these paths — only the operator's launch options do.
+
+## Private runtime folders
+
+Both databases must sit in folders only the operator can reach. The backend creates a missing
+folder itself. An existing folder that fails the check is refused and never changed, so the fix is
+to delete it and run the command again. `npm run demo:flow` creates `.runtime/` as an ordinary
+folder, which is why the demo fixtures use `.runtime/backend/`.
+
+**Linux and macOS:** the folder must belong to the current user, with no group or other access.
+
+**Windows** has no such permission bits, and Node reports every folder as open, so the backend
+reads the real owner and access list (`apps/cli/src/windows-acl.ts`). Node has no API for them, so
+it uses the PowerShell that ships with Windows, which adds about half a second per backend command.
+
+- **Owner:** the current user, SYSTEM or Administrators, including the built-in Administrator account.
+- **Access:** allow entries for those accounts only, whether set directly or inherited from a
+  parent. Deny entries are fine, because they only take access away.
+- **Refused:** any other allow entry, even read-only, and anything the backend can't read or parse.
+  That includes a machine where PowerShell can't run or is locked to Constrained Language Mode,
+  a drive with no access lists, and accounts Windows writes in a short form, such as Guest.
+- **Links:** a junction or link is judged by the folder it reaches.
+- **Database files:** an existing database or sidecar file must pass the same rules, because Windows
+  lets an account open a file by its full path even when the folder blocks it.
+- **New folders** get a locked access list as they are created, then are checked again, so they
+  never exist with inherited access.
+
+**What this guarantees:** at the moment of the check, on a machine with one operator, other ordinary
+accounts have no access to the folder or, on Windows, to the databases in it. It does not check
+parent folders, and nothing stops access changing after the check. Administrators and SYSTEM can
+always reach the files. This is not production authentication or multi-user isolation.
+
+**How it was checked:** `apps/cli/src/backend.test.ts` uses real Windows permissions for inherited
+and direct access, open database files, junctions and an unreadable descriptor. A folder owned by another account is
+covered only by a logic test in `apps/cli/src/windows-acl.test.ts`, because creating a real one needs
+admin rights.
 
 ## The four shared methods (rpc)
 

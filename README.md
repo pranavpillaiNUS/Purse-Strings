@@ -158,10 +158,10 @@ named operations, with no model or key.
 it cannot be combined with `--json`. The bars show money and units **allocated**,
 meaning reserved or committed, not delivered. A reservation sets budget aside; it makes no payment.
 
-This PowerShell walkthrough uses the scripted model, so it needs no API key. **It stops
-at the second backend command on Windows**, because of the runtime-directory check
-described in the [handoff](services/agent/CONFIRMATION_HANDOFF.md#blocked-on-windows).
-The contract-mock command in the agent README works everywhere.
+This PowerShell walkthrough uses the scripted model, so it needs no API key. The backend
+keeps its state in `.runtime/backend/`, a private folder it creates itself, and refuses an
+existing folder with wider access. If that happens, delete the folder and run the command
+again. [The backend API](docs/backend-api.md#private-runtime-folders) has the exact rules.
 
 ```powershell
 $now = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -208,10 +208,9 @@ cart rejected followed by recovery, and execution over fake providers. It needs 
 network. Add `--live` for Claude, which spends API credit, and `--pause` for recording. The
 scene-by-scene recording plan is in [the demo script](docs/demo-script.md).
 
-**It stops at scene 3 on Windows**, because of the same
-[runtime-directory check](services/agent/CONFIRMATION_HANDOFF.md#blocked-on-windows). The
-scripted flow passes in CI on Linux with Node 24 and 26. Live Claude has run it only in temporary
-Windows copies with that check skipped, and it has not run on macOS.
+The scripted flow passes in CI on Linux and Windows with Node 24 and 26, and on macOS with
+Node 26. Live Claude has run it only in temporary Windows copies with the backend's folder check
+skipped.
 
 ## Status
 
