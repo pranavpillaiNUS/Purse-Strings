@@ -194,16 +194,25 @@ backend. It is tested with scripted models against the real checker core, and ha
 four live Claude runs so far, all against the contract mock, two of them with both stores
 and the hostile listing. Mandates can also be drafted from plain English (`npm run shop --
 draft`), which has had two live Claude runs. The original sandbox PayPal client, money
-helpers and spike remain intact. Unit 4 adds a separate PayPal gateway
-([docs/backend-api.md](docs/backend-api.md#unit-4-paypal-gateway-contract-only--not-wired-into-execution))
+helpers and spike remain intact. Unit 4 added a separate PayPal gateway
+([docs/backend-api.md](docs/backend-api.md#paypal-gateway-unit-4-contract--unit-5-sandbox-additions))
 with capture/refund read-and-write contracts — sandbox host only, injected fetch,
 finite timeouts, `SGD`/minor-unit money at the edge — proven by fetch-mocked tests
-only. It is not wired into execution, and nothing has been verified against a real
-PayPal account; [delivery evidence](docs/backend-delivery-review.md) separates
-simulated execution and contract coverage from account feasibility.
+only. Unit 5 wires that gateway into the execution ledger behind the backend
+config (`paymentProvider: "paypal-sandbox"`): operator-only hold commands
+(`operation-authorize`, `operation-complete-authorization`) place a sandbox hold
+on a reserved operation before `operation-run`, and the durable worker recovers
+crashes through sandbox reads. Nothing here has been verified against a real
+PayPal account, the supplier order stays fake in every configuration, and no
+live or unscripted PayPal request has ever been sent; [delivery
+evidence](docs/backend-delivery-review.md) separates simulated execution,
+contract coverage and code wiring from account feasibility.
 
-**Planned:** stock assignment, PayPal in the purchase path
-through the ledger (the gateway contract above is not connected to it), real supplier
+**Planned (still unimplemented):** stock assignment, at least one authorized
+interactive sandbox exercise recorded in `docs/paypal-spike.md` (buyer consent on
+PayPal's hosted page during the operator's own authorized steps), and the
+`packages/contracts` `paymentProvider` proposal
+through the ledger, real supplier
 execution, exceptions and equipment-readiness tracking. All will be tested through the
 CLI. No custom website is in the scaffold or stage-one acceptance; the only browser
 page involved anywhere is PayPal's own hosted buyer-consent screen during the

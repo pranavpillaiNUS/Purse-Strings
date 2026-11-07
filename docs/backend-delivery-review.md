@@ -9,24 +9,33 @@ unproven. Companion documents:
 - Wire API, mock limits, runtime state layout and the PayPal gateway contract:
   [backend-api.md](backend-api.md)
 - Living audit record: `.audit/backend-delivery/decisions.tsv` and the per-unit
-  results `unit1-result.md`, `unit2-result.md`, `unit3-result.md` in the same
+  results `unit1-result.md` through `unit5-result.md` in the same
   directory. This page links that trail without copying transcripts or secrets.
 
 ## What the different proof classes mean
 
-Three levels appear below and must not be confused:
+Four levels appear below and must not be confused:
 
 1. **Simulated execution** — Singapore money is computed and reserved inside a
    SQLite ledger, but every payment/supplier effect is a labelled fake provider in a
    separate fake DB (`execution/fake.ts`). `ordered`/`compensated` are fake-provider
    facts. Simulated recovery does not prove real provider feasibility.
-2. **PayPal contract coverage** — the unit-4 gateway's tests run entirely on an
+2. **PayPal contract coverage** — the gateway's tests run entirely on an
    injected fake `fetch` with global fetch denied. They prove what the adapter does
    given a response, never what PayPal actually sends or accepts. Contract coverage
-   is not sandbox-account feasibility and not execution-worker integration.
+   is not sandbox-account feasibility.
 3. **Worker/CLI integration** — fresh processes, real SQLite files, SIGKILL between
-   provider commit and acknowledgement. This is the strongest offline evidence class
-   but still says nothing about real suppliers or real PayPal accounts.
+   provider commit and acknowledgement. PayPal-backed variants run the same crash
+   evidence against a scripted fake fetch inside the child. This is the strongest
+   offline evidence class but still says nothing about real suppliers or a real PayPal account.
+4. **Wiring in code is not account feasibility** — unit 5 connects the gateway,
+   the binding ledger table, the operator hold commands and credential containment.
+   The purchase path now EXISTS for `paymentProvider:"paypal-sandbox"`, but no
+   sandbox account was contacted: the binding lifecycle, PayPal's response shapes
+   (overcapture, pending reasons, request-id replay across endpoints) and buyer
+   consent behavior remain unverified until one authorized interactive sandbox
+   exercise is recorded in `docs/paypal-spike.md` and the demo. A "sandbox-verified"
+   claim is not possible from this branch alone, and no live capture has occurred.
 
 ## Acceptance evidence trail (offline, all reproducible below)
 
@@ -69,8 +78,11 @@ claimed beyond what those tests exercise.
   (fresh quote/authority/timeliness, excluding own reservation). Tests:
   `services/checker/src/execution/worker.test.ts` (fresh child processes with
   crash scenarios; see `unit3-result.md`).
-- PayPal: unit-4 gateway + injected-fetch/finite-timeout client as described in
-  [backend-api.md](backend-api.md). **No PayPal sandbox account behaviour has been
+- PayPal: unit-4/5 gateway + injected-fetch/finite-timeout client as described in
+  [backend-api.md](backend-api.md). The purchase path is wired behind the backend
+  config (`paymentProvider`) with ledger binding rows (migration 3), the two
+  operator hold commands, and crash recovery through sandbox reads
+  (`worker-paypal.test.ts`). **No PayPal sandbox account behaviour has been
   verified.** The interactive spike (`npm run spike:paypal`) exists and
   `docs/paypal-spike.md` still records NO results; nothing in this unit changes
   that. Real supplier quote APIs also remain unchecked.
@@ -134,17 +146,21 @@ fake-provider facts); `audit` lists `operation_reserved`, `capture_succeeded`,
 `order_succeeded`; runtime dir is `0700` and both DB files `0600`. Delete
 `.runtime/` and the `services/agent/state/` files to start over.
 
-PayPal contract-test suite (zero network; imported by tests only, nothing else touches it):
+PayPal and execution PayPal suites (zero network; the worker PayPal suite drives
+fresh child processes whose scripted fake fetch denies anything unscripted):
 
 ```sh
-node --test services/checker/src/paypal/client.test.ts services/checker/src/paypal/gateway.test.ts
+node --test services/checker/src/paypal/client.test.ts services/checker/src/paypal/gateway.test.ts services/checker/src/execution/paypal-provider.test.ts services/checker/src/execution/worker-paypal.test.ts
 ```
 
-## Remaining work (no unit-4 property depends on it)
+## Remaining work (no unit-5 property depends on it)
 
-- Wire the PayPal gateway into the durable execution worker as the provider seam,
-  behind sandbox-account verification — and record what the sandbox actually does,
-  including overcapture behavior, in `docs/paypal-spike.md` first.
+- One authorized interactive sandbox exercise (operator + buyer consent) to
+  record real behavior — hold creation, hosted buyer consent, capture, grant
+  response shapes, request-id replay — in `docs/paypal-spike.md` and the demo.
+  Nothing here replaces that exercise, and nothing in this branch performed one.
+- Agree the `OperationSchema` upgrade (`paymentProvider`) in `packages/contracts`
+  with both owners, then surface the fact through the shared schema too.
 - Real supplier adapters with the same contract treatment as the PayPal gateway.
 - Approval/exception CLI flows; delivery/return/readiness attestations (M5).
 - Per-run verification of hosted buyer consent inside any demo path.
