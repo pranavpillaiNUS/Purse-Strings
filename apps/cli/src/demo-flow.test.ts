@@ -338,7 +338,7 @@ test('the generated backend config gains the sandbox provider only when the flag
   });
 });
 
-test('the sandbox credential probe id stays short enough for a PayPal request id', () => {
+test('the sandbox credential probe id satisfies the binding identity limits; no PayPal request is sent', () => {
   assert.ok(SANDBOX_CREDENTIAL_PROBE_ID.length > 0 && SANDBOX_CREDENTIAL_PROBE_ID.length <= 100);
   assert.match(SANDBOX_CREDENTIAL_PROBE_ID, /^[A-Za-z0-9_-]+$/);
 });
@@ -447,7 +447,7 @@ test('the sandbox flag aborts before anything is reserved when the credentials a
   });
   assert.equal(result.status, 1, result.stderr);
   const combined = result.stdout + result.stderr;
-  assert.match(combined, /Sandbox mode stopped before any scene or reservation/);
+  assert.match(combined, /Sandbox mode stopped after store setup and before any reservation/);
   assert.match(combined, /not the PayPal sandbox/);
   // The generated config did ask for the sandbox provider, and nothing was reserved.
   const generatedConfig = JSON.parse(readFileSync(join(work, 'config.json'), 'utf8')) as Record<string, unknown>;

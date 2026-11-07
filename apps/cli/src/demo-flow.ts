@@ -336,10 +336,10 @@ export async function runSandboxPayment(input: SandboxPaymentInput): Promise<San
   if (run.operation?.status !== 'ordered') {
     throw new DemoFailure(`The operation ended as ${JSON.stringify(run.operation?.status)}`);
   }
-  const id = (source: unknown, name: string): string | undefined =>
+  const id = (source: unknown): string | undefined =>
     typeof source === 'string' && source.length > 0 && source.length <= 64 && /^[A-Za-z0-9_-]+$/.test(source) ? source : undefined;
-  const authorizationId = id(held.authorizationId, 'authorizationId') ?? id(run.providerIds?.authorizationId, 'authorizationId');
-  const captureId = id(run.providerIds?.captureId, 'captureId');
+  const authorizationId = id(held.authorizationId) ?? id(run.providerIds?.authorizationId);
+  const captureId = id(run.providerIds?.captureId);
   print(`Payment provider: ${run.paymentProvider === 'paypal-sandbox' ? 'paypal-sandbox' : stopText(String(run.paymentProvider))} — a real PayPal SANDBOX capture, never real money`);
   if (authorizationId !== undefined || captureId !== undefined) {
     print(`Sandbox ids: ${[...(authorizationId !== undefined ? [`authorizationId=${authorizationId}`] : []), ...(captureId !== undefined ? [`captureId=${captureId}`] : [])].join(' ')}`);
@@ -583,9 +583,9 @@ async function main(): Promise<void> {
     // not-found refusal, and the refusal happens before any provider call.
     const probe = run('backend', [...backendRoot, 'operation-authorize', '--id', SANDBOX_CREDENTIAL_PROBE_ID], { capture: true, quiet: true, accept: [2] });
     const refusal = sandboxCredentialRefusal(probe.stderr);
-    if (refusal !== null) throw new DemoFailure(`Sandbox mode stopped before any scene or reservation: ${refusal}`);
+    if (refusal !== null) throw new DemoFailure(`Sandbox mode stopped after store setup and before any reservation: ${refusal}`);
     if (!inert(probe.stderr.trim()).includes('Operation was not found')) {
-      throw new DemoFailure(`Sandbox mode stopped before any scene or reservation: ${inert(probe.stderr.trim()) || 'the credential probe was refused'}`);
+      throw new DemoFailure(`Sandbox mode stopped after store setup and before any reservation: ${inert(probe.stderr.trim()) || 'the credential probe was refused'}`);
     }
   }
 
