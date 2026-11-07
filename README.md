@@ -12,6 +12,7 @@ a website. This scaffold implements offline eligibility checking, not payment ex
 - [Project scope and acceptance gates](docs/project-scope.md)
 - [Architecture and implementation status](docs/architecture.md)
 - [Instructions for coding agents](AGENTS.md)
+- [Setting up a new device](docs/new-device-setup.md)
 - [Original hackathon plan](docs/hackathon-plan.md) — historical, superseded by scope
 
 ## Run
