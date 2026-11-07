@@ -282,10 +282,18 @@ export function revisionSummary(draft: { budgetMinor: number; allowedSuppliers: 
   return inert(`To confirm: ${formatMinor(draft.budgetMinor)} all-in | ${units} | ${draft.allowedSuppliers.join(', ')}`);
 }
 
-/** The model key goes only to the shopper commands that call a model. */
+/**
+ * The model key goes only to the shopper commands that call a model, and PayPal details
+ * only to the backend. The shopper refuses to start if it can see a PayPal name at all.
+ */
 export function childEnvironment(entry: 'main' | 'backend' | 'shop', args: readonly string[], env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const copy = { ...env };
   if (entry !== 'shop' || args[0] === 'status') delete copy.ANTHROPIC_API_KEY;
+  if (entry !== 'backend') {
+    for (const name of Object.keys(copy)) {
+      if (name.toUpperCase().startsWith('PAYPAL_')) delete copy[name];
+    }
+  }
   return copy;
 }
 

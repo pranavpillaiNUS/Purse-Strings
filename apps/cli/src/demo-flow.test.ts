@@ -194,6 +194,17 @@ test('the model key reaches only the shopper commands that call a model', () => 
   assert.equal(env.ANTHROPIC_API_KEY, 'sk-test', 'The caller keeps its own copy');
 });
 
+test('PayPal details reach only the backend, so the shopper can still start beside them', () => {
+  const env = { PATH: 'p', PAYPAL_CLIENT_ID: 'id', PayPal_Client_Secret: 'secret' };
+  const backend = childEnvironment('backend', ['operation-run'], env);
+  assert.equal(backend.PAYPAL_CLIENT_ID, 'id');
+  assert.equal(backend.PayPal_Client_Secret, 'secret');
+  for (const [entry, args] of [['shop', ['run']], ['shop', ['draft']], ['shop', ['status']], ['main', ['store']]] as const) {
+    assert.deepEqual(childEnvironment(entry, args, env), { PATH: 'p' }, `${entry} ${args[0]}`);
+  }
+  assert.equal(env.PAYPAL_CLIENT_ID, 'id', 'The caller keeps its own copy');
+});
+
 test('one constant labels who executes, and the screen still says this is not PayPal', () => {
   const source = readFileSync(entry, 'utf8');
   const block = /export const EXECUTION_PROVIDER = \{[\s\S]*?\} as const;/.exec(source);
