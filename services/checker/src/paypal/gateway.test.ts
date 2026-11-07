@@ -476,3 +476,260 @@ test('invalid caller input is rejected locally before any fetch', async () => {
   await rejects(gateway.refundCapture([1] as unknown as RefundCaptureInput), /refundCapture input must be an object/);
   assert.equal(fetchCalled, 0);
 });
+
+// --- Unit 5 additions: createAuthorizationOrder / authorizeOrder / getAuthorization ---
+
+const ORDER_ID = 'ORD0001';
+
+const orderCreateInput = { requestId: 'mandate-a-1/hold', invoiceId: INVOICE, expected: SGD_55_40 };
+const authorizeInput = { orderId: ORDER_ID, requestId: 'mandate-a-1/authorize', expected: SGD_55_40 };
+const getAuthorizationInput = { authorizationId: AUTH_ID, expected: SGD_55_40 };
+
+const orderCreateRoute = (body: unknown) => ({
+  match: /\/v2\/checkout\/orders$/,
+  reply: () => (body instanceof Response ? body : json(body)),
+});
+const authorizeRoute = (body: unknown) => ({
+  match: /\/v2\/checkout\/orders\/ORD0001\/authorize$/,
+  reply: () => (body instanceof Response ? body : json(body)),
+});
+const authorizationReadRoute = (body: unknown) => ({
+  match: new RegExp(`/v2/payments/authorizations/${AUTH_ID}$`),
+  reply: () => (body instanceof Response ? body : json(body)),
+});
+
+function approveLink(href: string): Array<{ rel: string; href: string }> {
+  return [
+    { rel: 'self', href: `${SANDBOX}/v2/checkout/orders/${ORDER_ID}` },
+    { rel: 'approve', href },
+  ];
+}
+
+function orderBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: ORDER_ID,
+    status: 'CREATED',
+    links: approveLink('https://www.sandbox.paypal.com/checkoutnow?token=ORD0001'),
+    ...overrides,
+  };
+}
+
+function authorizationBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: AUTH_ID,
+    status: 'CREATED',
+    amount: { currency_code: 'SGD', value: '55.40' },
+    links: [{ rel: 'self', href: `${SANDBOX}/v2/payments/authorizations/${AUTH_ID}` }],
+    ...overrides,
+  };
+}
+
+function authorizedOrderBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: ORDER_ID,
+    status: 'COMPLETED',
+    purchase_units: [{ payments: { authorizations: [authorizationBody()] } }],
+    ...overrides,
+  };
+}
+
+test('createAuthorizationOrder sends the AUTHORIZATION order with SGD money at the edge and returns the sandbox approval link', async () => {
+  const { calls, fetchFn } = harness([tokenRoute(), orderCreateRoute(orderBody())]);
+  const outcome = await makeGateway(fetchFn).createAuthorizationOrder(orderCreateInput);
+  assert.deepEqual(outcome, {
+    state: 'succeeded',
+    resource: { orderId: ORDER_ID, approvalUrl: 'https://www.sandbox.paypal.com/checkoutnow?token=ORD0001' },
+  });
+  assert.equal(calls.length, 2);
+  const init = calls[1]?.init as RequestInit;
+  assert.equal(init.method, 'POST');
+  assert.equal((init.headers as Record<string, string>)['PayPal-Request-Id'], 'mandate-a-1/hold');
+  assert.deepEqual(JSON.parse(String(init.body)), {
+    intent: 'AUTHORIZATION',
+    purchase_units: [{
+      amount: { currency_code: 'SGD', value: '55.40' },
+      invoice_id: INVOICE,
+    }],
+  });
+  assert.ok(String(calls[1]?.url).endsWith('/v2/checkout/orders'));
+  assertSandboxOnly(calls.map((c) => c.url));
+});
+
+test('createAuthorizationOrder treats non-CREATED orders as unconfirmed and never returns an approval link', async () => {
+  const { calls, fetchFn } = harness([tokenRoute(), orderCreateRoute(orderBody({ status: 'APPROVED' }))]);
+  const outcome = await makeGateway(fetchFn).createAuthorizationOrder(orderCreateInput);
+  assert.deepEqual(outcome, { state: 'unknown', reason: 'unconfirmed_status', resourceId: ORDER_ID });
+  assert.equal(calls.length, 2);
+});
+
+test('createAuthorizationOrder is invalid_response without a parseable paypal.com https approve link', async () => {
+  for (const href of ['http://paypal.com/x', 'https://evil.example/checkout']) {
+    const { calls, fetchFn } = harness([tokenRoute(), orderCreateRoute(orderBody({ links: approveLink(href) }))]);
+    const gateway = makeGateway(fetchFn);
+    const outcome = await gateway.createAuthorizationOrder(orderCreateInput);
+    assert.deepEqual(outcome, { state: 'unknown', reason: 'invalid_response' }, href);
+    assert.equal(calls.length, 2, 'links are never followed');
+  }
+  const noLink = harness([tokenRoute(), orderCreateRoute(orderBody({ links: [] }))]);
+  assert.deepEqual(
+    await makeGateway(noLink.fetchFn).createAuthorizationOrder(orderCreateInput),
+    { state: 'unknown', reason: 'invalid_response' },
+  );
+});
+
+test('authorizeOrder forwards the request id to the /authorize endpoint and returns the minted authorization', async () => {
+  const { calls, fetchFn } = harness([tokenRoute(), authorizeRoute(authorizedOrderBody())]);
+  const outcome = await makeGateway(fetchFn).authorizeOrder(authorizeInput);
+  assert.deepEqual(outcome, { state: 'succeeded', resource: { authorizationId: AUTH_ID } });
+  assert.equal(calls[1]?.url, `${SANDBOX}/v2/checkout/orders/${ORDER_ID}/authorize`);
+  assert.equal(((calls[1]?.init as RequestInit).headers as Record<string, string>)['PayPal-Request-Id'],
+    'mandate-a-1/authorize');
+  assertSandboxOnly(calls.map((c) => c.url));
+});
+
+test('authorizeOrder maps the documented ORDER_NOT_APPROVED provider failure to buyer_not_approved', async () => {
+  const refusal = json(
+    { name: 'INVALID_REQUEST', message: 'The requested action is invalid as it does not follow the schema.', details: [{ issue: 'ORDER_NOT_APPROVED', description: 'The order has not been approved by the buyer yet' }], debug_id: 'dbg' },
+    400,
+  );
+  const { calls, fetchFn } = harness([tokenRoute(), authorizeRoute(refusal)]);
+  const outcome = await makeGateway(fetchFn).authorizeOrder(authorizeInput);
+  assert.deepEqual(outcome, { state: 'buyer_not_approved' });
+  assert.equal(calls.length, 2);
+});
+
+test('authorizeOrder holds the unit-4 binding gates: amount mismatch, order-id mismatch, status and shape', async () => {
+  const amountOther = authorizedOrderBody({
+    purchase_units: [{ payments: { authorizations: [authorizationBody({ amount: { currency_code: 'SGD', value: '55.41' } })] } }],
+  });
+  const currencyOther = authorizedOrderBody({
+    purchase_units: [{ payments: { authorizations: [authorizationBody({ amount: { currency_code: 'USD', value: '55.40' } })] } }],
+  });
+  const idOther = authorizedOrderBody({ id: 'ORDOTHER' });
+  const notCompleted = authorizedOrderBody({ status: 'APPROVED' });
+  const noneUnits = authorizedOrderBody({ purchase_units: [] });
+  const noAuth = authorizedOrderBody({ purchase_units: [{ payments: { authorizations: [] } }] });
+  const malformedAmount = authorizedOrderBody({
+    purchase_units: [{ payments: { authorizations: [authorizationBody({ amount: { currency_code: 'SGD', value: 'x.y' } })] } }],
+  });
+  for (const [body, expected] of [
+    [amountOther, { state: 'unknown', reason: 'binding_unverified', resourceId: AUTH_ID }],
+    [currencyOther, { state: 'unknown', reason: 'binding_unverified', resourceId: AUTH_ID }],
+    [idOther, { state: 'unknown', reason: 'binding_unverified', resourceId: 'ORDOTHER' }],
+    [notCompleted, { state: 'unknown', reason: 'unconfirmed_status', resourceId: ORDER_ID }],
+    [noneUnits, { state: 'unknown', reason: 'invalid_response' }],
+    [noAuth, { state: 'unknown', reason: 'invalid_response' }],
+    [malformedAmount, { state: 'unknown', reason: 'invalid_response' }],
+  ] as Array<[unknown, unknown]>) {
+    const { fetchFn } = harness([tokenRoute(), authorizeRoute(body)]);
+    assert.deepEqual(await makeGateway(fetchFn).authorizeOrder(authorizeInput), expected);
+  }
+});
+
+test('getAuthorization returns the verified status read without following links', async () => {
+  const { calls, fetchFn } = harness([tokenRoute(), authorizationReadRoute(
+    authorizationBody({ status: 'CAPTURED', links: [...authorizationBody().links as never,
+      { rel: 'capture', href: `${SANDBOX}/v2/payments/captures/${CAPTURE_ID}` }] }),
+  )]);
+  const outcome = await makeGateway(fetchFn).getAuthorization(getAuthorizationInput);
+  assert.deepEqual(outcome, {
+    state: 'succeeded',
+    resource: {
+      authorizationId: AUTH_ID,
+      status: 'CAPTURED',
+      currency: 'SGD',
+      amountMinor: 5540,
+      captureIdHint: CAPTURE_ID,
+    },
+  });
+  assert.equal(calls.length, 2); // token + single read; capture links are never fetched
+});
+
+test('getAuthorization returns terminal hold-loss statuses as verified reads', async () => {
+  for (const status of ['DENIED', 'VOIDED', 'EXPIRED', 'PARTIALLY_CAPTURED', 'PENDING', 'CREATED']) {
+    const { fetchFn } = harness([tokenRoute(), authorizationReadRoute(authorizationBody({ status }))]);
+    const outcome = await makeGateway(fetchFn).getAuthorization(getAuthorizationInput);
+    assert.equal(outcome.state, 'succeeded', status);
+    if (outcome.state === 'succeeded') {
+      assert.equal(outcome.resource.status, status);
+      // CREATED/other non-captured statuses carry no capture hint link here.
+    }
+  }
+});
+
+test('getAuthorization drops capture-link hints that are not exact sandbox-origin capture paths', async () => {
+  for (const href of [
+    `https://evil.example/v2/payments/captures/${CAPTURE_ID}`,
+    `${SANDBOX}/v2/checkout/orders/${ORDER_ID}`,
+    `${SANDBOX}/v2/payments/captures/not%20a%20valid%20id`,
+  ]) {
+    const { fetchFn } = harness([tokenRoute(), authorizationReadRoute(authorizationBody({
+      status: 'CAPTURED',
+      links: [{ rel: 'capture', href }],
+    }))]);
+    const outcome = await makeGateway(fetchFn).getAuthorization(getAuthorizationInput);
+    assert.equal(outcome.state, 'succeeded');
+    if (outcome.state === 'succeeded') {
+      assert.equal(outcome.resource.captureIdHint, undefined, href);
+    }
+  }
+});
+
+test('getAuthorization applies the binding gates: id mismatch, amount mismatch, missing amount, unrecognized status', async () => {
+  const cases: Array<[unknown, unknown]> = [
+    [authorizationBody({ id: 'AUTHOTHER' }), { state: 'unknown', reason: 'binding_unverified', resourceId: 'AUTHOTHER' }],
+    [authorizationBody({ amount: { currency_code: 'SGD', value: '55.41' } }), { state: 'unknown', reason: 'binding_unverified', resourceId: AUTH_ID }],
+    [authorizationBody({ amount: undefined }), { state: 'unknown', reason: 'invalid_response' }],
+    [authorizationBody({ status: 'SOME_NEW_STATUS' }), { state: 'unknown', reason: 'unconfirmed_status', resourceId: AUTH_ID }],
+  ];
+  for (const [body, expected] of cases) {
+    const { fetchFn } = harness([tokenRoute(), authorizationReadRoute(body)]);
+    assert.deepEqual(await makeGateway(fetchFn).getAuthorization(getAuthorizationInput), expected);
+  }
+});
+
+test('getAuthorization maps transport and HTTP failures like every unit-4 method', async () => {
+  const error = harness([tokenRoute(), authorizationReadRoute(json({ name: 'RESOURCE_NOT_FOUND' }, 404))]);
+  assert.deepEqual(await makeGateway(error.fetchFn).getAuthorization(getAuthorizationInput),
+    { state: 'unknown', reason: 'provider_error' });
+
+  const stalled: typeof fetch = ((url: string | URL | Request) => {
+    const href = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+    if (href.includes('oauth2')) return Promise.resolve(json({ access_token: 'tok', expires_in: 3600 }));
+    return new Promise<Response>(() => {});
+  }) as typeof fetch;
+  assert.deepEqual(await makeGateway(stalled, 20).getAuthorization(getAuthorizationInput),
+    { state: 'unknown', reason: 'transport' });
+});
+
+test('unit-5 inputs are validated locally before any fetch', async () => {
+  let fetchCalled = 0;
+  const fetchFn: typeof fetch = () => {
+    fetchCalled += 1;
+    return Promise.reject(new Error('must not be called'));
+  };
+  const gateway = makeGateway(fetchFn);
+  const rejects = async (run: Promise<unknown>, pattern: RegExp) => {
+    await assert.rejects(run, (error: unknown) => {
+      assert.ok(error instanceof GatewayInputError);
+      assert.match(error.message, pattern);
+      return true;
+    });
+  };
+  await rejects(gateway.createAuthorizationOrder({ ...orderCreateInput, requestId: '' }), /requestId/);
+  await rejects(gateway.createAuthorizationOrder({ ...orderCreateInput, requestId: 'has space' }), /requestId/);
+  await rejects(gateway.createAuthorizationOrder({ ...orderCreateInput, invoiceId: 'bad id' }), /invoiceId/);
+  await rejects(
+    gateway.createAuthorizationOrder({ ...orderCreateInput, expected: { currency: 'USD', amountMinor: 1 } as unknown as ExpectedMoney }),
+    /SGD/,
+  );
+  await rejects(gateway.authorizeOrder({ ...authorizeInput, orderId: 'bad order!' }), /orderId/);
+  await rejects(gateway.authorizeOrder({ ...authorizeInput, requestId: `${'x'.repeat(200)}` }), /requestId/);
+  await rejects(gateway.authorizeOrder({ ...authorizeInput, expected: { currency: 'SGD', amountMinor: 0 } }), /positive/);
+  await rejects(gateway.getAuthorization({ ...getAuthorizationInput, authorizationId: '' }), /authorizationId/);
+  await rejects(gateway.getAuthorization({ ...getAuthorizationInput, expected: { currency: 'SGD', amountMinor: 55.4 } }), /positive integer/);
+  await rejects(gateway.createAuthorizationOrder(null as unknown as typeof orderCreateInput), /createAuthorizationOrder input must be an object/);
+  await rejects(gateway.authorizeOrder([1] as unknown as typeof authorizeInput), /authorizeOrder input must be an object/);
+  await rejects(gateway.getAuthorization(undefined as unknown as typeof getAuthorizationInput), /getAuthorization input must be an object/);
+  assert.equal(fetchCalled, 0);
+});

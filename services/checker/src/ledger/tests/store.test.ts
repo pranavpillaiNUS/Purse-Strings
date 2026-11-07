@@ -12,6 +12,8 @@ import {
   LedgerIdentityConflict,
   bindIdempotencyAlias,
   findOperationIdentities,
+  insertPayPalBindingRow,
+  upgradePayPalBindingRow,
   insertReservationOperation,
   loadMandateRow,
   loadMandateTotals,
@@ -571,6 +573,92 @@ test('exposure_started never reverses from exposed back to unexposed', () => {
       /permanent/);
     assert.equal(loadMandateRow(database, 'm-1')?.exposureStarted, true);
     database.close();
+  } finally {
+    removeTempDir(dir);
+  }
+});
+
+// --- Migration 3: the PayPal binding table (unit 5) ---
+
+test('migration 3 adds paypal binding storage with fresh-parity invariants and immutable identities', () => {
+  const dir = makeTempDir('migration-3');
+  try {
+    const path = `${dir}/ledger.db`;
+    // Build a pre-v3 (v1+v2) database with confirmed authority and one operation.
+    const legacy = new DatabaseSync(path);
+    applyMigrations(legacy, MIGRATIONS.filter((migration) => migration.version <= 2));
+    seedAuthority(legacy);
+    seedReservationOperation(legacy, 'op-v3-up');
+    legacy.close();
+
+    // Opening the store upgrades 2 → 3 and keeps the stored facts.
+    const database = openLedgerStore(path);
+    try {
+      const applied = database.prepare('SELECT version FROM schema_migrations ORDER BY version').all()
+        .map((row) => (row as { version: number }).version);
+      assert.deepEqual(applied, MIGRATIONS.map((migration) => migration.version));
+
+      const bindingTable = database.prepare("PRAGMA table_list('operation_paypal_bindings')").get() as
+        { strict: number } | undefined;
+      assert.equal(bindingTable?.strict, 1, 'the binding table must be STRICT');
+
+      // The upgraded and a fresh database end with the byte-identical trigger set.
+      const triggerSet = (db: DatabaseSync) => (db.prepare(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name",
+      ).all() as Array<{ name: string; sql: string }>).map((row) => ({ ...row }));
+      const fresh = freshDatabase(dir, 'ledger-fresh-v3.db').database;
+      try {
+        assert.deepEqual(triggerSet(database), triggerSet(fresh));
+      } finally {
+        fresh.close();
+      }
+
+      // Insert + upgrade + replay behavior through the storage helpers.
+      runTransaction(database, () => {
+        insertPayPalBindingRow(database, {
+          operationId: 'op-v3-up', orderId: 'ORD-V3', invoiceId: 'op-v3-up',
+          amountMinor: TEST_CART_TOTAL_MINOR, createdAt: TEST_CLOCK,
+        });
+      });
+      assert.throws(() => runTransaction(database, () => {
+        // A ghost operation is refused by the foreign key.
+        insertPayPalBindingRow(database, {
+          operationId: 'op-ghost-v3', orderId: 'ORD-X', invoiceId: 'op-ghost-v3',
+          amountMinor: 1, createdAt: TEST_CLOCK,
+        });
+      }), /FOREIGN KEY/);
+      assert.throws(() => runTransaction(database, () => {
+        insertPayPalBindingRow(database, {
+          operationId: 'op-v3-up', orderId: 'ORD-OTHER', invoiceId: 'op-v3-up',
+          amountMinor: TEST_CART_TOTAL_MINOR, createdAt: TEST_CLOCK,
+        });
+      }), /A different paypal binding already exists/);
+
+      runTransaction(database, () => {
+        upgradePayPalBindingRow(database, 'op-v3-up', 'AUTH-V3', TEST_CLOCK);
+      });
+      // Second write (even the same value) is refused: authorization_id is write-once.
+      assert.throws(() => database.prepare(
+        'UPDATE operation_paypal_bindings SET authorization_id = ? WHERE operation_id = ?',
+      ).run('AUTH-V3-AGAIN', 'op-v3-up'), /authorization id is immutable/);
+      assert.throws(() => database.prepare(
+        'UPDATE operation_paypal_bindings SET amount_minor = 1 WHERE operation_id = ?',
+      ).run('op-v3-up'), /identity columns are immutable/);
+      assert.throws(() => database.prepare(
+        'UPDATE operation_paypal_bindings SET order_id = ? WHERE operation_id = ?',
+      ).run('ORD-OTHER', 'op-v3-up'), /identity columns are immutable/);
+      // provider_state is the one controlled upgrade; the row is still readable.
+      const binding = database.prepare(
+        'SELECT provider_state, authorization_id, amount_minor FROM operation_paypal_bindings WHERE operation_id = ?',
+      ).get('op-v3-up') as { provider_state: string; authorization_id: string; amount_minor: number };
+      assert.equal(binding.provider_state, 'authorization_held');
+      assert.equal(binding.authorization_id, 'AUTH-V3');
+      assert.equal(binding.amount_minor, TEST_CART_TOTAL_MINOR);
+      // The pre-existing operation survived the upgrade untouched.
+      assert.equal(loadOperationStorageRow(database, 'op-v3-up')?.status, 'reserved');
+    } finally {
+      database.close();
+    }
   } finally {
     removeTempDir(dir);
   }

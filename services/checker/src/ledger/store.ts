@@ -848,3 +848,144 @@ export function releaseReservationRow(database: DatabaseSync, operationId: strin
     "UPDATE reservations SET state = 'released' WHERE operation_id = ? AND state = 'active'",
   ).run(operationId);
 }
+
+// --- PayPal authorization bindings (unit 5) ---
+// Rows exist ONLY for the paypal-sandbox payment provider and are written only
+// by the operator's `operation-authorize` / `operation-complete-authorization`
+// commands inside short synchronous transactions. The execution provider reads
+// them; nothing in the worker or in shopper reach can write one.
+
+export type PayPalBindingProviderState = 'order_created' | 'authorization_held';
+
+export interface PayPalBindingRow {
+  operationId: string;
+  orderId: string | null;
+  authorizationId: string | null;
+  invoiceId: string;
+  currency: 'SGD';
+  amountMinor: number;
+  providerState: PayPalBindingProviderState;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const BINDING_STATE_PATTERN = /^(order_created|authorization_held)$/;
+
+function readBindingRow(row: RawRow): PayPalBindingRow {
+  const providerState = readString(row, 'provider_state');
+  if (!BINDING_STATE_PATTERN.test(providerState)) {
+    throw new Error('Ledger paypal binding provider_state is invalid');
+  }
+  return {
+    operationId: readString(row, 'operation_id'),
+    orderId: readStringOrNull(row, 'order_id'),
+    authorizationId: readStringOrNull(row, 'authorization_id'),
+    invoiceId: readString(row, 'invoice_id'),
+    currency: 'SGD',
+    amountMinor: readNumber(row, 'amount_minor'),
+    providerState: providerState as PayPalBindingProviderState,
+    createdAt: readString(row, 'created_at'),
+    updatedAt: readString(row, 'updated_at'),
+  };
+}
+
+export function loadPayPalBindingRow(database: DatabaseSync, operationId: string): PayPalBindingRow | null {
+  const row = database.prepare(
+    `SELECT operation_id, order_id, authorization_id, invoice_id, amount_minor,
+       provider_state, created_at, updated_at
+     FROM operation_paypal_bindings WHERE operation_id = ?`,
+  ).get(operationId) as RawRow | undefined;
+  return row ? readBindingRow(row) : null;
+}
+
+/**
+ * Creates the order_created binding inside the caller's transaction. A matching
+ * existing row replays; an existing row for a different operation or a same-row
+ * re-create is refused loudly (the caller decides conflict/replay semantics).
+ */
+export function insertPayPalBindingRow(
+  database: DatabaseSync,
+  binding: { operationId: string; orderId: string; invoiceId: string; amountMinor: number; createdAt: string },
+): 'created' | 'replayed' {
+  const existing = loadPayPalBindingRow(database, binding.operationId);
+  if (existing) {
+    if (existing.orderId !== binding.orderId
+      || existing.invoiceId !== binding.invoiceId
+      || existing.currency !== 'SGD'
+      || existing.amountMinor !== binding.amountMinor
+      || existing.providerState !== 'order_created') {
+      throw new LedgerIdentityConflict('A different paypal binding already exists for this operation');
+    }
+    return 'replayed';
+  }
+  database.prepare(
+    `INSERT INTO operation_paypal_bindings
+      (operation_id, order_id, invoice_id, currency, amount_minor, provider_state, created_at, updated_at)
+     VALUES (?, ?, ?, 'SGD', ?, 'order_created', ?, ?)`,
+  ).run(
+    binding.operationId,
+    binding.orderId,
+    binding.invoiceId,
+    binding.amountMinor,
+    binding.createdAt,
+    binding.createdAt,
+  );
+  return 'created';
+}
+
+/** Upgrades order_created → authorization_held with the PayPal authorization id. */
+export function upgradePayPalBindingRow(
+  database: DatabaseSync,
+  operationId: string,
+  authorizationId: string,
+  updatedAt: string,
+): 'upgraded' | 'replayed' {
+  const existing = loadPayPalBindingRow(database, operationId);
+  if (existing === null) {
+    throw new LedgerIdentityConflict('No paypal binding exists for this operation');
+  }
+  if (existing.providerState === 'authorization_held') {
+    if (existing.authorizationId !== authorizationId) {
+      throw new LedgerIdentityConflict('A different paypal authorization id is already held for this operation');
+    }
+    return 'replayed';
+  }
+  database.prepare(
+    `UPDATE operation_paypal_bindings
+     SET authorization_id = ?, provider_state = 'authorization_held', updated_at = ?
+     WHERE operation_id = ?`,
+  ).run(authorizationId, updatedAt, operationId);
+  return 'upgraded';
+}
+
+/** Reads one effect row by its stable effect key (provider reconciliation support). */
+export function loadEffectRowByKey(database: DatabaseSync, effectKey: string): EffectStorageRow | null {
+  const row = database.prepare(
+    `SELECT effect_id, operation_id, kind, effect_key, request_digest, request_json,
+       state, provider_id, response_json, created_at, updated_at
+     FROM effects WHERE effect_key = ?`,
+  ).get(effectKey) as RawRow | undefined;
+  if (!row) return null;
+  const state = readString(row, 'state');
+  if (state !== 'intent' && state !== 'in_flight' && state !== 'unknown'
+    && state !== 'succeeded' && state !== 'rejected') {
+    throw new Error('Ledger effect state is invalid');
+  }
+  const storedKind = readString(row, 'kind');
+  if (storedKind !== 'capture' && storedKind !== 'order' && storedKind !== 'refund') {
+    throw new Error('Ledger effect kind is invalid');
+  }
+  return {
+    effectId: readString(row, 'effect_id'),
+    operationId: readString(row, 'operation_id'),
+    kind: storedKind,
+    effectKey: readString(row, 'effect_key'),
+    requestDigest: readString(row, 'request_digest'),
+    requestJson: readString(row, 'request_json'),
+    state,
+    providerId: readStringOrNull(row, 'provider_id'),
+    responseJson: readStringOrNull(row, 'response_json'),
+    createdAt: readString(row, 'created_at'),
+    updatedAt: readString(row, 'updated_at'),
+  };
+}

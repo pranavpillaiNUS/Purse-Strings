@@ -74,6 +74,71 @@ export type CaptureEvidence = {
   amountMinor: number;
 };
 
+/**
+ * Unit 5 additions. These methods power the buyer-approval flow (create an
+ * AUTHORIZATION order, authorize it after PayPal's hosted buyer consent, and
+ * read the authorization's status for reconciliation). They are narrow
+ * neighbors of the unit-4 four-method contract, which is unchanged.
+ */
+
+export type CreateAuthorizationOrderInput = {
+  requestId: string;
+  invoiceId: string;
+  expected: ExpectedMoney;
+};
+
+export type AuthorizeOrderInput = {
+  orderId: string;
+  requestId: string;
+  expected: ExpectedMoney;
+};
+
+export type GetAuthorizationInput = {
+  authorizationId: string;
+  expected: ExpectedMoney;
+};
+
+/** Only statuses PayPal documents for an authorization resource. */
+export const AUTHORIZATION_STATUSES = [
+  'CREATED', 'CAPTURED', 'DENIED', 'EXPIRED', 'PARTIALLY_CAPTURED', 'PENDING', 'VOIDED',
+] as const;
+export type AuthorizationStatus = (typeof AUTHORIZATION_STATUSES)[number];
+
+export type CreateOrderEvidence = { orderId: string; approvalUrl: string };
+export type AuthorizeEvidence = { authorizationId: string };
+export type AuthorizationStatusEvidence = {
+  authorizationId: string;
+  status: AuthorizationStatus;
+  currency: 'SGD';
+  amountMinor: number;
+  /** Validated capture-link hint from the sandbox `rel: 'capture'` link only. */
+  captureIdHint?: string;
+};
+
+export type CreateOrderOutcome =
+  | { state: 'succeeded'; resource: CreateOrderEvidence }
+  | { state: 'unknown'; reason: UnknownReason; resourceId?: string };
+
+/**
+ * `buyer_not_approved` is PayPal's documented ORDER_NOT_APPROVED failure for the
+ * authorize call: surfaced distinctly because the receiver's action (wait for
+ * the buyer) differs from every unknown reason. Never treated as evidence.
+ */
+export type AuthorizeOutcome =
+  | { state: 'succeeded'; resource: AuthorizeEvidence }
+  | { state: 'buyer_not_approved' }
+  | { state: 'unknown'; reason: UnknownReason; resourceId?: string };
+
+/**
+ * Success here means "the read itself is verified": the resource parsed, its ID
+ * matched, and its amount matches `expected`. It is verified resource FACT, not
+ * a capture result — non-terminal authorization statuses (CREATED, PENDING) are
+ * successful reads used for reconciliation classification.
+ */
+export type GetAuthorizationOutcome =
+  | { state: 'succeeded'; resource: AuthorizationStatusEvidence }
+  | { state: 'unknown'; reason: UnknownReason; resourceId?: string };
+
 export type RefundEvidence = {
   captureId: string;
   refundId: string;
@@ -169,20 +234,23 @@ function validateExpected(value: unknown, label: string): ExpectedMoney {
   return money;
 }
 
+/** Canonical unknown outcome shape shared by every gateway method. */
+export type GatewayUnknown = { state: 'unknown'; reason: UnknownReason; resourceId?: string };
+
 /**
  * Canonical unknown either from a failing gate or from a caught client error.
  * Client PayPalApiError means PayPal answered (provider_error); everything else,
  * including timeouts and lost responses, is transport. Resource IDs are never invented;
  * a hint is only forwarded when it passes ID validation.
  */
-function unknownOutcome(reason: 'provider_error' | 'transport'): GatewayOutcome;
-function unknownOutcome(failure: Failure): GatewayOutcome;
-function unknownOutcome(input: Failure | 'provider_error' | 'transport'): GatewayOutcome {
+function unknownOutcome(reason: 'provider_error' | 'transport'): GatewayUnknown;
+function unknownOutcome(failure: Failure): GatewayUnknown;
+function unknownOutcome(input: Failure | 'provider_error' | 'transport'): GatewayUnknown {
   if (input === 'provider_error' || input === 'transport') {
-    return { state: 'unknown', reason: input } as GatewayOutcome;
+    return { state: 'unknown', reason: input } as GatewayUnknown;
   }
   const { kind, hint } = input as Failure;
-  return { state: 'unknown', reason: kind, ...(hint !== undefined ? { resourceId: hint } : {}) } as GatewayOutcome;
+  return { state: 'unknown', reason: kind, ...(hint !== undefined ? { resourceId: hint } : {}) } as GatewayUnknown;
 }
 
 /**
@@ -228,7 +296,7 @@ function assessParentEvidence(
 }
 
 /** Maps client failures to unknown outcomes without ever inventing resource IDs. */
-function unknownFromError(error: unknown): GatewayOutcome {
+function unknownFromError(error: unknown): GatewayUnknown {
   if (error instanceof GatewayInputError) throw error; // local validation must surface
   return unknownOutcome(error instanceof PayPalApiError ? 'provider_error' : 'transport');
 }
@@ -247,6 +315,30 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
 
   function validIdHint(id: unknown): string | undefined {
     return typeof id === 'string' && RESOURCE_ID_PATTERN.test(id) ? id : undefined;
+  }
+
+  /**
+   * Unit 5: the capture link HINT on an authorization read. Links are hints,
+   * never evidence: the only requirement is that the `rel: 'capture'` link is
+   * parseable, served from the exact sandbox API origin and shaped
+   * /v2/payments/captures/{validated id}. The caller still verifies any capture
+   * through the full unit-4 getCapture binding check before trusting it.
+   */
+  function captureLinkHint(resource: RawResource): string | undefined {
+    for (const link of resource.links ?? []) {
+      if (link?.rel !== 'capture' || typeof link.href !== 'string') continue;
+      try {
+        const url = new URL(link.href);
+        if (url.origin !== SANDBOX_API_ORIGIN) continue;
+        const match = /^\/v2\/payments\/captures\/([^/]+)$/.exec(url.pathname);
+        if (!match) continue;
+        const id = decodeURIComponent(match[1]!);
+        if (RESOURCE_ID_PATTERN.test(id)) return id;
+      } catch {
+        // Unparseable hrefs are hints and never followed.
+      }
+    }
+    return undefined;
   }
 
   /** Exact SGD/minor amount check; missing or malformed amounts are invalid_response. */
@@ -277,7 +369,7 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
   }
 
   /** First failure wins; resources with a parsed status carry an unknown-outcome hint. */
-  function relayFailure(failure: Failure, fallbackHint?: string): GatewayOutcome {
+  function relayFailure(failure: Failure, fallbackHint?: string): GatewayUnknown {
     switch (failure.kind) {
       case 'binding_unverified':
         return unknownOutcome({ kind: failure.kind, hint: failure.hint ?? fallbackHint });
@@ -428,6 +520,156 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
         return {
           state: 'succeeded',
           resource: { captureId, refundId: hint, currency: 'SGD', amountMinor: expected.amountMinor },
+        };
+      } catch (error) {
+        return unknownFromError(error);
+      }
+    },
+
+    /**
+     * Unit 5: creates an AUTHORIZATION-intent order for the buyer-approval step.
+     * The gateway never stores anything; the caller decides what to persist. The
+     * approval URL is extracted only from a parseable `rel: 'approve'` https link
+     * on a *.paypal.com host (sandbox buyer consent lives there); links are never
+     * fetched. POST `/v2/checkout/orders` is the trusted authenticated endpoint;
+     * status must be CREATED for an order that is ready for buyer approval.
+     */
+    async createAuthorizationOrder(input: CreateAuthorizationOrderInput): Promise<CreateOrderOutcome> {
+      validateInputObject(input, 'createAuthorizationOrder');
+      const invoiceId = validateHeaderIdField(input.invoiceId, 'invoiceId');
+      const requestId = validateHeaderIdField(input.requestId, 'requestId');
+      const expected = validateExpected(input.expected, 'createAuthorizationOrder');
+      const amount = paypalMoney('SGD', expected.amountMinor); // minor-unit to decimal at the edge
+
+      try {
+        const order = (await client.createOrder(
+          {
+            intent: 'AUTHORIZATION',
+            purchase_units: [{ amount, invoice_id: invoiceId }],
+          },
+          requestId,
+        )) as RawResource;
+        const hint = validIdHint(order.id);
+        if (!hint) return unknownOutcome({ kind: 'invalid_response' });
+        if (typeof order.status !== 'string') return unknownOutcome({ kind: 'invalid_response' });
+        if (order.status !== 'CREATED') {
+          return unknownOutcome({ kind: 'unconfirmed_status', hint });
+        }
+        let approvalUrl: string | undefined;
+        for (const link of order.links ?? []) {
+          if (link?.rel !== 'approve' || typeof link.href !== 'string') continue;
+          try {
+            const url = new URL(link.href);
+            if (url.protocol !== 'https:') continue;
+            const host = url.hostname;
+            if (host !== 'paypal.com' && !host.endsWith('.paypal.com')) continue;
+            approvalUrl = link.href;
+          } catch {
+            // Unparseable links are never returned as the approval URL.
+          }
+        }
+        if (approvalUrl === undefined) return unknownOutcome({ kind: 'invalid_response' });
+        return { state: 'succeeded', resource: { orderId: hint, approvalUrl } };
+      } catch (error) {
+        return unknownFromError(error);
+      }
+    },
+
+    /**
+     * Unit 5: authorizes a buyer-approved order, minting the hold. The read-back
+     * must carry exactly one validated authorization whose amount matches the
+     * expected money; an order that PayPal says was not approved maps to the
+     * distinct `buyer_not_approved` state, and every other failure to a plain
+     * unknown. The POST `/authorize` endpoint is the trusted parent binding.
+     */
+    async authorizeOrder(input: AuthorizeOrderInput): Promise<AuthorizeOutcome> {
+      validateInputObject(input, 'authorizeOrder');
+      const orderId = validateIdField(input.orderId, 'orderId');
+      const requestId = validateHeaderIdField(input.requestId, 'requestId');
+      const expected = validateExpected(input.expected, 'authorizeOrder');
+
+      try {
+        const order = (await client.authorizeOrder(orderId, requestId)) as RawResource & {
+          purchase_units?: unknown;
+        };
+        const hint = validIdHint(order.id);
+        if (hint !== orderId) {
+          return hint === undefined
+            ? unknownOutcome({ kind: 'invalid_response' })
+            : unknownOutcome({ kind: 'binding_unverified', hint });
+        }
+        if (typeof order.status !== 'string') return unknownOutcome({ kind: 'invalid_response' });
+        if (order.status !== 'COMPLETED') {
+          return unknownOutcome({ kind: 'unconfirmed_status', hint });
+        }
+        const units = order.purchase_units;
+        if (!Array.isArray(units) || units.length !== 1) {
+          return unknownOutcome({ kind: 'invalid_response' });
+        }
+        const payments = (units[0] as { payments?: unknown } | null)?.payments;
+        if (payments === null || typeof payments !== 'object') {
+          return unknownOutcome({ kind: 'invalid_response' });
+        }
+        const authorizations = (payments as { authorizations?: unknown }).authorizations;
+        if (!Array.isArray(authorizations) || authorizations.length !== 1) {
+          return unknownOutcome({ kind: 'invalid_response' });
+        }
+        const authorization = authorizations[0] as RawResource;
+        const authorizationId = validIdHint(authorization.id);
+        if (authorizationId === undefined) return unknownOutcome({ kind: 'invalid_response' });
+        // The minted hold must match the expected money, or the binding stays unverified.
+        const mismatch = assessAmount(authorization, expected);
+        if (mismatch) {
+          return mismatch.kind === 'invalid_response'
+            ? unknownOutcome({ kind: 'invalid_response' })
+            : unknownOutcome({ kind: mismatch.kind, hint: authorizationId });
+        }
+        return { state: 'succeeded', resource: { authorizationId } };
+      } catch (error) {
+        if (error instanceof PayPalApiError && error.issue === 'ORDER_NOT_APPROVED') {
+          return { state: 'buyer_not_approved' };
+        }
+        return unknownFromError(error);
+      }
+    },
+
+    /**
+     * Unit 5: reads an authorization's durable status. `succeeded` is the
+     * read-must-verify guarantee (ID + amount binding), not a capture verdict;
+     * the caller classifies statuses (CAPTURED requires follow-up through the
+     * full unit-4 getCapture binding check, using `captureIdHint` only as a
+     * validated narrowing hint).
+     */
+    async getAuthorization(input: GetAuthorizationInput): Promise<GetAuthorizationOutcome> {
+      validateInputObject(input, 'getAuthorization');
+      const authorizationId = validateIdField(input.authorizationId, 'authorizationId');
+      const expected = validateExpected(input.expected, 'getAuthorization');
+
+      try {
+        const authorization = (await client.getAuthorization(authorizationId)) as RawResource;
+        const hint = validIdHint(authorization.id);
+        if (!hint) return unknownOutcome({ kind: 'invalid_response' });
+        if (hint !== authorizationId) {
+          return unknownOutcome({ kind: 'binding_unverified', hint });
+        }
+        const mismatch = assessAmount(authorization, expected);
+        if (mismatch) return relayFailure(mismatch, hint);
+        if (typeof authorization.status !== 'string') {
+          return unknownOutcome({ kind: 'invalid_response' });
+        }
+        if (!(AUTHORIZATION_STATUSES as readonly string[]).includes(authorization.status)) {
+          return unknownOutcome({ kind: 'unconfirmed_status', hint });
+        }
+        const captureIdHint = captureLinkHint(authorization);
+        return {
+          state: 'succeeded',
+          resource: {
+            authorizationId: hint,
+            status: authorization.status as AuthorizationStatus,
+            currency: 'SGD',
+            amountMinor: expected.amountMinor,
+            ...(captureIdHint !== undefined ? { captureIdHint } : {}),
+          },
         };
       } catch (error) {
         return unknownFromError(error);

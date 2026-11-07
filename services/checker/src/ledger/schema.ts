@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 // Versioned migrations. Applying them runs the whole read-applied-then-apply
 // cycle inside one synchronous BEGIN IMMEDIATE transaction, so a failing
@@ -230,9 +230,42 @@ WHEN NEW.exposure_started = 0 AND OLD.exposure_started = 1
 BEGIN SELECT RAISE(ABORT, 'exposure_started is permanent'); END;
 `;
 
+// Version 3 adds the PayPal authorization binding table (unit 5). Rows are
+// written only by the operator's `operation-authorize` /
+// `operation-complete-authorization` commands in short synchronous
+// transactions; identity columns (order/authorization/invoice/currency/amount)
+// are immutable once written, while provider_state is a controlled upgrade.
+const MIGRATION_3 = `
+CREATE TABLE operation_paypal_bindings (
+  operation_id TEXT NOT NULL PRIMARY KEY CHECK (length(operation_id) BETWEEN 1 AND 200),
+  order_id TEXT CHECK (order_id IS NULL OR (length(order_id) BETWEEN 1 AND 200)),
+  authorization_id TEXT CHECK (authorization_id IS NULL OR (length(authorization_id) BETWEEN 1 AND 200)),
+  invoice_id TEXT NOT NULL CHECK (length(invoice_id) BETWEEN 1 AND 127),
+  currency TEXT NOT NULL CHECK (currency = 'SGD'),
+  amount_minor INTEGER NOT NULL CHECK (amount_minor >= 0 AND amount_minor <= 1000000000),
+  provider_state TEXT NOT NULL CHECK (provider_state IN ('order_created', 'authorization_held')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (operation_id) REFERENCES operations(operation_id)
+) STRICT;
+
+CREATE TRIGGER operation_paypal_bindings_identity_immutable
+BEFORE UPDATE OF operation_id, order_id, invoice_id, currency, amount_minor, created_at
+ON operation_paypal_bindings
+BEGIN SELECT RAISE(ABORT, 'paypal binding identity columns are immutable'); END;
+
+-- authorization_id is written exactly once: NULL (order_created) → held id.
+-- A second write, even a same-value write, is refused.
+CREATE TRIGGER operation_paypal_bindings_authorization_immutable
+BEFORE UPDATE OF authorization_id ON operation_paypal_bindings
+WHEN OLD.authorization_id IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'paypal binding authorization id is immutable'); END;
+`;
+
 export const MIGRATIONS: readonly LedgerMigration[] = [
   { version: 1, sql: MIGRATION_1 },
   { version: 2, sql: MIGRATION_2 },
+  { version: 3, sql: MIGRATION_3 },
 ];
 
 export function maxKnownMigrationVersion(): number {

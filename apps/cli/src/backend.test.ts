@@ -13,10 +13,12 @@ import { test } from 'node:test';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const entry = join(root, 'apps/cli/src/backend.ts');
 
-function runBackend(args: readonly string[], input?: string): {
+function runBackend(args: readonly string[], input?: string, options?: { env?: NodeJS.ProcessEnv; cwd?: string }): {
   status: number; stdout: string; stderr: string;
 } {
-  const result = spawnSync(process.execPath, [entry, ...args], { cwd: root, input, encoding: 'utf8' });
+  const result = spawnSync(process.execPath, [entry, ...args], {
+    cwd: options?.cwd ?? root, input, encoding: 'utf8', env: options?.env,
+  });
   return { status: result.status ?? -1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 }
 
@@ -503,4 +505,179 @@ test('operator identity can never be fabricated: the fallback branch is gone and
   assert.equal([...identitySource.matchAll(/\breturn\b/g)].length, 1,
     'the helper returns only the real username (a hypothetical env fallback must not appear)');
   assert.ok(!identitySource.includes('process.env'), 'the identity helper reads no environment variable');
+});
+
+// --- Unit 5: provider opt-in/config, sandbox hold commands, provider screen,
+// BOM tolerance and credential containment ---
+
+/** A fixture config pointing at the same snapshots but a paypal-sandbox selection. */
+function paypalConfigPath(fixture: BackendFixture): string {
+  const original = JSON.parse(readFileSync(fixture.configPath, 'utf8')) as Record<string, unknown>;
+  const path = join(fixture.directory, 'backend-config-paypal.json');
+  writeFileSync(path, JSON.stringify({ ...original, paymentProvider: 'paypal-sandbox' }));
+  return path;
+}
+
+test('the default config path stays fake and the screen carries the constant provider fact', () => {
+  const fixture = buildFixture('provider-screen');
+  try {
+    const draft = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
+    assert.equal(draft.status, 0, draft.stderr);
+    const digest = (singleJsonLine(draft.stdout, 'draft') as { digest: string }).digest;
+    const confirm = runBackend([...rootArgs(fixture), 'mandate-confirm', '--id', 'cli-mandate', '--revision', '1', '--digest', digest]);
+    assert.equal(confirm.status, 0, confirm.stderr);
+    const rpc = runBackend([...rootArgs(fixture), 'rpc'], JSON.stringify({
+      apiVersion: '1', requestId: 'screen-1', method: 'proposal.submit',
+      params: { idempotencyKey: 'screen-key', cart: {
+        id: 'screen-cart', mandateId: 'cli-mandate', mandateVersion: 1, supplierId: 'store-a',
+        lines: [{ requirementId: 'eng-laptops', sku: 'LAP-14-AIR', quantity: 1 }],
+      } },
+    }) + '\n');
+    assert.equal(rpc.status, 0, rpc.stderr);
+    const operationId = (singleJsonLine(rpc.stdout, 'rpc') as
+      { result: { operation: { id: string } } }).result.operation.id;
+
+    const run = runBackend([...rootArgs(fixture), 'operation-run', '--id', operationId]);
+    assert.equal(run.status, 0, run.stderr);
+    const runLine = singleJsonLine(run.stdout, 'run') as {
+      paymentProvider: string; providerIds?: unknown; operation: { status: string };
+    };
+    assert.equal(runLine.operation.status, 'ordered');
+    assert.equal(runLine.paymentProvider, 'fake');
+    assert.equal(runLine.providerIds, undefined, 'fake-provider facts expose no sandbox ids');
+
+    const status = runBackend([...rootArgs(fixture), 'status', '--id', operationId]);
+    assert.equal(status.status, 0, status.stderr);
+    const statusLine = singleJsonLine(status.stdout, 'status') as { paymentProvider: string; providerIds?: unknown };
+    assert.equal(statusLine.paymentProvider, 'fake');
+    assert.equal(statusLine.providerIds, undefined);
+
+    const audit = runBackend([...rootArgs(fixture), 'audit', '--id', operationId]);
+    assert.equal(audit.status, 0, audit.stderr);
+    const auditLine = singleJsonLine(audit.stdout, 'audit') as {
+      paymentProvider: string; events: Array<{ details: { paymentProvider: string } }>;
+    };
+    assert.equal(auditLine.paymentProvider, 'fake');
+    assert.ok(auditLine.events.length > 0);
+    for (const event of auditLine.events) {
+      assert.equal(event.details.paymentProvider, 'fake');
+    }
+  } finally {
+    fixture.close();
+  }
+});
+
+test('the authorize commands require the paypal-sandbox config selection and clean refusals', () => {
+  const fixture = buildFixture('authorize-gate');
+  try {
+    const authorize = runBackend([...rootArgs(fixture), 'operation-authorize', '--id', 'op-1']);
+    assert.equal(authorize.status, 2);
+    assert.equal(authorize.stdout, '');
+    assert.match(authorize.stderr, /operation-authorize requires paymentProvider "paypal-sandbox"/);
+
+    const complete = runBackend([...rootArgs(fixture), 'operation-complete-authorization', '--id', 'op-1']);
+    assert.equal(complete.status, 2);
+    assert.equal(complete.stdout, '');
+    assert.match(complete.stderr, /operation-complete-authorization requires paymentProvider "paypal-sandbox"/);
+
+    // An unknown provider VALUE is refused by the strict config schema.
+    const original = JSON.parse(readFileSync(fixture.configPath, 'utf8')) as Record<string, unknown>;
+    const badPath = join(fixture.directory, 'bad-provider-config.json');
+    writeFileSync(badPath, JSON.stringify({ ...original, paymentProvider: 'paypal-live' }));
+    const bad = runBackend(['--db', fixture.dbPath, '--config', badPath, 'status', '--id', 'op-1']);
+    assert.equal(bad.status, 2);
+    assert.equal(bad.stdout, '');
+    assert.notEqual(bad.stderr, '');
+    assert.doesNotMatch(bad.stderr, /node:|\.ts|Zod/i);
+  } finally {
+    fixture.close();
+  }
+});
+
+test('sandbox hold commands refuse closed and sanitized without credentials, and rpc never reads .env', () => {
+  const fixture = buildFixture('authorize-credentials');
+  try {
+    const configPath = paypalConfigPath(fixture);
+
+    // No .env in the invocation cwd and no PAYLAB variables: sanitized refusal.
+    const missing = runBackend(['--db', fixture.dbPath, '--config', configPath, 'operation-authorize', '--id', 'op-1']);
+    assert.equal(missing.status, 2);
+    assert.equal(missing.stdout, '');
+    assert.match(missing.stderr, /Sandbox credentials are not configured/);
+    // Values never surface; the reference to the CONFIGURED NAMES is the only leak.
+    assert.doesNotMatch(missing.stderr, /[A-Za-z0-9_-]{12,}=?$|Bearer|env-cid|cid-live|sec-live/i);
+
+    // A live environment value is refused, never configured further.
+    const live = runBackend(
+      ['--db', fixture.dbPath, '--config', configPath, 'operation-authorize', '--id', 'op-1'],
+      undefined,
+      { env: { ...process.env, PAYPAL_CLIENT_ID: 'cid-live', PAYPAL_CLIENT_SECRET: 'sec-live', PAYPAL_ENV: 'live' } },
+    );
+    assert.equal(live.status, 2);
+    assert.match(live.stderr, /Only the sandbox PayPal environment/);
+    assert.doesNotMatch(live.stderr, /cid-live|sec-live/);
+
+    // An .env beside the invocation directory is honored for the authorize
+    // path only in shape: still refused when the file lacks the secret names.
+    const dotenvDir = join(fixture.directory, 'dotenv-cwd');
+    mkdirSync(dotenvDir, { recursive: true });
+    writeFileSync(join(dotenvDir, '.env'), '# comment\nPAYPAL_CLIENT_ID="env-cid"\n');
+    const incomplete = runBackend(
+      ['--db', fixture.dbPath, '--config', configPath, 'operation-authorize', '--id', 'op-1'],
+      undefined,
+      { cwd: dotenvDir },
+    );
+    assert.equal(incomplete.status, 2);
+    assert.match(incomplete.stderr, /Sandbox credentials are not configured/);
+
+    // rpc NEVER triggers the loader: a malformed request body answered by the
+    // normal wire contract proves rpc ran without touching credentials, even
+    // though a complete-but-live set of names is present in the process env.
+    const rpc = runBackend([...rootArgs(fixture), 'rpc'], 'this is not JSON',
+      { cwd: dotenvDir, env: { ...process.env, PAYPAL_CLIENT_ID: 'cid', PAYPAL_CLIENT_SECRET: 'sec', PAYPAL_ENV: 'live' } });
+    assert.equal(rpc.status, 2);
+    const rpcLine = singleJsonLine(rpc.stdout, 'rpc') as { ok: boolean; error: { code: string; message: string } };
+    assert.equal(rpcLine.ok, false);
+    assert.equal(rpcLine.error.code, 'INVALID_REQUEST');
+    assert.doesNotMatch(rpc.stderr, /sandbox credentials|PAYLAB/i);
+    assert.doesNotMatch(rpcLine.error.message, /sandbox credentials|env-cid|cid|sec/i);
+  } finally {
+    fixture.close();
+  }
+});
+
+test('a leading UTF-8 BOM is stripped from backend file inputs while invalid JSON still fails', () => {
+  const fixture = buildFixture('bom');
+  try {
+    // BOM'd config file.
+    writeFileSync(fixture.configPath, `\uFEFF${readFileSync(fixture.configPath, 'utf8')}`);
+    // BOM'd draft file.
+    writeFileSync(fixture.draftPath, `\uFEFF${readFileSync(fixture.draftPath, 'utf8')}`);
+    const draft = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
+    assert.equal(draft.status, 0, draft.stderr);
+    const draftLine = singleJsonLine(draft.stdout, 'bom draft') as { mandateId: string };
+    assert.equal(draftLine.mandateId, 'cli-mandate');
+
+    // Content that remains invalid JSON still fails exactly as before.
+    writeFileSync(fixture.draftPath, `\uFEFF${'&&& not json'}`);
+    const invalid = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
+    assert.equal(invalid.status, 2);
+    assert.equal(invalid.stdout, '');
+    assert.match(invalid.stderr, /could not be read as one JSON document/);
+  } finally {
+    fixture.close();
+  }
+});
+
+test('the help text documents the sandbox commands, config-only provider selection and exit-code agreement', () => {
+  const help = runBackend(['--help']);
+  assert.equal(help.status, 0);
+  for (const fragment of [
+    'operation-authorize',
+    'operation-complete-authorization',
+    'paymentProvider',
+    '0 means the command ran',
+  ]) {
+    assert.ok(help.stdout.includes(fragment), `help must mention ${fragment}: ${help.stdout}`);
+  }
 });

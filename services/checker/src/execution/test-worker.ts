@@ -1,9 +1,11 @@
 import { createInterface } from 'node:readline';
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { CatalogSchema } from '../../../../packages/contracts/src/index.ts';
 import { createFixtureSupplier } from '../../../suppliers/src/fixture.ts';
 import { createFakeProviderGateway, type FakeProviderScenario } from './fake.ts';
 import { PROVIDER_CALL_TIMEOUT_MS } from './gateway.ts';
+import { createExecutionProvider, type PaymentProviderSelection, type PayPalProviderScenario } from './paypal-provider.ts';
+import { createPayPalGateway } from '../paypal/gateway.ts';
 import { createExecutionWorker, type ExecutionResult, type ExecutionSupplier } from './worker.ts';
 
 // Child-process execution worker: never imported by product code. Run as
@@ -32,8 +34,47 @@ interface RunConfig {
    * "BARRIER-intent:<kind>" and resumes on a RESUME line from the parent.
    */
   resumeAfterIntent?: boolean;
+  /**
+   * Unit 5 (test-only): operator-selection mirror for the child provider.
+   * Default 'fake'; 'paypal-sandbox' requires paypalScriptPath.
+   */
+  paymentProvider?: PaymentProviderSelection;
+  /**
+   * Unit 5 (test-only): scripted PayPal fetch config, a JSON file of
+   * {routes:[{pattern,status?,body}],scenario?,log?}. Every request is matched
+   * against the routes before the network; the log file records method+URL per
+   * call so the parent can prove call counts after child restarts.
+   */
+  paypalScriptPath?: string;
+  /** Unit 5 (test-only): required with paymentProvider 'paypal-sandbox'. */
+  paypalLedgerPath?: string;
   /** Test-only: crash scenarios need an unbounded provider call. */
   providerTimeoutMs?: number | null;
+}
+
+interface PayPalScript {
+  routes: Array<{ pattern: string; status?: number; body?: unknown; stall?: boolean }>;
+  scenario?: PayPalProviderScenario;
+  log?: string;
+}
+
+/** Test-only scripted fetch inside the child. No network I/O ever happens. */
+function buildScriptedPayPalChild(scriptPath: string): { fetchFn: typeof fetch; scenario: PayPalProviderScenario } {
+  const script = JSON.parse(readFileSync(scriptPath, 'utf8')) as PayPalScript;
+  const fetchFn: typeof fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (script.log !== undefined) {
+      appendFileSync(script.log, `${JSON.stringify({ method: init?.method ?? 'GET', url })}\n`);
+    }
+    const route = script.routes.find((candidate) => new RegExp(candidate.pattern).test(url));
+    if (!route) return Promise.reject(new Error(`no scripted route matched: ${url}`));
+    if (route.stall === true) return new Promise<Response>(() => {}); // never resolves
+    return Promise.resolve(new Response(JSON.stringify(route.body ?? null), {
+      status: route.status ?? 200,
+      headers: { 'paypal-debug-id': 'dbg' },
+    }));
+  }) as typeof fetch;
+  return { fetchFn, scenario: script.scenario ?? {} };
 }
 
 async function readLine(stream: NodeJS.ReadableStream): Promise<string> {
@@ -52,7 +93,25 @@ async function runExecution(config: RunConfig): Promise<unknown> {
   const suppliers: ExecutionSupplier[] = [
     { supplierId: catalog.supplierId, catalog, adapter: createFixtureSupplier(catalog) },
   ];
-  const provider = createFakeProviderGateway(config.providerDatabasePath, config.scenario ?? {});
+  const selection: PaymentProviderSelection = config.paymentProvider ?? 'fake';
+  let paypalConfig;
+  if (selection === 'paypal-sandbox') {
+    if (config.paypalScriptPath === undefined || config.paypalLedgerPath === undefined) {
+      throw new Error('the paypal-sandbox test child requires paypalScriptPath and paypalLedgerPath');
+    }
+    const script = buildScriptedPayPalChild(config.paypalScriptPath);
+    paypalConfig = {
+      selection,
+      ledgerPath: config.paypalLedgerPath,
+      paypal: createPayPalGateway({ clientId: 'test-client', clientSecret: 'test-secret', fetchFn: script.fetchFn, timeoutMs: PROVIDER_CALL_TIMEOUT_MS }),
+      scenario: script.scenario,
+    };
+  }
+  const provider = createExecutionProvider({
+    selection,
+    fake: createFakeProviderGateway(config.providerDatabasePath, config.scenario ?? {}),
+    ...(paypalConfig ?? {}),
+  });
   const worker = createExecutionWorker({
     databasePath: config.databasePath,
     suppliers,
