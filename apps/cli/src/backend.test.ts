@@ -636,7 +636,7 @@ test('Windows: a private folder that would not pass its access on to new files i
     const { userSid } = readWindowsSecurity(runtimeDir);
     execFileSync('icacls', [runtimeDir, '/inheritance:r', '/grant:r', `*${userSid}:F`], { stdio: 'ignore' });
     const before = accessFingerprint(runtimeDir);
-    assert.match(String(before), /D:P\(A;;FA;;;/);
+    assert.match(String(before), /D:P[A-Z]*\(A;;FA;;;/);
     for (const command of [['mandate-draft', '--file', fixture.draftPath], ['mandate-review', '--id', 'cli-mandate', '--revision', '1']]) {
       const refused = runBackend([...rootArgs(fixture), ...command]);
       assert.equal(refused.status, 2, refused.stderr);
