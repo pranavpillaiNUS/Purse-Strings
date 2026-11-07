@@ -16,7 +16,7 @@ const digest = (text: string): string => createHash('sha256').update(text).diges
 export function createFileSubmissionJournal(databasePath: string, mandateId: string): SubmissionJournal {
   const directory = join(`${resolve(databasePath)}.shop-journal`, digest(mandateId));
   const fileFor = (cartId: string): string => join(directory, `${digest(cartId)}.json`);
-  const unreadable = 'A saved submission for this mandate could not be read, so nothing was sent. Check the ledger, then delete the folder ending in .shop-journal beside the backend database.';
+  const unreadable = `A saved submission for this mandate could not be read, so nothing was sent. Check the ledger, then delete this folder: ${directory}`;
 
   return {
     pending() {
@@ -24,6 +24,7 @@ export function createFileSubmissionJournal(databasePath: string, mandateId: str
       try {
         names = readdirSync(directory).filter((name) => name.endsWith('.json')).sort();
       } catch (error) {
+        // No folder is the usual first run: nothing has been saved for this mandate.
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
         throw new Error(unreadable);
       }

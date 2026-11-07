@@ -7,7 +7,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createMandateDraft } from '../../../services/agent/src/mandate.ts';
 import {
-  checkSummary, childEnvironment, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor, revisionSummary, scriptedDraftCalls,
+  awaitEnter, checkSummary, childEnvironment, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor, revisionSummary, scriptedDraftCalls,
   STALE_HOURS, storeTable, summarizeTrace, wrapCommand, wrapLine, type StoreView,
 } from './demo-flow.ts';
 import { formatSgd } from './format.ts';
@@ -269,6 +269,42 @@ test('input that closes at the confirmation prompt stops the flow before anythin
   assert.match(result.stdout, /You are the operator\. Press Enter to confirm this exact digest/);
   assert.match(result.stderr, /Input closed before Enter was pressed/);
   assert.doesNotMatch(result.stdout, /Confirmed by OS user/);
+});
+
+test('input that closes at the last prompt still shows the result, because nothing is left to confirm', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-eof-last-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  // Enter for scenes 2 to 6 and the operator's prompt, then nothing for the last prompt.
+  const result = spawnSync(process.execPath, [entry, '--pause', '--dir', join(directory, 'work')], {
+    cwd: root, encoding: 'utf8', input: '\n'.repeat(6),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Press Enter for the result/);
+  assert.match(result.stdout, /Operation: ordered/);
+  assert.match(result.stdout, /=== Result ===/);
+  assert.doesNotMatch(result.stderr, /Input closed/);
+});
+
+test('input not ready yet gets a rest between reads, and only a real Enter or a closed input ends the wait', () => {
+  const notReady = Object.assign(new Error('not ready'), { code: 'EAGAIN' });
+  const reader = (steps: Array<Error | string | null>) => (buffer: Buffer): number => {
+    const step = steps.shift();
+    if (step === undefined) throw new Error('Read past the end of the script');
+    if (step instanceof Error) throw step;
+    if (step === null) return 0;
+    buffer.write(step);
+    return 1;
+  };
+  let rests = 0;
+  const rest = () => { rests += 1; };
+  assert.equal(awaitEnter(reader([notReady, notReady, 'x', notReady, '\n']), rest), true);
+  assert.equal(rests, 3, 'every read that found nothing is followed by a rest');
+  assert.equal(awaitEnter(reader(['x', null]), rest), false);
+  assert.equal(awaitEnter(reader([Object.assign(new Error('gone'), { code: 'EOF' })]), rest), false);
+  assert.equal(rests, 3, 'closed input does not rest');
+  const started = Date.now();
+  assert.equal(awaitEnter(reader([notReady, '\n'])), true);
+  assert.ok(Date.now() - started >= 25, 'the real rest takes time');
 });
 
 test('the whole flow runs with no key or network, twice in the same directory', (t) => {

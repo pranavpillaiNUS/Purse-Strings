@@ -297,22 +297,36 @@ export function childEnvironment(entry: 'main' | 'backend' | 'shop', args: reado
   return copy;
 }
 
-/** Only a real Enter counts. Closed input stops the flow, so nothing can confirm by itself. */
-function waitForEnter(prompt: string): void {
-  process.stdout.write(`\n[${prompt}]`);
-  const closed = new DemoFailure('Input closed before Enter was pressed, so the flow stopped');
+const restCell = new Int32Array(new SharedArrayBuffer(4));
+
+/** True once a real Enter arrives, false if input closes first. Input not ready yet gets a short rest, not a spin. */
+export function awaitEnter(
+  read: (buffer: Buffer) => number = (buffer) => readSync(0, buffer, 0, 1, null),
+  rest: () => void = () => { Atomics.wait(restCell, 0, 0, 50); },
+): boolean {
   const buffer = Buffer.alloc(1);
   for (;;) {
     let bytesRead: number;
     try {
-      bytesRead = readSync(0, buffer, 0, 1, null);
+      bytesRead = read(buffer);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EAGAIN') continue;
-      throw closed;
+      if ((error as NodeJS.ErrnoException).code !== 'EAGAIN') return false;
+      rest();
+      continue;
     }
-    if (bytesRead === 0) throw closed;
-    if (buffer[0] === 10) return;
+    if (bytesRead === 0) return false;
+    if (buffer[0] === 10) return true;
   }
+}
+
+function promptForEnter(prompt: string): boolean {
+  process.stdout.write(`\n[${prompt}]`);
+  return awaitEnter();
+}
+
+/** Only a real Enter counts. Closed input stops the flow, so nothing can confirm by itself. */
+function waitForEnter(prompt: string): void {
+  if (!promptForEnter(prompt)) throw new DemoFailure('Input closed before Enter was pressed, so the flow stopped');
 }
 
 /** Clears only a directory this command created, so a mistyped --dir cannot delete real work. */
@@ -536,7 +550,8 @@ async function main(): Promise<void> {
     console.log('Skipped, because nothing was reserved.');
     results.push('Execution: skipped, because nothing was reserved');
   }
-  if (values.pause) waitForEnter('Press Enter for the result');
+  // Everything has run by now, so closed input has nothing left to stop. It only skips the wait.
+  if (values.pause) promptForEnter('Press Enter for the result');
 
   const seconds = Math.round((Date.now() - startedAt) / 1000);
   console.log('\n=== Result ===');

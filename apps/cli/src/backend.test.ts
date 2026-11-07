@@ -9,6 +9,8 @@ import { createWindowsPrivateDirectory, evaluateDirectorySecurity, evaluateFileS
 
 const isWindows = process.platform === 'win32';
 const windowsOnly = isWindows ? false : 'Windows access rules only';
+/** Windows has no chmod to refuse, so its message doesn't mention one. */
+const tooOpenRefusal = isWindows ? /too open; refusing to use or change it/ : /too open; refusing to chmod/;
 
 /** The real access boundary: mode bits on POSIX, the security descriptor on Windows. */
 function accessFingerprint(path: string): number | string {
@@ -370,7 +372,7 @@ test('an existing unsafe runtime directory is refused and never chmodded', () =>
     const result = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
     assert.equal(result.status, 2);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /refusing to chmod/);
+    assert.match(result.stderr, tooOpenRefusal);
     assert.equal(accessFingerprint(runtimeDir), before, 'the unsafe directory must remain untouched');
   } finally {
     fixture.close();
@@ -395,7 +397,7 @@ test('both runtime parents are pre-flighted before any creation: a refused app p
     const refused = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
     assert.equal(refused.status, 2);
     assert.equal(refused.stdout, '');
-    assert.match(refused.stderr, /refusing to chmod/);
+    assert.match(refused.stderr, tooOpenRefusal);
     assert.equal(accessFingerprint(appRuntime), before, 'the unsafe application parent must remain untouched');
     assert.throws(() => statSync(providerRuntime),
       'the refusal must not create the provider runtime parent despite its successful pre-flight');
@@ -665,6 +667,49 @@ test('two spellings of one future database are refused before either file exists
       assert.throws(() => statSync(runtimeDir), `${alias}: nothing may be created`);
     }
   } finally {
+    fixture.close();
+  }
+});
+
+test('Windows: a deny entry naming this user gets a refusal that says so, on a database or a folder', { skip: windowsOnly }, () => {
+  const fixture = buildFixture('win-deny-user');
+  const runtimeDir = join(fixture.directory, 'state');
+  const unusedDir = join(fixture.directory, 'unused');
+  makePrivateDirectory(runtimeDir);
+  makePrivateDirectory(unusedDir);
+  const { userSid } = readWindowsSecurity(runtimeDir);
+  const deny = (path: string, rights: string) => execFileSync('icacls', [path, '/deny', `*${userSid}:${rights}`], { stdio: 'ignore' });
+  try {
+    const drafted = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
+    assert.equal(drafted.status, 0, drafted.stderr);
+    deny(fixture.dbPath, '(W)');
+    const fileBefore = accessFingerprint(fixture.dbPath);
+    const refusedFile = runBackend([...rootArgs(fixture), 'mandate-review', '--id', 'cli-mandate', '--revision', '1']);
+    assert.equal(refusedFile.status, 2, refusedFile.stderr);
+    assert.equal(refusedFile.stdout, '');
+    assert.match(refusedFile.stderr, /has a deny entry for the user running this command/);
+    assert.equal(accessFingerprint(fixture.dbPath), fileBefore, 'the refusal must not change the file');
+
+    deny(unusedDir, '(OI)(CI)(W)');
+    const folderBefore = accessFingerprint(unusedDir);
+    const original = JSON.parse(readFileSync(fixture.configPath, 'utf8')) as Record<string, unknown>;
+    writeFileSync(fixture.configPath, JSON.stringify({ ...original, fakeProviderDb: join(unusedDir, 'providers.db') }));
+    const unusedDb = join(unusedDir, 'app.db');
+    const refusedFolder = runBackend(['--db', unusedDb, '--config', fixture.configPath, 'mandate-draft', '--file', fixture.draftPath]);
+    assert.equal(refusedFolder.status, 2, refusedFolder.stderr);
+    assert.equal(refusedFolder.stdout, '');
+    assert.match(refusedFolder.stderr, /has a deny entry for the user running this command/);
+    assert.equal(accessFingerprint(unusedDir), folderBefore, 'the refusal must not change the folder');
+    assert.throws(() => statSync(unusedDb), 'nothing may be created inside');
+  } finally {
+    // Deny entries first, or the temporary folder can't be deleted.
+    for (const path of [fixture.dbPath, unusedDir]) {
+      try {
+        execFileSync('icacls', [path, '/remove:d', `*${userSid}`], { stdio: 'ignore' });
+      } catch {
+        // The test may have ended before this path existed.
+      }
+    }
     fixture.close();
   }
 });

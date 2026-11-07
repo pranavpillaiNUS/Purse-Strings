@@ -45,5 +45,6 @@ test('a damaged or planted record stops the run instead of being guessed at', (t
   for (const content of ['{ not json', JSON.stringify({ id: 'run-cart-1' }), JSON.stringify(cart('run-cart-1', 'mandate-b')), JSON.stringify(cart('another-cart'))]) {
     writeFileSync(file, content);
     assert.throws(() => journal.pending(), /could not be read, so nothing was sent/, content);
+    assert.throws(() => journal.pending(), (error: Error) => error.message.endsWith(`delete this folder: ${folder}`), 'The message must name the exact folder');
   }
 });
