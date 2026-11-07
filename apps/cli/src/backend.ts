@@ -291,6 +291,9 @@ function assertPrivateWindowsDirectory(directory: string, label: string, fresh =
   if (verdict === 'too_open') {
     throw new CliError(`${label} permissions are too open; refusing to chmod an existing unsafe directory`);
   }
+  if (verdict === 'no_file_inheritance') {
+    throw new CliError(`${label} does not pass its private access on to new files; refusing to use it`);
+  }
   if (verdict !== 'ok') {
     throw new CliError(`${label} could not be validated as a runtime directory`);
   }
@@ -347,10 +350,25 @@ function createPrivateRuntimeDirectory(directory: string, label: string): void {
   if (process.platform === 'win32') assertPrivateWindowsDirectory(directory, label, true);
 }
 
+/**
+ * A path as the filesystem will read it, including one that doesn't exist yet. Windows and
+ * macOS usually ignore case. Windows also ignores trailing dots and spaces in a name, and
+ * treats a name's default stream as the file itself.
+ */
+function pathIdentity(path: string): string {
+  if (process.platform === 'darwin') return path.normalize('NFC').toUpperCase();
+  if (process.platform !== 'win32') return path;
+  return path
+    .split(/[\\/]/)
+    .map((part, index) => (index === 0 ? part : part.replace(/:.*$/, '').replace(/[. ]+$/, '')))
+    .join('\\')
+    .toUpperCase();
+}
+
 function assertDistinctDatabases(applicationPath: string, providerPath: string): void {
   const applicationReal = expandPath(applicationPath);
   const providerReal = expandPath(providerPath);
-  if (applicationReal === providerReal) {
+  if (pathIdentity(applicationReal) === pathIdentity(providerReal)) {
     throw new CliError('The application database and fake provider database must be distinct files');
   }
   try {

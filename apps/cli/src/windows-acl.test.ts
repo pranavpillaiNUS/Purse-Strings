@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { evaluateDirectorySecurity, inspectWindowsPaths } from './windows-acl.ts';
+import { evaluateDirectorySecurity, evaluateFileSecurity, inspectWindowsPaths } from './windows-acl.ts';
 
 const USER = 'S-1-5-21-1111111111-2222222222-3333333333-1001';
 const OTHER = 'S-1-5-21-1111111111-2222222222-3333333333-1002';
@@ -44,6 +44,21 @@ test('any allow entry for anyone else is refused, even read-only, inherited or i
   ]) {
     assert.equal(evaluateDirectorySecurity(`${owner}D:(A;OICI;FA;;;${USER})${ace}`, USER), 'too_open', ace);
   }
+});
+
+test('a folder must have an allow entry new files inherit, and a file needs none', () => {
+  // Without one, Windows gives a new file the creating process's default access instead.
+  for (const acl of [`(A;;FA;;;${USER})`, `(A;CI;FA;;;${USER})`, `(D;OI;FA;;;WD)(A;;FA;;;${USER})`]) {
+    assert.equal(evaluateDirectorySecurity(`${owner}D:P${acl}`, USER), 'no_file_inheritance', acl);
+    assert.equal(evaluateFileSecurity(`${owner}D:P${acl}`, USER), 'ok', acl);
+  }
+  for (const flags of ['OI', 'OICI', 'CIOI', 'OICIIO', 'OICIID', 'OINP']) {
+    assert.equal(evaluateDirectorySecurity(`${owner}D:P(A;${flags};FA;;;${USER})`, USER), 'ok', flags);
+  }
+  // Flags come in pairs, so these letters side by side are not object-inherit.
+  assert.equal(evaluateDirectorySecurity(`${owner}D:P(A;IOCI;FA;;;${USER})`, USER), 'no_file_inheritance');
+  // A wider entry is still the first problem to report.
+  assert.equal(evaluateDirectorySecurity(`${owner}D:P(A;;FA;;;WD)`, USER), 'too_open');
 });
 
 test('a deny entry takes access away, so it does not make a directory unsafe', () => {

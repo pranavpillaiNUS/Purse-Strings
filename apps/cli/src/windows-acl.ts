@@ -9,8 +9,10 @@ import { join } from 'node:path';
 //
 // Accepted owner: the current user, SYSTEM or Administrators.
 // Accepted access: allow entries for those three only, inherited or not. Deny
-// entries take access away, so they are harmless. Anything else, or anything that
-// cannot be read or parsed, is refused. Administrators and SYSTEM can reach every
+// entries take access away, so they are harmless. A folder must also have an allow
+// entry that new files inherit: with none, Windows gives a new file the creating
+// process's default access instead, which can reach further. Anything else, or anything
+// that cannot be read or parsed, is refused. Administrators and SYSTEM can reach every
 // file on the machine anyway, so this is a one-operator boundary, not isolation
 // from an administrator, and not production authentication.
 
@@ -21,17 +23,20 @@ const ADMINISTRATORS_SID = 'S-1-5-32-544';
 const SDDL_ALIASES: Readonly<Record<string, string>> = { SY: SYSTEM_SID, BA: ADMINISTRATORS_SID, LA: ADMINISTRATORS_SID };
 const POWERSHELL_TIMEOUT_MS = 15_000;
 const MISSING = 'MISSING';
+/** Which rules apply, marked by PowerShell on each descriptor it returns. */
+const DIRECTORY_MARK = 'D';
+const FILE_MARK = 'F';
 /** Windows does not allow this in a file name, so it can separate paths safely. */
 const PATH_SEPARATOR = '|';
 
-export type DirectoryVerdict = 'ok' | 'foreign_owner' | 'too_open' | 'unverifiable';
+export type DirectoryVerdict = 'ok' | 'foreign_owner' | 'too_open' | 'no_file_inheritance' | 'unverifiable';
 export type PathVerdict = DirectoryVerdict | 'missing';
 
 const DESCRIPTOR = /^O:([A-Za-z0-9-]+)(?:G:[A-Za-z0-9-]+)?D:(?:P|AR|AI)*((?:\([^()]*\))+)$/;
 const USER_SID = /^S-1-\d+(?:-\d+)+$/;
 
-/** Pure decision on a descriptor. Null DACLs and conditional ACEs do not parse, so they fail closed. */
-export function evaluateDirectorySecurity(sddl: string, userSid: string): DirectoryVerdict {
+/** Pure decision on a file's descriptor. Null DACLs and conditional ACEs do not parse, so they fail closed. */
+export function evaluateFileSecurity(sddl: string, userSid: string): DirectoryVerdict {
   if (!USER_SID.test(userSid)) return 'unverifiable';
   const match = DESCRIPTOR.exec(sddl);
   if (match === null) return 'unverifiable';
@@ -47,6 +52,19 @@ export function evaluateDirectorySecurity(sddl: string, userSid: string): Direct
     if (!trusted.has(resolve(sid!))) return 'too_open';
   }
   return 'ok';
+}
+
+/** The same rules, plus an allow entry that new files will inherit. Flags are two letters each. */
+export function evaluateDirectorySecurity(sddl: string, userSid: string): DirectoryVerdict {
+  const verdict = evaluateFileSecurity(sddl, userSid);
+  if (verdict !== 'ok') return verdict;
+  const entries = sddl.slice(sddl.indexOf('D:')).match(/\([^()]*\)/g) ?? [];
+  const passesToFiles = entries.some((entry) => {
+    const [type, flags] = entry.slice(1, -1).split(';');
+    const pairs: string[] = flags?.match(/../g) ?? [];
+    return type === 'A' && pairs.includes('OI');
+  });
+  return passesToFiles ? 'ok' : 'no_file_inheritance';
 }
 
 // Paths reach PowerShell through the environment, never through the script text, so a
@@ -83,7 +101,8 @@ function readDescriptors(paths: readonly string[]): { userSid: string; descripto
   const output = runPowerShell(
     `[Console]::Out.WriteLine(${CURRENT_USER});`
     + `foreach($p in ${TARGET_PATHS}.Split('${PATH_SEPARATOR}')){`
-    + `try{$d=[IO.Directory]::GetAccessControl($p,'Owner,Access').GetSecurityDescriptorSddlForm('Owner,Access')}`
+    + `try{$d=[IO.Directory]::GetAccessControl($p,'Owner,Access').GetSecurityDescriptorSddlForm('Owner,Access');`
+    + `if([IO.Directory]::Exists($p)){$d='${DIRECTORY_MARK}'+$d}else{$d='${FILE_MARK}'+$d}}`
     + `catch{if([IO.File]::Exists($p) -or [IO.Directory]::Exists($p)){throw};$d='${MISSING}'};`
     + '[Console]::Out.WriteLine($d)}',
     paths,
@@ -94,9 +113,9 @@ function readDescriptors(paths: readonly string[]): { userSid: string; descripto
 }
 
 export function readWindowsSecurity(path: string): { userSid: string; sddl: string } {
-  const { userSid, descriptors: [sddl] } = readDescriptors([path]);
-  if (sddl === undefined || sddl === MISSING) throw new Error('The path could not be read');
-  return { userSid, sddl };
+  const { userSid, descriptors: [marked] } = readDescriptors([path]);
+  if (marked === undefined || marked === MISSING) throw new Error('The path could not be read');
+  return { userSid, sddl: marked.slice(1) };
 }
 
 /** A verdict for each path. If the read fails, every path is unverifiable. */
@@ -104,8 +123,10 @@ export function inspectWindowsPaths(paths: readonly string[]): Map<string, PathV
   try {
     const { userSid, descriptors } = readDescriptors(paths);
     return new Map(paths.map((path, index) => {
-      const sddl = descriptors[index]!;
-      return [path, sddl === MISSING ? 'missing' : evaluateDirectorySecurity(sddl, userSid)];
+      const marked = descriptors[index]!;
+      if (marked === MISSING) return [path, 'missing'];
+      const evaluate = marked.startsWith(DIRECTORY_MARK) ? evaluateDirectorySecurity : evaluateFileSecurity;
+      return [path, evaluate(marked.slice(1), userSid)];
     }));
   } catch {
     return new Map(paths.map((path) => [path, 'unverifiable']));

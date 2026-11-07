@@ -5,7 +5,7 @@ import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { createWindowsPrivateDirectory, evaluateDirectorySecurity, readWindowsSecurity } from './windows-acl.ts';
+import { createWindowsPrivateDirectory, evaluateDirectorySecurity, evaluateFileSecurity, readWindowsSecurity } from './windows-acl.ts';
 
 const isWindows = process.platform === 'win32';
 const windowsOnly = isWindows ? false : 'Windows access rules only';
@@ -29,7 +29,8 @@ function makePrivateDirectory(path: string): void {
 
 function assertOwnerOnlyOnWindows(path: string): void {
   const { sddl, userSid } = readWindowsSecurity(path);
-  assert.equal(evaluateDirectorySecurity(sddl, userSid), 'ok', sddl);
+  const evaluate = statSync(path).isDirectory() ? evaluateDirectorySecurity : evaluateFileSecurity;
+  assert.equal(evaluate(sddl, userSid), 'ok', sddl);
 }
 
 // Backend operator/RPC CLI contract: every step here is a FRESH node process.
@@ -623,6 +624,46 @@ test('Windows: a database file open to others is refused inside a private folder
     } finally {
       fixture.close();
     }
+  }
+});
+
+test('Windows: a private folder that would not pass its access on to new files is refused, first time and next', { skip: windowsOnly }, () => {
+  const fixture = buildFixture('win-no-inherit');
+  try {
+    const runtimeDir = join(fixture.directory, 'state');
+    mkdirSync(runtimeDir);
+    // Private, but its one entry doesn't reach new files, so they would get the process's default access.
+    const { userSid } = readWindowsSecurity(runtimeDir);
+    execFileSync('icacls', [runtimeDir, '/inheritance:r', '/grant:r', `*${userSid}:F`], { stdio: 'ignore' });
+    const before = accessFingerprint(runtimeDir);
+    assert.match(String(before), /D:P\(A;;FA;;;/);
+    for (const command of [['mandate-draft', '--file', fixture.draftPath], ['mandate-review', '--id', 'cli-mandate', '--revision', '1']]) {
+      const refused = runBackend([...rootArgs(fixture), ...command]);
+      assert.equal(refused.status, 2, refused.stderr);
+      assert.equal(refused.stdout, '');
+      assert.match(refused.stderr, /does not pass its private access on to new files/);
+      assert.throws(() => statSync(fixture.dbPath), 'No database may be created');
+    }
+    assert.equal(accessFingerprint(runtimeDir), before, 'The folder must remain untouched');
+  } finally {
+    fixture.close();
+  }
+});
+
+test('two spellings of one future database are refused before either file exists', { skip: process.platform === 'linux' ? 'Linux file names are case-sensitive' : false }, () => {
+  const fixture = buildFixture('spelling-alias');
+  try {
+    const runtimeDir = join(fixture.directory, 'state');
+    const original = JSON.parse(readFileSync(fixture.configPath, 'utf8')) as Record<string, unknown>;
+    for (const alias of ['APP.DB', ...(isWindows ? ['app.db.', 'app.db ', 'app.db::$DATA'] : [])]) {
+      writeFileSync(fixture.configPath, JSON.stringify({ ...original, fakeProviderDb: join(runtimeDir, alias) }));
+      const refused = runBackend([...rootArgs(fixture), 'operation-run', '--id', 'op-x']);
+      assert.equal(refused.status, 2, `${alias}: ${refused.stderr}`);
+      assert.match(refused.stderr, /must be distinct files/, alias);
+      assert.throws(() => statSync(runtimeDir), `${alias}: nothing may be created`);
+    }
+  } finally {
+    fixture.close();
   }
 });
 
