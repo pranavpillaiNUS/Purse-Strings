@@ -76,7 +76,7 @@ export type CaptureEvidence = {
 
 /**
  * Unit 5 additions. These methods power the buyer-approval flow (create an
- * AUTHORIZATION order, authorize it after PayPal's hosted buyer consent, and
+ * AUTHORIZE order, authorize it after PayPal's hosted buyer consent, and
  * read the authorization's status for reconciliation). They are narrow
  * neighbors of the unit-4 four-method contract, which is unchanged.
  */
@@ -527,7 +527,7 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
     },
 
     /**
-     * Unit 5: creates an AUTHORIZATION-intent order for the buyer-approval step.
+     * Unit 5: creates an AUTHORIZE-intent order for the buyer-approval step.
      * The gateway never stores anything; the caller decides what to persist. The
      * approval URL is extracted only from a parseable `rel: 'approve'` https link
      * on a sandbox buyer-consent host (`www.sandbox.paypal.com` or

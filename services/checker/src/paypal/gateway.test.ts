@@ -535,7 +535,7 @@ function authorizedOrderBody(overrides: Record<string, unknown> = {}): Record<st
   };
 }
 
-test('createAuthorizationOrder sends the AUTHORIZATION order with SGD money at the edge and returns the sandbox approval link', async () => {
+test('createAuthorizationOrder sends the AUTHORIZE order with SGD money at the edge and returns the sandbox approval link', async () => {
   const { calls, fetchFn } = harness([tokenRoute(), orderCreateRoute(orderBody())]);
   const outcome = await makeGateway(fetchFn).createAuthorizationOrder(orderCreateInput);
   assert.deepEqual(outcome, {
