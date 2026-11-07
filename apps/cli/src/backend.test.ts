@@ -604,19 +604,38 @@ test('Windows: both databases reached through a junction alias are one file and 
   }
 });
 
+test('Windows: a database file open to others is refused inside a private folder, and left alone', { skip: windowsOnly }, () => {
+  // Windows lets an account open a file by its full path without rights to the folder.
+  for (const [suffix, name] of [['', 'the database'], ['-wal', 'a sidecar']] as const) {
+    const fixture = buildFixture('win-open-db');
+    try {
+      const created = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
+      assert.equal(created.status, 0, created.stderr);
+      const target = `${fixture.dbPath}${suffix}`;
+      if (suffix !== '') writeFileSync(target, '');
+      execFileSync('icacls', [target, '/grant', '*S-1-1-0:R'], { stdio: 'ignore' });
+      const before = accessFingerprint(target);
+      const refused = runBackend([...rootArgs(fixture), 'mandate-review', '--id', 'cli-mandate', '--revision', '1']);
+      assert.equal(refused.status, 2, `${name}: ${refused.stderr}`);
+      assert.equal(refused.stdout, '');
+      assert.match(refused.stderr, /application database permissions are too open/);
+      assert.equal(accessFingerprint(target), before, `${name} must remain untouched`);
+    } finally {
+      fixture.close();
+    }
+  }
+});
+
 test('Windows: when the security descriptor cannot be read, the backend refuses rather than proceeds', { skip: windowsOnly }, () => {
   const fixture = buildFixture('win-unverifiable');
   try {
     const runtimeDir = join(fixture.directory, 'state');
     makePrivateDirectory(runtimeDir);
-    // Every spelling goes, because Windows names are case-insensitive and the first sorted one wins.
-    const env: NodeJS.ProcessEnv = Object.fromEntries(
-      Object.entries(process.env).filter(([name]) => name.toUpperCase() !== 'SYSTEMROOT'),
-    );
-    env.SYSTEMROOT = join(fixture.directory, 'no-such-windows');
-    const result = spawnSync(process.execPath, [entry, ...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath], {
-      cwd: root, encoding: 'utf8', env,
-    });
+    // Denying OWNER RIGHTS the right to read permissions makes the descriptor really
+    // unreadable, while the folder itself still exists and can be listed.
+    execFileSync('icacls', [runtimeDir, '/deny', '*S-1-3-4:(RC)'], { stdio: 'ignore' });
+    assert.ok(statSync(runtimeDir).isDirectory());
+    const result = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
     assert.equal(result.status, 2, result.stderr);
     assert.equal(result.stdout, '');
     assert.match(result.stderr, /could not be validated/);

@@ -1,4 +1,4 @@
-import { readFileSync, mkdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { userInfo } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -41,7 +41,7 @@ import {
   type ExecutionSupplier,
 } from '../../../services/checker/src/execution/worker.ts';
 import { createFixtureSupplier } from '../../../services/suppliers/src/fixture.ts';
-import { createWindowsPrivateDirectory, inspectWindowsDirectory, type DirectoryVerdict } from './windows-acl.ts';
+import { createWindowsPrivateDirectory, inspectWindowsPaths, type PathVerdict } from './windows-acl.ts';
 
 // Separate backend operator/RPC CLI. This entrypoint never reuses the offline
 // eligibility demo logic; it is the durable execution surface: operators store,
@@ -254,19 +254,37 @@ function checkPrivateRuntimeDirectory(directory: string, label: string): void {
   }
 }
 
-/** One PowerShell start per directory per process: both databases usually share one. */
-const windowsVerdicts = new Map<string, DirectoryVerdict>();
+/** Filled by one PowerShell start, because each one costs about half a second. */
+const windowsVerdicts = new Map<string, PathVerdict>();
+const DATABASE_FILE_SUFFIXES = ['', '-wal', '-shm', '-journal'];
+
+/** Every path this command relies on, resolved like the POSIX stat: a link is judged by what it reaches. */
+function loadWindowsVerdicts(directories: readonly string[], databases: readonly string[]): void {
+  const candidates = [
+    ...directories,
+    ...databases.flatMap((database) => DATABASE_FILE_SUFFIXES.map((suffix) => `${database}${suffix}`)),
+  ];
+  const paths = new Set<string>();
+  for (const candidate of candidates) {
+    try {
+      paths.add(realpathSync(candidate));
+    } catch {
+      // Not there yet, which later steps handle.
+    }
+  }
+  if (paths.size === 0) return;
+  for (const [path, verdict] of inspectWindowsPaths([...paths])) windowsVerdicts.set(path, verdict);
+}
 
 function assertPrivateWindowsDirectory(directory: string, label: string, fresh = false): void {
-  // Resolved first, like the POSIX stat: a junction or link is judged by what it reaches.
   let real: string;
   try {
     real = realpathSync(directory);
   } catch {
     throw new CliError(`${label} could not be validated as a runtime directory`);
   }
-  const verdict = (!fresh ? windowsVerdicts.get(real) : undefined) ?? inspectWindowsDirectory(real);
-  windowsVerdicts.set(real, verdict);
+  const verdict = (!fresh ? windowsVerdicts.get(real) : undefined) ?? inspectWindowsPaths([real]).get(real);
+  if (verdict !== undefined) windowsVerdicts.set(real, verdict);
   if (verdict === 'foreign_owner') {
     throw new CliError(`${label} is not owned by the operating-system user running this command`);
   }
@@ -278,11 +296,41 @@ function assertPrivateWindowsDirectory(directory: string, label: string, fresh =
   }
 }
 
+/**
+ * A private folder does not protect a file on Windows. Accounts can open a file by its full
+ * path without rights to the folder, so a database moved in from elsewhere can stay open
+ * to them. Sidecar files hold ledger data too.
+ */
+function assertPrivateWindowsDatabase(database: string, label: string): void {
+  for (const suffix of DATABASE_FILE_SUFFIXES) {
+    let real: string;
+    try {
+      real = realpathSync(`${database}${suffix}`);
+    } catch {
+      continue;
+    }
+    const verdict = windowsVerdicts.get(real) ?? inspectWindowsPaths([real]).get(real);
+    if (verdict === 'missing') continue;
+    if (verdict === 'foreign_owner') {
+      throw new CliError(`${label} is not owned by the operating-system user running this command`);
+    }
+    if (verdict === 'too_open') {
+      throw new CliError(`${label} permissions are too open; refusing to use or change it`);
+    }
+    if (verdict !== 'ok') {
+      throw new CliError(`${label} could not be validated`);
+    }
+  }
+}
+
 function createPrivateRuntimeDirectory(directory: string, label: string): void {
   try {
     statSync(directory);
+    // It may have appeared after the pre-flight, so it has not necessarily been judged.
+    if (process.platform === 'win32') assertPrivateWindowsDirectory(directory, label);
     return;
-  } catch {
+  } catch (error) {
+    if (error instanceof CliError) throw error;
     // Missing, and every pre-flight check has passed: create it below.
   }
   try {
@@ -539,8 +587,15 @@ async function handleCommand(command: Command): Promise<number> {
   const confirmedOperator = command.name === 'mandate-confirm' ? operatorIdentity() : null;
 
   assertDistinctDatabases(dbPath, config.providerPath);
+  if (process.platform === 'win32') {
+    loadWindowsVerdicts([dirname(config.providerPath), dirname(dbPath)], [config.providerPath, dbPath]);
+  }
   checkPrivateRuntimeDirectory(dirname(config.providerPath), 'The fake provider database runtime directory');
   checkPrivateRuntimeDirectory(dirname(dbPath), 'The application runtime directory');
+  if (process.platform === 'win32') {
+    assertPrivateWindowsDatabase(config.providerPath, 'The fake provider database');
+    assertPrivateWindowsDatabase(dbPath, 'The application database');
+  }
   createPrivateRuntimeDirectory(dirname(config.providerPath), 'The fake provider database runtime directory');
   createPrivateRuntimeDirectory(dirname(dbPath), 'The application runtime directory');
   // DB files under the private runtime directory inherit the 0600 umask set in main().

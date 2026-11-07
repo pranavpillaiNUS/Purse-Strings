@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { evaluateDirectorySecurity } from './windows-acl.ts';
+import { evaluateDirectorySecurity, inspectWindowsPaths } from './windows-acl.ts';
 
 const USER = 'S-1-5-21-1111111111-2222222222-3333333333-1001';
 const OTHER = 'S-1-5-21-1111111111-2222222222-3333333333-1002';
@@ -63,4 +66,17 @@ test('anything that cannot be read as a known shape fails closed', () => {
     assert.equal(evaluateDirectorySecurity(sddl, USER), 'unverifiable', sddl);
   }
   assert.equal(evaluateDirectorySecurity(`${owner}D:P(A;;FA;;;${USER})`, 'not-a-sid'), 'unverifiable');
+});
+
+test('one read covers several paths, and a path that has gone is missing, not accepted', { skip: process.platform === 'win32' ? false : 'Windows only' }, () => {
+  const gone = join(tmpdir(), `splittap-no-such-file-${randomUUID()}`);
+  const verdicts = inspectWindowsPaths([gone, tmpdir()]);
+  assert.equal(verdicts.get(gone), 'missing');
+  assert.notEqual(verdicts.get(tmpdir()), 'missing');
+});
+
+test('a path that cannot be passed safely fails the whole read', () => {
+  const verdicts = inspectWindowsPaths(['C:\\a|b', 'C:\\c']);
+  assert.equal(verdicts.get('C:\\a|b'), 'unverifiable');
+  assert.equal(verdicts.get('C:\\c'), 'unverifiable');
 });

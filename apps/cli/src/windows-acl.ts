@@ -20,8 +20,12 @@ const ADMINISTRATORS_SID = 'S-1-5-32-544';
 // SDDL writes that account as LA even when the current user is that account.
 const SDDL_ALIASES: Readonly<Record<string, string>> = { SY: SYSTEM_SID, BA: ADMINISTRATORS_SID, LA: ADMINISTRATORS_SID };
 const POWERSHELL_TIMEOUT_MS = 15_000;
+const MISSING = 'MISSING';
+/** Windows does not allow this in a file name, so it can separate paths safely. */
+const PATH_SEPARATOR = '|';
 
 export type DirectoryVerdict = 'ok' | 'foreign_owner' | 'too_open' | 'unverifiable';
+export type PathVerdict = DirectoryVerdict | 'missing';
 
 const DESCRIPTOR = /^O:([A-Za-z0-9-]+)(?:G:[A-Za-z0-9-]+)?D:(?:P|AR|AI)*((?:\([^()]*\))+)$/;
 const USER_SID = /^S-1-\d+(?:-\d+)+$/;
@@ -45,10 +49,11 @@ export function evaluateDirectorySecurity(sddl: string, userSid: string): Direct
   return 'ok';
 }
 
-// Paths reach PowerShell through the environment, never through the script text,
-// so a path cannot become code. Only .NET calls are used, which no execution policy
-// or missing module can change.
-function runPowerShell(script: string, path: string): string {
+// Paths reach PowerShell through the environment, never through the script text, so a
+// path cannot become code. Only .NET calls are used, so an execution policy or a missing
+// module changes nothing. A machine locked to Constrained Language Mode blocks those
+// calls, and then every folder is refused, which is the safe way to fail.
+function runPowerShell(script: string, paths: readonly string[]): string {
   const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
   if (systemRoot === undefined) throw new Error('SystemRoot is not set');
   const result = spawnSync(
@@ -58,7 +63,7 @@ function runPowerShell(script: string, path: string): string {
       encoding: 'utf8',
       timeout: POWERSHELL_TIMEOUT_MS,
       windowsHide: true,
-      env: { SystemRoot: systemRoot, SPLITTAP_ACL_PATH: path },
+      env: { SystemRoot: systemRoot, SPLITTAP_ACL_PATHS: paths.join(PATH_SEPARATOR) },
     },
   );
   if (result.error !== undefined || result.status !== 0) throw new Error('PowerShell could not complete');
@@ -66,25 +71,44 @@ function runPowerShell(script: string, path: string): string {
 }
 
 const CURRENT_USER = '[Security.Principal.WindowsIdentity]::GetCurrent().User.Value';
-const TARGET_PATH = "[Environment]::GetEnvironmentVariable('SPLITTAP_ACL_PATH')";
+const TARGET_PATHS = "[Environment]::GetEnvironmentVariable('SPLITTAP_ACL_PATHS')";
 
-export function readWindowsSecurity(path: string): { userSid: string; sddl: string } {
+/**
+ * One PowerShell start for every path, because each one costs about half a second. A path
+ * that has gone by the time it is read reports MISSING: SQLite removes its sidecar files
+ * when the last connection closes. Any other failure fails the whole read.
+ */
+function readDescriptors(paths: readonly string[]): { userSid: string; descriptors: string[] } {
+  if (paths.some((path) => path.includes(PATH_SEPARATOR))) throw new Error('A path cannot be passed safely');
   const output = runPowerShell(
     `[Console]::Out.WriteLine(${CURRENT_USER});`
-    + `[Console]::Out.WriteLine([IO.Directory]::GetAccessControl(${TARGET_PATH},'Owner,Access').GetSecurityDescriptorSddlForm('Owner,Access'))`,
-    path,
+    + `foreach($p in ${TARGET_PATHS}.Split('${PATH_SEPARATOR}')){`
+    + `try{$d=[IO.Directory]::GetAccessControl($p,'Owner,Access').GetSecurityDescriptorSddlForm('Owner,Access')}`
+    + `catch{if([IO.File]::Exists($p) -or [IO.Directory]::Exists($p)){throw};$d='${MISSING}'};`
+    + '[Console]::Out.WriteLine($d)}',
+    paths,
   );
-  const [userSid, sddl] = output.trim().split(/\r?\n/);
-  if (userSid === undefined || sddl === undefined) throw new Error('PowerShell returned an unexpected shape');
+  const [userSid, ...descriptors] = output.trim().split(/\r?\n/);
+  if (userSid === undefined || descriptors.length !== paths.length) throw new Error('PowerShell returned an unexpected shape');
+  return { userSid, descriptors };
+}
+
+export function readWindowsSecurity(path: string): { userSid: string; sddl: string } {
+  const { userSid, descriptors: [sddl] } = readDescriptors([path]);
+  if (sddl === undefined || sddl === MISSING) throw new Error('The path could not be read');
   return { userSid, sddl };
 }
 
-export function inspectWindowsDirectory(path: string): DirectoryVerdict {
+/** A verdict for each path. If the read fails, every path is unverifiable. */
+export function inspectWindowsPaths(paths: readonly string[]): Map<string, PathVerdict> {
   try {
-    const { userSid, sddl } = readWindowsSecurity(path);
-    return evaluateDirectorySecurity(sddl, userSid);
+    const { userSid, descriptors } = readDescriptors(paths);
+    return new Map(paths.map((path, index) => {
+      const sddl = descriptors[index]!;
+      return [path, sddl === MISSING ? 'missing' : evaluateDirectorySecurity(sddl, userSid)];
+    }));
   } catch {
-    return 'unverifiable';
+    return new Map(paths.map((path) => [path, 'unverifiable']));
   }
 }
 
@@ -99,7 +123,7 @@ export function createWindowsPrivateDirectory(path: string): void {
     `$u=${CURRENT_USER};`
     + '$s=[Security.AccessControl.DirectorySecurity]::new();'
     + `$s.SetSecurityDescriptorSddlForm('O:'+$u+'D:PAI(A;OICI;FA;;;'+$u+')(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)');`
-    + `[void][IO.Directory]::CreateDirectory(${TARGET_PATH},$s)`,
-    path,
+    + `[void][IO.Directory]::CreateDirectory(${TARGET_PATHS},$s)`,
+    [path],
   );
 }
