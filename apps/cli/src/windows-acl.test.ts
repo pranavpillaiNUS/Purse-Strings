@@ -19,6 +19,17 @@ test('an owner other than the user, SYSTEM or Administrators is refused', () => 
   assert.equal(evaluateDirectorySecurity(`O:SY${acl}`, USER), 'ok');
 });
 
+test('the built-in Administrator account counts as Administrators, as an owner and in an entry', () => {
+  // How a folder reads back when the current user is that account, as on GitHub's Windows runners.
+  const admin = 'S-1-5-21-1111111111-2222222222-3333333333-500';
+  const sddl = 'O:LAD:P(A;OICI;FA;;;LA)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)';
+  assert.equal(evaluateDirectorySecurity(sddl, admin), 'ok');
+  // Other short forms stay refused: they name groups or accounts this check does not trust.
+  assert.equal(evaluateDirectorySecurity(`O:LG${`D:P(A;;FA;;;${USER})`}`, USER), 'foreign_owner');
+  assert.equal(evaluateDirectorySecurity(`${owner}D:P(A;;FA;;;LG)`, USER), 'too_open');
+  assert.equal(evaluateDirectorySecurity(`${owner}D:P(A;;FA;;;DU)`, USER), 'too_open');
+});
+
 test('any allow entry for anyone else is refused, even read-only, inherited or inherit-only', () => {
   for (const ace of [
     '(A;OICI;FA;;;WD)', // Everyone

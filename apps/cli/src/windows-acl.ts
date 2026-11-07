@@ -16,7 +16,9 @@ import { join } from 'node:path';
 
 const SYSTEM_SID = 'S-1-5-18';
 const ADMINISTRATORS_SID = 'S-1-5-32-544';
-const SDDL_ALIASES: Readonly<Record<string, string>> = { SY: SYSTEM_SID, BA: ADMINISTRATORS_SID };
+// LA is the built-in Administrator account, which always belongs to Administrators.
+// SDDL writes that account as LA even when the current user is that account.
+const SDDL_ALIASES: Readonly<Record<string, string>> = { SY: SYSTEM_SID, BA: ADMINISTRATORS_SID, LA: ADMINISTRATORS_SID };
 const POWERSHELL_TIMEOUT_MS = 15_000;
 
 export type DirectoryVerdict = 'ok' | 'foreign_owner' | 'too_open' | 'unverifiable';
