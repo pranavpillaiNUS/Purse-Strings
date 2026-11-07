@@ -14,6 +14,7 @@ using fake providers.
 - [Architecture and implementation status](docs/architecture.md)
 - [Backend delivery: specification, wire API and evidence](docs/backend-delivery-review.md)
 - [Instructions for coding agents](AGENTS.md)
+- [Setting up a new device](docs/new-device-setup.md)
 - [Original hackathon plan](docs/hackathon-plan.md) — historical, superseded by scope
 
 ## Run
@@ -168,6 +169,9 @@ npm.cmd run --silent backend -- --db .runtime/app.db --config $config mandate-co
 # A compromised model obeys the hostile listing. Everything is refused, nothing reserved.
 npm.cmd run --silent shop -- run --run-id compromised --mandate-id engineering-hires-demo --backend-db .runtime/app.db --backend-config $config --scripted services/agent/fixtures/compromised-shopping-calls.json
 
+# Store-b removes the listing. Live Claude would not buy from it while the listing was there.
+npm.cmd run --silent cli -- store reset --catalog services/suppliers/state/store-b.json --seed store-b --now $now
+
 # An honest run compares both stores and reserves the cheaper cart. Prints the operation ID.
 npm.cmd run --silent shop -- run --run-id demo --mandate-id engineering-hires-demo --backend-db .runtime/app.db --backend-config $config --scripted services/agent/fixtures/demo-shopping-calls.json
 
@@ -179,7 +183,20 @@ npm.cmd run --silent backend -- --db .runtime/app.db --config $config audit --id
 To use Claude, add `ANTHROPIC_API_KEY` to `.env` and drop `--scripted`. Delete `.runtime/`
 and the `state` files to start again. Change a store between runs with `store set`: a
 shipping jump, for example, makes the checker reject a cart the model had estimated
-within budget.
+within budget. This walkthrough uses dated fixtures, which stop working after November 16,
+2026. The demo flow below generates its dates.
+
+## Demo flow
+
+`npm run demo:flow` runs the whole story with every date generated from today: the control
+panel, a plain-English request, confirmation, a hostile listing, a store change that gets a
+cart rejected followed by recovery, and execution over fake providers. It needs no key or
+network. Add `--live` for Claude, which spends API credit, and `--pause` for recording. The
+scene-by-scene recording plan is in [the demo script](docs/demo-script.md).
+
+**It stops at scene 3 on Windows**, because of the same
+[runtime-directory check](services/agent/CONFIRMATION_HANDOFF.md#blocked-on-windows). So far
+it has run only in a temporary Windows copy with that check skipped, never on Linux or macOS.
 
 ## Status
 
@@ -191,10 +208,11 @@ backend CLI (`npm run backend`) with local operator confirmation and durable exe
 over fake providers; see [its limits](services/checker/src/ledger/README.md). The
 bounded shopper worker (`npm run shop`) submits through the shared client to that
 backend. It is tested with scripted models against the real checker core, and has had
-four live Claude runs so far, all against the contract mock, two of them with both stores
-and the hostile listing. Mandates can also be drafted from plain English (`npm run shop --
-draft`), which has had two live Claude runs. The original sandbox PayPal client, money
-helpers and spike remain intact. Unit 4 adds a separate PayPal gateway
+six live Claude runs so far: four against the contract mock and two against the real backend
+in a temporary copy with its Windows check skipped. Mandates can also be drafted from plain
+English (`npm run shop -- draft`), which has had three live Claude runs. `npm run demo:flow`
+runs the whole story. The original sandbox PayPal client, money helpers and spike remain
+intact. Unit 4 adds a separate PayPal gateway
 ([docs/backend-api.md](docs/backend-api.md#unit-4-paypal-gateway-contract-only--not-wired-into-execution))
 with capture/refund read-and-write contracts — sandbox host only, injected fetch,
 finite timeouts, `SGD`/minor-unit money at the edge — proven by fetch-mocked tests

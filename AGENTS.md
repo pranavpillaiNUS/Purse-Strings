@@ -31,6 +31,7 @@ Everything runnable is a simulation: no real money, suppliers or orders.
 | `npm run cli` | Offline eligibility (`check`, `demo`), fixture-store controls (`store`), deterministic mandate planning (`mandate draft/review`) |
 | `npm run backend` | SQLite ledger with atomic budget and quantity reservations, local operator confirmation, and durable execution with crash recovery over **fake** payment and supplier providers |
 | `npm run shop` | The bounded shopper (`run`): a model or a scripted stand-in proposes price-free carts to that backend through the shared client. Mandate drafting (`draft`): a model turns a plain-English request into a policy-checked draft |
+| `npm run demo:flow` | The whole story in one command, with dates generated from today: control panel, plain-English request, confirmation, hostile listing, store change, rejection and recovery, and execution over **fake** providers. `--live` uses Claude. See `docs/demo-script.md` |
 | `npm run spike:paypal` | A separate, interactive PayPal sandbox spike connected to none of the above. `docs/paypal-spike.md` records no results yet |
 
 **Not built:** PayPal in the purchase path, real suppliers, stock attestation and assignment, CLI approvals and exceptions, delivery and readiness tracking,
@@ -46,7 +47,7 @@ commands and proof-class distinctions live in `docs/backend-delivery-review.md`.
 
 **Known problem:** on Windows, `apps/cli/src/backend.ts` refuses its runtime directory after
 first use because of a POSIX permission check, and 8 tests in
-`apps/cli/src/backend.test.ts` fail. Issue #9 tracks the fix. Report these as already known, and do not weaken the
+`apps/cli/src/backend.test.ts` fail. Issue #9 tracks the fix, and `npm run demo:flow` stops there too until then. Report these as already known, and do not weaken the
 check without Role A's agreement. Details are in `services/agent/CONFIRMATION_HANDOFF.md`.
 
 ## Team, ownership and branches
@@ -136,7 +137,8 @@ aim to reach them.
 - Do not run the interactive PayPal spike just to validate code. It creates sandbox
   holds/captures and requires a buyer. Never use live credentials in this stage.
 - Do not run the shopper against a live model just to validate code, because it spends the
-  user's API credit. `npm run shop -- run --scripted FILE` needs no key or network.
+  user's API credit. `npm run shop -- run --scripted FILE` and `npm run demo:flow` without
+  `--live` need no key or network.
 
 ## Purchasing invariants
 

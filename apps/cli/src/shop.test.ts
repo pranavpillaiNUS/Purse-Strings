@@ -15,7 +15,7 @@ import { createApplicationBackend } from '../../../services/checker/src/applicat
 import { confirmMandateRevision, definePolicySnapshot, draftMandateRevision } from '../../../services/checker/src/authority.ts';
 import { openLedgerStore } from '../../../services/checker/src/ledger/store.ts';
 import { evaluatePurchase } from '../../../services/checker/src/rules/evaluate.ts';
-import { applyFixtureChanges } from '../../../services/suppliers/src/control.ts';
+import { applyFixtureChanges, stampObservations } from '../../../services/suppliers/src/control.ts';
 import { createFixtureSupplier } from '../../../services/suppliers/src/fixture.ts';
 
 // Both halves together: the shopper worker against the real checker core and a real
@@ -140,6 +140,19 @@ test('a shipping jump after the estimate is rejected by the checker, and the wor
   assert.equal(report.progress.rejected.length, 1);
   assert.equal(report.progress.rejected[0]!.code, 'BUDGET_EXCEEDED');
   assert.ok(report.progress.rejected[0]!.checkCodes.includes('BUDGET'));
+  assert.deepEqual(acceptedTotals(report), [751010]);
+  assert.equal((await totals()).reservedMinor, 751010);
+});
+
+test('records past the evidence limit are rejected by the checker, and the bundled script recovers at the other store', async (t) => {
+  // 75 hours before NOW. The policy limit is 72, which the model is not told.
+  const staleB = stampObservations(storeB(), '2026-11-01T06:00:00Z');
+  const { transport, totals } = ledger(t, [storeA(), staleB]);
+  const report = await shop(transport, fixture('services/agent/fixtures/recovery-shopping-calls.json') as ScriptedStep[], 'recovery');
+  assert.equal(report.outcome, 'completed');
+  assert.equal(report.progress.rejected.length, 1);
+  assert.equal(report.progress.rejected[0]!.code, 'MANDATORY_EVIDENCE_UNKNOWN');
+  assert.equal(report.progress.rejected[0]!.cart.supplierId, 'store-b');
   assert.deepEqual(acceptedTotals(report), [751010]);
   assert.equal((await totals()).reservedMinor, 751010);
 });
