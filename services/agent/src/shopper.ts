@@ -50,7 +50,7 @@ export type ShoppingToolErrorCode =
   | 'INVALID_TOOL_CALL' | 'TOOL_LIMIT' | 'TOOL_BUSY' | 'SESSION_COMPLETE'
   | 'SUPPLIER_NOT_ALLOWED' | 'REQUIREMENT_NOT_FOUND' | 'SKU_NOT_ALLOWED'
   | 'SKU_UNAVAILABLE' | 'QUANTITY_EXCEEDED' | 'CATALOG_UNAVAILABLE'
-  | 'INVALID_CATALOG' | 'CATALOG_TIMEOUT' | 'CART_NOT_FOUND' | 'SUBMISSION_UNRESOLVED';
+  | 'INVALID_CATALOG' | 'CATALOG_TIMEOUT' | 'CART_NOT_FOUND' | 'SUBMISSION_UNRESOLVED' | 'SUBMISSION_NOT_RECORDED';
 
 export class ShoppingToolError extends Error {
   readonly code: ShoppingToolErrorCode;
@@ -72,6 +72,18 @@ export type ProposalOutcome =
   | { kind: 'rejected'; code: BackendErrorCode; message: string; checkCodes: string[] }
   | { kind: 'refused'; code: BackendErrorCode; message: string }
   | { kind: 'unknown' };
+
+/**
+ * Carts whose outcome is not known, kept outside this process. The host supplies it,
+ * because agent code has no filesystem access of its own.
+ */
+export interface SubmissionJournal {
+  /** A record that can't be read throws, because guessing could reserve twice. */
+  pending(): CartSubmission[];
+  /** Before the request goes out, so a crash during it leaves the record. */
+  save(cart: CartSubmission): void;
+  clear(cartId: string): void;
+}
 
 export interface ProposalPort {
   submit(cart: CartSubmission): Promise<ProposalOutcome>;
@@ -174,6 +186,7 @@ interface SessionConfig {
   catalogTimeoutMs: number;
   maxCarts: number;
   submit(cart: CartSubmission): Promise<Submission>;
+  journal?: SubmissionJournal | undefined;
 }
 
 function createSession(config: SessionConfig, catalogs: CatalogSource) {
@@ -322,12 +335,18 @@ function createSession(config: SessionConfig, catalogs: CatalogSource) {
             ? 'Submit must retry the cart whose outcome is unknown'
             : 'Submit requires the current cart.build identity');
         }
+        try {
+          config.journal?.save(target);
+        } catch {
+          throw new ShoppingToolError('SUBMISSION_NOT_RECORDED', 'The submission could not be recorded, so it was not sent');
+        }
         const submission = await config.submit(target);
         if (submission.kind === 'proposal-outcome-unknown') {
           unresolved = target;
           cart = undefined;
           return submitOutput(submission);
         }
+        config.journal?.clear(target.id);
         unresolved = undefined;
         cart = undefined;
         if (submission.kind === 'proposal-rejected') rejected.push(submission);
@@ -423,7 +442,7 @@ const ACCEPTED_NOTE = 'Reservation only. This is not payment, an order or delive
  */
 export function createShoppingSession(
   rawInput: unknown,
-  ports: { catalogs: CatalogSource; proposals: ProposalPort },
+  ports: { catalogs: CatalogSource; proposals: ProposalPort; journal?: SubmissionJournal | undefined },
 ): ShoppingSession {
   const { mandate, snapshot, runId, maxToolCalls, catalogTimeoutMs, submitTimeoutMs, maxCarts } = SessionInputSchema.parse(rawInput);
 
@@ -444,7 +463,7 @@ export function createShoppingSession(
   }
 
   return createSession({
-    mandate, snapshot, runId, maxToolCalls, catalogTimeoutMs, maxCarts,
+    mandate, snapshot, runId, maxToolCalls, catalogTimeoutMs, maxCarts, journal: ports.journal,
     async submit(cart) {
       const outcome = await boundedSubmit(cart);
       switch (outcome.kind) {

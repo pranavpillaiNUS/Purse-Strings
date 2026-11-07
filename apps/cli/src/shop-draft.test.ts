@@ -46,6 +46,9 @@ test('draft, then review: the files work with the existing commands and show the
   assert.match(result.stdout, /purchaseBy: No purchase deadline was given/);
   assert.match(result.stdout, /NOT captured[\s\S]*Reuse suitable stock first/);
   assert.match(result.stdout, /Draft only\. No mandate confirmed/);
+  assert.match(result.stdout, /budget: S\$8,000\.00 \(all-in\)/);
+  assert.match(result.stdout, /cap: S\$\d[\d,]*\.\d{2} each/);
+  assert.doesNotMatch(result.stdout, /SGD cents/);
 
   const artifact = MandateDraftSchema.parse(JSON.parse(readFileSync(draftFile, 'utf8')));
   assert.equal(artifact.origin?.requestedModel, 'scripted');

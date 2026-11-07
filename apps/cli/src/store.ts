@@ -4,6 +4,8 @@ import {
   loadFixtureCatalog, resetFixtureCatalog, updateFixtureCatalog,
 } from '../../../services/suppliers/src/control-files.ts';
 import type { Catalog } from '../../../packages/contracts/src/index.ts';
+import { formatSgd } from './format.ts';
+import { printableLine } from './mandate.ts';
 
 const HELP = `Synthetic fixture-store controls (offline only)
 
@@ -107,11 +109,11 @@ export function runStore(args: string[]): void {
     console.log(JSON.stringify({ mode: 'fixture-store', action, catalogPath: resolve(values.catalog), catalog }));
     return;
   }
-  console.log(`Fixture store ${catalog.supplierId} | ${action} | ${resolve(values.catalog)}`);
-  console.log(`  shipping: ${catalog.shippingMinor} SGD cents`);
+  console.log(`Fixture store ${printableLine(catalog.supplierId)} | ${action} | ${resolve(values.catalog)}`);
+  console.log(`  shipping: ${formatSgd(catalog.shippingMinor)}`);
   console.log(`  delivery by: ${catalog.delivery.by} | evidence: ${catalog.delivery.evidence.status}`);
   for (const product of catalog.products) {
-    console.log(`  ${product.sku}: ${product.unitPriceMinor} SGD cents | stock: ${product.availableUnits}`);
+    console.log(`  ${printableLine(product.sku)}: ${formatSgd(product.unitPriceMinor)} | stock: ${product.availableUnits}`);
   }
   console.log('Synthetic supplier state only. No stock reserved, order placed or payment made.');
 }

@@ -14,11 +14,12 @@ using fake providers.
 - [Architecture and implementation status](docs/architecture.md)
 - [Backend delivery: specification, wire API and evidence](docs/backend-delivery-review.md)
 - [Instructions for coding agents](AGENTS.md)
+- [Setting up a new device](docs/new-device-setup.md)
 - [Original hackathon plan](docs/hackathon-plan.md) — historical, superseded by scope
 
 ## Run
 
-Requires Node 24+ and npm. No API keys or network calls are used by the offline commands.
+Requires Node 24.15+ or 26+, and npm. No API keys or network calls are used by the offline commands.
 
 ```sh
 npm ci
@@ -146,10 +147,21 @@ carts. The checker prices each cart independently and reserves budget in its led
 reservation is not payment, an order or delivery. Limits, tools, outcomes and what is
 still unproven are in the [agent README](services/agent/README.md#the-shopper).
 
-This PowerShell walkthrough uses the scripted model, so it needs no API key. **It stops
-at the second backend command on Windows**, because of the runtime-directory check
-described in the [handoff](services/agent/CONFIRMATION_HANDOFF.md#blocked-on-windows).
-The contract-mock command in the agent README works everywhere.
+A run closes with a [review](services/agent/README.md#what-a-run-prints): the outcome, a
+budget bar, requirement coverage, what the checker decided per store in plain language,
+refused attempts with reasons, and the exact command for the operator's next step. `--json`
+prints only the worker's report. `npm run shop -- status` is a
+[read-only view](services/agent/README.md#read-only-status) of the same ledger numbers and of
+named operations, with no model or key.
+
+`--brief` on `shop run` keeps the facts while shortening the review for a recording;
+it cannot be combined with `--json`. The bars show money and units **allocated**,
+meaning reserved or committed, not delivered. A reservation sets budget aside; it makes no payment.
+
+This PowerShell walkthrough uses the scripted model, so it needs no API key. The backend
+keeps its state in `.runtime/backend/`, a private folder it creates itself, and refuses an
+existing folder with wider access. If that happens, delete the folder and run the command
+again. [The backend API](docs/backend-api.md#private-runtime-folders) has the exact rules.
 
 ```powershell
 $now = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -161,25 +173,44 @@ npm.cmd run --silent cli -- store reset --catalog services/suppliers/state/store
 
 # Plan, then the operator stores, reviews and confirms the exact revision.
 npm.cmd run --silent cli -- mandate draft --request services/agent/fixtures/demo-hire-request.json --now $now --proposal-out services/agent/state/proposal.json
-$draft = npm.cmd run --silent backend -- --db .runtime/app.db --config $config mandate-draft --file services/agent/state/proposal.json | ConvertFrom-Json
-npm.cmd run --silent backend -- --db .runtime/app.db --config $config mandate-review --id engineering-hires-demo --revision 1
-npm.cmd run --silent backend -- --db .runtime/app.db --config $config mandate-confirm --id engineering-hires-demo --revision 1 --digest $draft.digest
+$draft = npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config mandate-draft --file services/agent/state/proposal.json | ConvertFrom-Json
+npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config mandate-review --id engineering-hires-demo --revision 1
+npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config mandate-confirm --id engineering-hires-demo --revision 1 --digest $draft.digest
 
 # A compromised model obeys the hostile listing. Everything is refused, nothing reserved.
-npm.cmd run --silent shop -- run --run-id compromised --mandate-id engineering-hires-demo --backend-db .runtime/app.db --backend-config $config --scripted services/agent/fixtures/compromised-shopping-calls.json
+npm.cmd run --silent shop -- run --run-id compromised --mandate-id engineering-hires-demo --backend-db .runtime/backend/app.db --backend-config $config --scripted services/agent/fixtures/compromised-shopping-calls.json
+
+# Store-b removes the listing. Live Claude would not buy from it while the listing was there.
+npm.cmd run --silent cli -- store reset --catalog services/suppliers/state/store-b.json --seed store-b --now $now
 
 # An honest run compares both stores and reserves the cheaper cart. Prints the operation ID.
-npm.cmd run --silent shop -- run --run-id demo --mandate-id engineering-hires-demo --backend-db .runtime/app.db --backend-config $config --scripted services/agent/fixtures/demo-shopping-calls.json
+npm.cmd run --silent shop -- run --run-id demo --mandate-id engineering-hires-demo --backend-db .runtime/backend/app.db --backend-config $config --scripted services/agent/fixtures/demo-shopping-calls.json
+
+# A read-only look: the ledger's numbers and this operation, with each fact on its own line.
+npm.cmd run --silent shop -- status --mandate-id engineering-hires-demo --backend-db .runtime/backend/app.db --backend-config $config --operation OPERATION_ID
 
 # Only the operator's backend process executes, here against fake providers.
-npm.cmd run --silent backend -- --db .runtime/app.db --config $config operation-run --id OPERATION_ID
-npm.cmd run --silent backend -- --db .runtime/app.db --config $config audit --id OPERATION_ID
+npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config operation-run --id OPERATION_ID
+npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config audit --id OPERATION_ID
 ```
 
 To use Claude, add `ANTHROPIC_API_KEY` to `.env` and drop `--scripted`. Delete `.runtime/`
 and the `state` files to start again. Change a store between runs with `store set`: a
 shipping jump, for example, makes the checker reject a cart the model had estimated
-within budget.
+within budget. This walkthrough uses dated fixtures, which stop working after November 16,
+2026. The demo flow below generates its dates.
+
+## Demo flow
+
+`npm run demo:flow` runs the whole story with every date generated from today: the control
+panel, a plain-English request, confirmation, a hostile listing, a store change that gets a
+cart rejected followed by recovery, and execution over fake providers. It needs no key or
+network. Add `--live` for Claude, which spends API credit, and `--pause` for recording. The
+scene-by-scene recording plan is in [the demo script](docs/demo-script.md).
+
+The scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and on macOS with
+Node 26. Live Claude has run it only in temporary Windows copies with the backend's folder check
+skipped.
 
 ## Status
 
@@ -191,10 +222,11 @@ backend CLI (`npm run backend`) with local operator confirmation and durable exe
 over fake providers; see [its limits](services/checker/src/ledger/README.md). The
 bounded shopper worker (`npm run shop`) submits through the shared client to that
 backend. It is tested with scripted models against the real checker core, and has had
-four live Claude runs so far, all against the contract mock, two of them with both stores
-and the hostile listing. Mandates can also be drafted from plain English (`npm run shop --
-draft`), which has had two live Claude runs. The original sandbox PayPal client, money
-helpers and spike remain intact. Unit 4 added a separate PayPal gateway
+eight live Claude runs so far: four against the contract mock and four against the real backend
+in temporary copies with its Windows check skipped. Mandates can also be drafted from plain
+English (`npm run shop -- draft`), which has had four live Claude runs. `npm run demo:flow`
+runs the whole story. The original sandbox PayPal client, money helpers and spike remain
+intact. Unit 4 added a separate PayPal gateway, since wired into execution
 ([docs/backend-api.md](docs/backend-api.md#paypal-gateway-unit-4-contract--unit-5-sandbox-additions))
 with capture/refund read-and-write contracts — sandbox host only, injected fetch,
 finite timeouts, `SGD`/minor-unit money at the edge — proven by fetch-mocked tests

@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import type { BackendClient } from '../../../packages/contracts/src/client.ts';
-import type { BackendErrorCode, BackendRequest } from '../../../packages/contracts/src/backend.ts';
+import type { BackendErrorCode, BackendRequest, BackendResponse } from '../../../packages/contracts/src/backend.ts';
+import type { CartSubmission } from '../../../packages/contracts/src/index.ts';
 import type { CatalogSource } from '../../suppliers/src/catalog.ts';
 import {
   createShoppingSession,
-  type ProposalOutcome, type ProposalPort, type ShoppingSession,
+  type ProposalOutcome, type ProposalPort, type ShoppingSession, type SubmissionJournal,
 } from './shopper.ts';
 
 // This module is the agent's only route to the backend. It speaks the shared client
@@ -43,11 +44,22 @@ export function proposalIdempotencyKey(cartId: string): string {
   return `shop:${cartId}`;
 }
 
+function proposalOutcome(response: BackendResponse): ProposalOutcome {
+  if (response.ok) {
+    if (response.method !== 'proposal.submit') return { kind: 'unknown' };
+    return { kind: 'accepted', operation: response.result.operation };
+  }
+  const { code, message, details } = response.error;
+  if (REJECTION_CODES.has(code)) return { kind: 'rejected', code, message, checkCodes: details.checkCodes };
+  if (INDETERMINATE_CODES.has(code)) return { kind: 'unknown' };
+  return { kind: 'refused', code, message };
+}
+
 /**
  * Starts a session from the backend's confirmed mandate and ledger totals. An
  * unconfirmed mandate fails here, so a draft cannot reach the shopper at all.
  */
-export async function createBackendShoppingSession(rawOptions: unknown, client: BackendClient): Promise<ShoppingSession> {
+export async function createBackendShoppingSession(rawOptions: unknown, client: BackendClient, journal?: SubmissionJournal): Promise<ShoppingSession> {
   const { mandateId, runId, maxToolCalls, maxCarts, catalogTimeoutMs, submitTimeoutMs } = SessionOptionsSchema.parse(rawOptions);
   let sequence = 0;
   const requestEnvelope = (): Pick<BackendRequest, 'apiVersion' | 'requestId'> => {
@@ -73,18 +85,10 @@ export async function createBackendShoppingSession(rawOptions: unknown, client: 
 
   const proposals: ProposalPort = {
     async submit(cart): Promise<ProposalOutcome> {
-      const response = await client.request({
+      return proposalOutcome(await client.request({
         ...requestEnvelope(), method: 'proposal.submit',
         params: { idempotencyKey: proposalIdempotencyKey(cart.id), cart },
-      });
-      if (response.ok) {
-        if (response.method !== 'proposal.submit') return { kind: 'unknown' };
-        return { kind: 'accepted', operation: response.result.operation };
-      }
-      const { code, message, details } = response.error;
-      if (REJECTION_CODES.has(code)) return { kind: 'rejected', code, message, checkCodes: details.checkCodes };
-      if (INDETERMINATE_CODES.has(code)) return { kind: 'unknown' };
-      return { kind: 'refused', code, message };
+      }));
     },
   };
 
@@ -92,5 +96,46 @@ export async function createBackendShoppingSession(rawOptions: unknown, client: 
     mandate, snapshot, runId, catalogTimeoutMs, submitTimeoutMs,
     ...(maxToolCalls === undefined ? {} : { maxToolCalls }),
     ...(maxCarts === undefined ? {} : { maxCarts }),
-  }, { catalogs, proposals });
+  }, { catalogs, proposals, journal });
+}
+
+export type ResentCart = (
+  | Extract<ProposalOutcome, { kind: 'accepted' | 'rejected' | 'refused' }>
+  | { kind: 'unknown' }
+) & { cart: CartSubmission };
+
+/**
+ * Sends every cart left unknown by an earlier run again, exactly as it was and with the same
+ * key, before anything else can happen on this mandate. No model is involved. The backend
+ * returns the original operation if one exists, including when the first request is still
+ * on its way, so this also recovers an operation ID nothing else could find.
+ */
+export async function resendUnresolvedCarts(
+  options: { runId: string; submitTimeoutMs?: number },
+  client: BackendClient,
+  journal: SubmissionJournal,
+): Promise<ResentCart[]> {
+  const resent: ResentCart[] = [];
+  for (const [index, cart] of journal.pending().entries()) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let outcome: ProposalOutcome;
+    try {
+      outcome = await Promise.race([
+        client.request({
+          apiVersion: '1', requestId: `${options.runId}-resend-${index + 1}`, method: 'proposal.submit',
+          params: { idempotencyKey: proposalIdempotencyKey(cart.id), cart },
+        }).then(proposalOutcome),
+        new Promise<ProposalOutcome>((settle) => {
+          timer = setTimeout(() => settle({ kind: 'unknown' }), options.submitTimeoutMs ?? 30_000);
+        }),
+      ]);
+    } catch {
+      outcome = { kind: 'unknown' };
+    } finally {
+      clearTimeout(timer);
+    }
+    if (outcome.kind !== 'unknown') journal.clear(cart.id);
+    resent.push({ ...outcome, cart });
+  }
+  return resent;
 }

@@ -30,7 +30,8 @@ Everything runnable is a simulation: no real money, suppliers or orders.
 | --- | --- |
 | `npm run cli` | Offline eligibility (`check`, `demo`), fixture-store controls (`store`), deterministic mandate planning (`mandate draft/review`) |
 | `npm run backend` | SQLite ledger with atomic budget and quantity reservations, local operator confirmation, and durable execution with crash recovery over **fake** payment and supplier providers; the backend config may additionally select `paymentProvider: "paypal-sandbox"` to route capture/refund effects through the sandbox gateway while the supplier order stays fake |
-| `npm run shop` | The bounded shopper (`run`): a model or a scripted stand-in proposes price-free carts to that backend through the shared client. Mandate drafting (`draft`): a model turns a plain-English request into a policy-checked draft |
+| `npm run shop` | The bounded shopper (`run`): a model or a scripted stand-in proposes price-free carts to that backend through the shared client, and the run closes with a plain-language review. Mandate drafting (`draft`): a model turns a plain-English request into a policy-checked draft. A read-only view (`status`) of ledger numbers and named operations, with no model or key |
+| `npm run demo:flow` | The whole story in one command, with dates generated from today: control panel, plain-English request, confirmation, hostile listing, store change, rejection and recovery, and execution over **fake** providers. `--live` uses Claude. See `docs/demo-script.md` |
 | `npm run spike:paypal` | A separate, interactive PayPal sandbox spike connected to none of the above. `docs/paypal-spike.md` records no results yet |
 
 **Not built (for real):** real money at a real supplier, real suppliers, stock attestation
@@ -53,10 +54,10 @@ fetch-mocked tests and fake-fetch child-process crash evidence; nothing is verif
 real PayPal account. A unit-4 four-method capture/refund/refund-read contract remains intact.
 Reproduction commands and proof-class distinctions live in `docs/backend-delivery-review.md`.
 
-**Known problem:** on Windows, `apps/cli/src/backend.ts` refuses its runtime directory after
-first use because of a POSIX permission check, and 8 tests in
-`apps/cli/src/backend.test.ts` fail. Issue #9 tracks the fix. Report these as already known, and do not weaken the
-check without Role A's agreement. Details are in `services/agent/CONFIRMATION_HANDOFF.md`.
+**Runtime folders:** the backend refuses a runtime folder other accounts can reach. On Windows it
+reads the real owner and access list (`apps/cli/src/windows-acl.ts`) and refuses what it can't
+verify. Do not weaken either check without Role A's agreement. The rules and limits are in
+`docs/backend-api.md`.
 
 ## Team, ownership and branches
 
@@ -67,7 +68,7 @@ which person you are working for, ask.
 | --- | --- |
 | `services/checker/` (rules, ledger, execution worker, PayPal client and spike), payment execution, audit log, approval and exception flow | Role A, Money: Danny |
 | `services/suppliers/` (stores, fixtures, control panel), `services/agent/` (mandate drafting, bounded shopper) | Role B, Shopping: Pranav |
-| `apps/cli/` | Shared. Each role adds commands for its own features: `backend.ts` is Role A; `store.ts`, `mandate.ts`, `shop.ts` and `backend-transport.ts` are Role B. Tell the other person before changing shared parsing or output code. |
+| `apps/cli/` | Shared. Each role adds commands for its own features: `backend.ts` and `windows-acl.ts` are Role A; `store.ts`, `mandate.ts`, `shop.ts` and `backend-transport.ts` are Role B. Tell the other person before changing shared parsing or output code. |
 | `packages/contracts/` | Shared. Changes need agreement from both people. |
 | `config/`, `examples/`, `docs/`, root config files, this file | Shared. Tell the other person about changes. |
 
@@ -110,7 +111,8 @@ drafting and confirmation (deterministic draft/review, model drafting from a pla
 request (`shop draft`) and the file handoff to the backend exist); 3) the agent with its bounded
 tools (`npm run shop` exists; for what live runs have shown, see
 `services/agent/README.md`); 4) review and dashboard output, as CLI output until both people
-agree to start the stage-two website (`shop run` prints a run report); 5) a prompt-injection
+agree to start the stage-two website (`shop run` closes with a review and `shop status` is a
+read-only view; neither approves, excepts or executes anything); 5) a prompt-injection
 listing for the demo (the seed and a scripted compromised run exist).
 
 | Target date | Milestone |
@@ -145,7 +147,8 @@ aim to reach them.
 - Do not run the interactive PayPal spike just to validate code. It creates sandbox
   holds/captures and requires a buyer. Never use live credentials in this stage.
 - Do not run the shopper against a live model just to validate code, because it spends the
-  user's API credit. `npm run shop -- run --scripted FILE` needs no key or network.
+  user's API credit. `npm run shop -- run --scripted FILE` and `npm run demo:flow` without
+  `--live` need no key or network.
 
 ## Purchasing invariants
 
@@ -193,7 +196,7 @@ aim to reach them.
 
 - Inspect `git status` and applicable instructions before editing. Preserve unrelated
   work and the existing PayPal spike unless the task requires a change.
-- Use Node 24+, erasable TypeScript and ESM. Validate external data with runtime
+- Use Node 24.15+ or 26+, erasable TypeScript and ESM. Validate external data with runtime
   schemas; TypeScript types do not validate model, file or network input.
 - CLI parsing/output lives in `apps/cli/`; pure policy checks in
   `services/checker/src/rules/`; suppliers in `services/suppliers/`; model calls in

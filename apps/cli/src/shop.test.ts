@@ -7,15 +7,20 @@ import test, { type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createBackendClient, type BackendTransport } from '../../../packages/contracts/src/client.ts';
 import { CatalogSchema, MandateSchema, PolicySchema, type Catalog } from '../../../packages/contracts/src/index.ts';
-import { BackendSessionError, createBackendShoppingSession } from '../../../services/agent/src/backend-session.ts';
+import { createMockBackend } from '../../../packages/contracts/src/mock.ts';
+import { BackendSessionError, createBackendShoppingSession, resendUnresolvedCarts } from '../../../services/agent/src/backend-session.ts';
 import { createMandateDraft } from '../../../services/agent/src/mandate.ts';
 import { createScriptedModel, type ModelToolResult, type ScriptedStep } from '../../../services/agent/src/model.ts';
+import { buildRunReview, buildStatusView, groupCheckCodes } from '../../../services/agent/src/review.ts';
+import type { SubmissionJournal } from '../../../services/agent/src/shopper.ts';
 import { runShoppingWorker } from '../../../services/agent/src/worker.ts';
+import { readLedgerFacts, renderRunReview, renderStatus } from './review-output.ts';
+import { createFileSubmissionJournal } from './submission-journal.ts';
 import { createApplicationBackend } from '../../../services/checker/src/application.ts';
 import { confirmMandateRevision, definePolicySnapshot, draftMandateRevision } from '../../../services/checker/src/authority.ts';
 import { openLedgerStore } from '../../../services/checker/src/ledger/store.ts';
 import { evaluatePurchase } from '../../../services/checker/src/rules/evaluate.ts';
-import { applyFixtureChanges } from '../../../services/suppliers/src/control.ts';
+import { applyFixtureChanges, stampObservations } from '../../../services/suppliers/src/control.ts';
 import { createFixtureSupplier } from '../../../services/suppliers/src/fixture.ts';
 
 // Both halves together: the shopper worker against the real checker core and a real
@@ -144,6 +149,19 @@ test('a shipping jump after the estimate is rejected by the checker, and the wor
   assert.equal((await totals()).reservedMinor, 751010);
 });
 
+test('records past the evidence limit are rejected by the checker, and the bundled script recovers at the other store', async (t) => {
+  // 75 hours before NOW. The policy limit is 72, which the model is not told.
+  const staleB = stampObservations(storeB(), '2026-11-01T06:00:00Z');
+  const { transport, totals } = ledger(t, [storeA(), staleB]);
+  const report = await shop(transport, fixture('services/agent/fixtures/recovery-shopping-calls.json') as ScriptedStep[], 'recovery');
+  assert.equal(report.outcome, 'completed');
+  assert.equal(report.progress.rejected.length, 1);
+  assert.equal(report.progress.rejected[0]!.code, 'MANDATORY_EVIDENCE_UNKNOWN');
+  assert.equal(report.progress.rejected[0]!.cart.supplierId, 'store-b');
+  assert.deepEqual(acceptedTotals(report), [751010]);
+  assert.equal((await totals()).reservedMinor, 751010);
+});
+
 test('a mandate can draw on two suppliers when stock is short, with quantities counted across carts', async (t) => {
   const { transport, control, totals } = ledger(t, [storeA(), storeB()]);
   control('store-a', { product: { sku: 'LAP-14-AIR', availableUnits: 3 } });
@@ -182,6 +200,102 @@ test('unknown mandatory evidence blocks every supplier and reserves nothing', as
   const snapshot = await totals();
   assert.equal(snapshot.reservedMinor, 0);
   assert.deepEqual(snapshot.quantities.map(({ reserved }) => reserved), [0, 0]);
+});
+
+test('a restart while the first request is still outstanding resends the exact cart, and one operation results', async (t) => {
+  const { transport, totals, directory } = ledger(t, [storeA(), storeB()]);
+  const journal = createFileSubmissionJournal(join(directory, 'app.db'), mandateId);
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let lateAnswer: Promise<unknown> | undefined;
+  const delayed: BackendTransport = async (rpc) => {
+    if (rpc.method !== 'proposal.submit') return transport(rpc);
+    lateAnswer = held.then(() => transport(rpc));
+    return lateAnswer;
+  };
+
+  // The first process gives up on an answer while its request is still on the way.
+  const session = await createBackendShoppingSession({ mandateId, runId, submitTimeoutMs: 20 }, createBackendClient(delayed), journal);
+  const first = await runShoppingWorker(session, createScriptedModel([build('store-b', [laptops(), monitors()]), submit(1)]), { runId });
+  assert.equal(first.outcome, 'unknown_submission');
+  assert.deepEqual(journal.pending(), [first.progress.unresolved]);
+  assert.equal((await totals()).reservedMinor, 0, 'The ledger cannot show that this request has stopped');
+
+  // A restart, under another run ID, resends that cart rather than building a different one.
+  const resent = await resendUnresolvedCarts({ runId: 'restart' }, createBackendClient(transport), journal);
+  assert.equal(resent.length, 1);
+  const [answer] = resent;
+  if (answer?.kind !== 'accepted') assert.fail(`Expected accepted, got ${answer?.kind}`);
+  assert.deepEqual(answer.cart, first.progress.unresolved);
+  assert.deepEqual(journal.pending(), [], 'A definite answer settles the record');
+
+  // The first request finally lands, and it is the same operation.
+  release();
+  const late = await lateAnswer as { ok: boolean; result?: { operation?: { id: string } } };
+  assert.equal(late.ok, true);
+  assert.equal(late.result?.operation?.id, answer.operation.id);
+  const snapshot = await totals();
+  assert.equal(snapshot.reservedMinor, 724850);
+  assert.deepEqual(snapshot.quantities.map(({ reserved }) => reserved), [5, 5]);
+});
+
+test('an answer that stays unknown keeps the record, and a rejection clears it', async (t) => {
+  const { transport, control, totals, directory } = ledger(t, [storeA(), storeB()]);
+  const journal = createFileSubmissionJournal(join(directory, 'app.db'), mandateId);
+  const cart = { id: 'run-cart-1', mandateId, mandateVersion: 1, supplierId: 'store-b', lines: [laptops(), monitors()] };
+  journal.save(cart);
+  const down: BackendTransport = async () => { throw new Error('backend unreachable'); };
+  const still = await resendUnresolvedCarts({ runId: 'again' }, createBackendClient(down), journal);
+  assert.deepEqual(still.map(({ kind }) => kind), ['unknown']);
+  assert.deepEqual(journal.pending(), [cart]);
+
+  control('store-b', { deliveryEvidenceStatus: 'unknown' });
+  const rejected = await resendUnresolvedCarts({ runId: 'again' }, createBackendClient(transport), journal);
+  assert.deepEqual(rejected.map(({ kind }) => kind), ['rejected']);
+  assert.deepEqual(journal.pending(), []);
+  assert.equal((await totals()).reservedMinor, 0);
+});
+
+test('a session records a cart before sending it, keeps it while unknown, and clears it once settled', async (t) => {
+  const { transport, directory } = ledger(t, [storeA(), storeB()]);
+  const log: string[] = [];
+  const real = createFileSubmissionJournal(join(directory, 'app.db'), mandateId);
+  const journal: SubmissionJournal = {
+    pending: () => real.pending(),
+    save(cart) { log.push(`save ${cart.id}`); real.save(cart); },
+    clear(cartId) { log.push(`clear ${cartId}`); real.clear(cartId); },
+  };
+  let lose = true;
+  const lossy: BackendTransport = async (rpc) => {
+    if (rpc.method !== 'proposal.submit') return transport(rpc);
+    log.push('send');
+    const response = await transport(rpc);
+    if (lose) {
+      lose = false;
+      throw new Error('response lost');
+    }
+    return response;
+  };
+  const session = await createBackendShoppingSession({ mandateId, runId }, createBackendClient(lossy), journal);
+  const report = await runShoppingWorker(session, createScriptedModel([build('store-b', [laptops(), monitors()]), submit(1), submit(1)]), { runId });
+  assert.equal(report.outcome, 'completed');
+  assert.deepEqual(log, ['save run-cart-1', 'send', 'save run-cart-1', 'send', 'clear run-cart-1']);
+  assert.deepEqual(real.pending(), []);
+});
+
+test('a cart that cannot be recorded is not sent', async (t) => {
+  const { transport, totals } = ledger(t, [storeA(), storeB()]);
+  let sent = 0;
+  const counting: BackendTransport = async (rpc) => {
+    if (rpc.method === 'proposal.submit') sent += 1;
+    return transport(rpc);
+  };
+  const journal: SubmissionJournal = { pending: () => [], save() { throw new Error('disk full'); }, clear() {} };
+  const session = await createBackendShoppingSession({ mandateId, runId }, createBackendClient(counting), journal);
+  const report = await runShoppingWorker(session, createScriptedModel([build('store-b', [laptops(), monitors()]), submit(1)]), { runId });
+  assert.equal(sent, 0);
+  assert.equal(report.progress.accepted.length, 0);
+  assert.equal((await totals()).reservedMinor, 0);
 });
 
 test('a lost response cannot reserve twice: the retry resolves to the original operation', async (t) => {
@@ -336,6 +450,13 @@ const mock = [
   '--catalog', 'services/suppliers/fixtures/store-a.json',
 ];
 
+const practice = [
+  '--mandate-id', 'engineering-hires-practice',
+  '--mock-mandate', 'services/agent/fixtures/practice-mandate.json',
+  '--catalog', 'services/suppliers/fixtures/store-a.json',
+  '--catalog', 'services/suppliers/fixtures/store-b-hostile.json',
+];
+
 function scriptFile(t: TestContext, calls: unknown): string {
   const directory = mkdtempSync(join(tmpdir(), 'splittap-shop-cli-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -369,17 +490,229 @@ test('readable output states the simulation limits and shows hostile text inert'
   ]);
   const result = runShop(['run', '--run-id', 'readable', ...mock, '--scripted', script]);
   assert.equal(result.status, 2, result.stderr);
-  assert.doesNotMatch(result.stdout, /\u001b/);
+  assert.doesNotMatch(result.stdout, /\u001b|\[2J/);
   assert.match(result.stdout, /Outcome: no_feasible_cart/);
-  assert.match(result.stdout, /not payment, orders, delivery or equipment readiness/);
+  assert.match(result.stdout, /Simulation\. Reservations are not payment, orders, delivery or equipment readiness\./);
 });
 
-const practice = [
-  '--mandate-id', 'engineering-hires-practice',
-  '--mock-mandate', 'services/agent/fixtures/practice-mandate.json',
-  '--catalog', 'services/suppliers/fixtures/store-a.json',
-  '--catalog', 'services/suppliers/fixtures/store-b-hostile.json',
-];
+test('--json stays byte-compatible: the worker report and one newline, with no review', async () => {
+  const script = 'services/agent/fixtures/demo-shopping-calls.json';
+  const result = runShop(['run', '--run-id', 'demo', ...practice, '--scripted', script, '--json']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+
+  // The same run in-process, so any field added to the CLI's JSON fails this.
+  const backend = createMockBackend({
+    mandates: [fixture('services/agent/fixtures/practice-mandate.json')],
+    catalogs: [fixture('services/suppliers/fixtures/store-a.json'), fixture('services/suppliers/fixtures/store-b-hostile.json')],
+  } as Parameters<typeof createMockBackend>[0]);
+  const session = await createBackendShoppingSession({ mandateId: 'engineering-hires-practice', runId: 'demo' }, createBackendClient((request) => backend.handle(request)));
+  const report = await runShoppingWorker(session, createScriptedModel(fixture(script) as ScriptedStep[]), { runId: 'demo' });
+  assert.equal(result.stdout.replace(/\r\n/g, '\n'), `${JSON.stringify(report)}\n`);
+  assert.deepEqual(Object.keys(JSON.parse(result.stdout)), ['simulation', 'runId', 'mandateId', 'mandateVersion', 'outcome', 'detail', 'progress', 'usage', 'modelSummary']);
+  assert.doesNotMatch(result.stdout, /Review of run|Next step|S\$/);
+});
+
+test('human output closes with the review: S$, a budget bar, decisions, reasons and no scripted token counts', () => {
+  const honest = runShop(['run', '--run-id', 'demo', ...practice, '--scripted', 'services/agent/fixtures/demo-shopping-calls.json']);
+  assert.equal(honest.status, 0, honest.stderr);
+  assert.match(honest.stdout, /^Shopping run demo \| mandate engineering-hires-practice \| simulation/);
+  assert.match(honest.stdout, /= the mock accepted: S\$7,248\.50 \(it checks nothing\)/);
+  assert.match(honest.stdout, /Review of run demo/);
+  assert.match(honest.stdout, /scripted stand-in, not Claude/);
+  assert.match(honest.stdout, /\[#+-+\] S\$7,248\.50 of S\$8,000\.00 allocated/);
+  assert.match(honest.stdout, /store-a +demo-cart-1 +S\$7,510\.10 +Not sent/);
+  assert.match(honest.stdout, /store-b +demo-cart-2 +S\$7,248\.50 +Accepted +S\$7,248\.50/);
+  assert.match(honest.stdout, /Contract mock: it checks nothing/);
+  assert.doesNotMatch(honest.stdout, /token|SGD |\u001b/i);
+
+  const compromised = runShop(['run', '--run-id', 'compromised', ...practice, '--scripted', 'services/agent/fixtures/compromised-shopping-calls.json']);
+  assert.equal(compromised.status, 2, compromised.stderr);
+  assert.match(compromised.stdout, /> payment_capture\s+x refused: The shopper has no such tool\./);
+  assert.match(compromised.stdout, /> cart\.build store-b LAP-14-PRO x20\s+x refused: This product is not approved for that requirement\./);
+  assert.match(compromised.stdout, /Refused attempts \(7\)/);
+  assert.match(compromised.stdout, /Outcome: no_feasible_cart/);
+  assert.doesNotMatch(compromised.stdout, /x refused: [A-Z_]+\r?\n/);
+});
+
+test('shop run --brief shortens the review and changes neither the live lines nor the exit code', () => {
+  const script = 'services/agent/fixtures/compromised-shopping-calls.json';
+  const compromised = ['run', '--run-id', 'compromised', ...practice, '--scripted', script];
+  const full = runShop(compromised);
+  const brief = runShop([...compromised, '--brief']);
+  assert.equal(full.status, 2, full.stderr);
+  assert.equal(brief.status, full.status);
+  assert.equal(brief.stderr, '');
+
+  // The live lines are the same text, up to the review's rule.
+  const liveLines = (stdout: string) => stdout.split('====')[0]!;
+  assert.equal(liveLines(brief.stdout), liveLines(full.stdout));
+  assert.match(brief.stdout, /> payment_capture\s+x refused: The shopper has no such tool\./);
+
+  assert.match(brief.stdout, /Refused attempts: 7 \(each one is shown above\)/);
+  assert.doesNotMatch(brief.stdout, /Refused attempts \(7\)/);
+  assert.doesNotMatch(brief.stdout, /Usage:|Model summary|Scripted run finished|token/);
+  assert.match(brief.stdout, /S\$0\.00 of S\$8,000\.00 allocated/);
+  assert.match(brief.stdout, /Simulation\. Reservations are not payment, orders, delivery or equipment readiness\./);
+  assert.ok(brief.stdout.length < full.stdout.length);
+
+  // An accepted cart keeps its exit code and its table too, here against the mock.
+  const honest = runShop(['run', '--run-id', 'demo', ...practice, '--scripted', 'services/agent/fixtures/demo-shopping-calls.json', '--brief']);
+  assert.equal(honest.status, 0, honest.stderr);
+  assert.match(honest.stdout, /store-b +demo-cart-2 +S\$7,248\.50 +Accepted +S\$7,248\.50/);
+  assert.match(honest.stdout, /Nothing to execute: the contract mock has no execution step/);
+});
+
+test('--brief with --json is refused before anything runs, and --json alone is unaffected', () => {
+  const script = 'services/agent/fixtures/compromised-shopping-calls.json';
+  const both = runShop(['run', '--run-id', 'compromised', ...practice, '--scripted', script, '--brief', '--json']);
+  assert.equal(both.status, 1);
+  assert.equal(both.stdout, '');
+  assert.match(both.stderr, /--brief .* cannot be used with --json/);
+  const reversed = runShop(['run', '--json', '--brief', '--run-id', 'compromised', ...practice, '--scripted', script]);
+  assert.equal(reversed.status, 1);
+  assert.equal(reversed.stdout, '');
+  const json = runShop(['run', '--run-id', 'compromised', ...practice, '--scripted', script, '--json']);
+  assert.equal(json.status, 2);
+  assert.deepEqual(Object.keys(JSON.parse(json.stdout)), ['simulation', 'runId', 'mandateId', 'mandateVersion', 'outcome', 'detail', 'progress', 'usage', 'modelSummary']);
+
+  const help = runShop(['--help']);
+  assert.match(help.stdout, /--brief +A shorter review, for recording/);
+  assert.match(help.stdout, /--json refuses it/);
+  // It belongs to shop run only.
+  const status = runShop(['status', '--mandate-id', 'engineering-hires-practice', '--mock-mandate', 'services/agent/fixtures/practice-mandate.json', '--catalog', 'services/suppliers/fixtures/store-a.json', '--brief']);
+  assert.equal(status.status, 1);
+  assert.equal(status.stdout, '');
+  assert.equal(runShop(['draft', '--text', 'x', '--brief']).status, 1);
+});
+
+test('every check code the real checker can produce has plain wording', async () => {
+  // The rules record every check whatever the result, so a passing cart lists every code.
+  const mandate = MandateSchema.parse(fixture('services/agent/fixtures/practice-mandate.json'));
+  const submission = { id: 'wording', mandateId: mandate.id, mandateVersion: mandate.version, supplierId: 'store-a', lines: [laptops(), monitors()] };
+  const quote = await createFixtureSupplier(storeA()).quoteCart(submission, NOW);
+  const snapshot = { mandateId: mandate.id, mandateVersion: mandate.version, currency: 'SGD', committedMinor: 0, reservedMinor: 0, quantities: [] };
+  const { checks } = evaluatePurchase({ policy, mandate, submission, quote, snapshot, now: NOW });
+  assert.ok(checks.length > 20);
+  const codes = checks.map(({ code }) => code);
+  for (const prefix of ['BUDGET', 'QUANTITY:', 'STOCK:', 'UNIT_PRICE:', 'WARRANTY:', 'SKU:', 'DELIVERY', 'DELIVERY_EVIDENCE', 'PRODUCT_EVIDENCE:', 'STOCK_EVIDENCE:', 'QUOTE_TIMING', 'MANDATE_TIMING']) {
+    assert.ok(codes.some((code) => code.startsWith(prefix)), prefix);
+  }
+  for (const code of codes) {
+    assert.ok(groupCheckCodes([code]).every(({ recognized }) => recognized), `${code} has no plain wording`);
+  }
+});
+
+test('the review of a real rejection and recovery, with ledger numbers read back through the shared client', async (t) => {
+  const staleB = stampObservations(storeB(), '2026-11-01T06:00:00Z');
+  const { transport } = ledger(t, [storeA(), staleB]);
+  const client = createBackendClient(transport);
+  const events: unknown[] = [];
+  const session = await createBackendShoppingSession({ mandateId, runId: 'recovery' }, client);
+  const report = await runShoppingWorker(session, createScriptedModel(fixture('services/agent/fixtures/recovery-shopping-calls.json') as ScriptedStep[]), {
+    runId: 'recovery', onEvent: (event) => events.push(event),
+  });
+  const facts = await readLedgerFacts(client, mandateId, 'recovery-review');
+  assert.ok(facts);
+  const review = buildRunReview({ report, events, ledger: facts, backend: 'simulation-backend', shopper: { kind: 'scripted' }, budgetMinor: session.getContext().budgetMinor });
+  assert.deepEqual(review.decisions.map(({ supplierId, decision }) => [supplierId, decision]), [['store-b', 'rejected'], ['store-a', 'accepted']]);
+  assert.equal(review.budget.source, 'ledger');
+  assert.equal(review.budget.reservedMinor, 751010);
+  assert.equal(review.budget.remainingMinor, 48990);
+  assert.equal(review.budget.ledgerDiffersByMinor, null);
+
+  const text = renderRunReview(review, { color: false }).join('\n');
+  assert.match(text, /store-b +recovery-cart-1 +S\$7,248\.50 +Rejected/);
+  assert.match(text, /store-a +recovery-cart-2 +S\$7,510\.10 +Reserved +S\$7,510\.10/);
+  assert.match(text.replace(/\s+/g, ' '), /Product and stock records for LAP-14-AIR and MON-27-USBC, and the delivery record, are missing, stale or unverified/);
+  // The module cannot know why: age is a fact only the demo's narration has.
+  assert.doesNotMatch(text, /hours|MANDATORY_EVIDENCE_UNKNOWN \|/);
+  assert.match(text, /\[#+-+\] S\$7,510\.10 of S\$8,000\.00 allocated/);
+  assert.match(text, /Reserved +S\$7,510\.10/);
+  assert.match(text, /Remaining +S\$489\.90/);
+
+  // The status view of the same ledger, through the same two read methods.
+  const operationId = review.operationsToRun[0]!;
+  assert.ok(operationId);
+  const read = await client.request({ apiVersion: '1', requestId: 'status-1', method: 'operation.get', params: { mandateId, mandateVersion: 1, operationId } });
+  if (!read.ok || read.method !== 'operation.get') assert.fail('Operation read failed');
+  const status = renderStatus(buildStatusView({ ledger: facts!, operations: [read.result.operation], backend: 'simulation-backend' }), { color: false }).join('\n');
+  assert.match(status, /5 of 5 allocated \| 0 committed \| 5 reserved/);
+  assert.match(status, /Status +reserved: budget set aside; nothing has been executed/);
+  assert.match(status, /Fake payment +not started/);
+  assert.match(status, /Fake order +not started/);
+  assert.match(status, /Fake refund +not started/);
+  assert.match(status, /Readiness +not assessed/);
+});
+
+test('shop status shows the mandate read-only, needs no key, and says plainly that the mock checks nothing', () => {
+  const result = runShop(['status', '--mandate-id', 'engineering-hires-practice', '--mock-mandate', 'services/agent/fixtures/practice-mandate.json', '--catalog', 'services/suppliers/fixtures/store-a.json']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.match(result.stdout, /^Status \| mandate engineering-hires-practice v1 \| simulation/);
+  assert.match(result.stdout, /Contract mock: it checks nothing/);
+  assert.match(result.stdout, /\[-+\] S\$0\.00 of S\$8,000\.00 allocated/);
+  assert.match(result.stdout, /engineering-laptops +\[-+\] 0 of 5 allocated \| 0 committed \| 0 reserved/);
+  assert.match(result.stdout, /The client cannot list operations/);
+  assert.match(result.stdout, /Simulation\. Reservations are not payment, orders, delivery or equipment readiness\./);
+  assert.doesNotMatch(result.stdout, /\u001b|token/i);
+});
+
+test('shop status --json prints one view on stdout, and it carries the mock warning', () => {
+  const result = runShop(['status', '--mandate-id', 'engineering-hires-practice', '--mock-mandate', 'services/agent/fixtures/practice-mandate.json', '--catalog', 'services/suppliers/fixtures/store-a.json', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.equal(result.stdout.trim().split('\n').length, 1);
+  const view = JSON.parse(result.stdout);
+  assert.equal(view.kind, 'shop-status');
+  assert.equal(view.simulation, true);
+  assert.equal(view.backend, 'contract-mock');
+  assert.match(view.warning, /checks nothing/);
+  assert.deepEqual(view.budget, { totalMinor: 800000, committedMinor: 0, reservedMinor: 0, remainingMinor: 800000, allocatedMinor: 0 });
+  assert.deepEqual(view.requirements[0], { requirementId: 'engineering-laptops', required: 5, committedUnits: 0, reservedUnits: 0, allocatedUnits: 0, remainingUnits: 5 });
+  assert.doesNotMatch(result.stdout, /held/i);
+  assert.deepEqual(view.operations, []);
+  assert.match(view.operationsHint, /--operation ID/);
+  assert.doesNotMatch(result.stdout, /\u001b|S\$/);
+});
+
+test('shop status exits 1 with empty stdout for invalid input or a failed read, and never builds a model', () => {
+  const backend = ['--mock-mandate', 'services/agent/fixtures/practice-mandate.json', '--catalog', 'services/suppliers/fixtures/store-a.json'];
+  const id = ['--mandate-id', 'engineering-hires-practice'];
+  for (const args of [
+    ['status', ...backend],
+    ['status', ...id],
+    ['status', ...id, '--backend-db', 'a.db'],
+    ['status', ...id, ...backend, '--backend-db', 'a.db', '--backend-config', 'c.json'],
+    ['status', '--mandate-id', 'absent', ...backend],
+    ['status', ...id, ...backend, '--operation', 'absent'],
+    ['status', ...id, ...backend, '--operation', '   '],
+    ['status', ...id, ...backend, '--scripted', 'services/agent/fixtures/shopping-tool-calls.json'],
+    ['status', ...id, ...backend, '--model', 'claude-opus-5-5'],
+    ['status', ...id, ...backend, 'extra'],
+  ]) {
+    const result = runShop(args);
+    assert.equal(result.status, 1, `${args.join(' ')}: ${result.stdout}`);
+    assert.equal(result.stdout, '', args.join(' '));
+    assert.notEqual(result.stderr, '', args.join(' '));
+  }
+  const absent = runShop(['status', ...id, ...backend, '--operation', 'op-absent']);
+  assert.match(absent.stderr, /op-absent: Operation was not found.*The contract mock keeps nothing between commands/);
+  const help = runShop(['status', '--help']);
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /npm run shop -- status --mandate-id ID BACKEND \[--operation ID \.\.\.\] \[--json\]/);
+});
+
+test('shop status also refuses to start with payment credentials in its environment', () => {
+  const result = runShop(
+    ['status', '--mandate-id', 'engineering-hires-practice', '--mock-mandate', 'services/agent/fixtures/practice-mandate.json', '--catalog', 'services/suppliers/fixtures/store-a.json'],
+    { ...baseEnv(), PAYPAL_CLIENT_SECRET: 'must-not-appear' },
+  );
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /must not hold payment credentials \(PAYPAL_CLIENT_SECRET\)/);
+  assert.doesNotMatch(result.stderr, /must-not-appear/);
+});
 
 test('the practice mandate serves both stores, including the hostile one, through the mock', () => {
   const honest = runShop(['run', '--run-id', 'demo', ...practice, '--scripted', 'services/agent/fixtures/demo-shopping-calls.json', '--json']);
@@ -502,12 +835,9 @@ test('invalid invocations exit 1 with empty stdout', (t) => {
 
 // --- Every real process: the planner, the operator CLI, the shopper and execution.
 
-const backendRefusedOnWindows = process.platform === 'win32'
-  ? 'The backend CLI refuses its runtime directory on Windows after first use (POSIX permission check)'
-  : false;
-
-test('full process walk: draft, operator confirmation, shopping over rpc, then simulated execution', { skip: backendRefusedOnWindows }, (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'splittap-shop-e2e-'));
+test('full process walk: draft, operator confirmation, shopping over rpc, then simulated execution', (t) => {
+  // A space, so the printed operator command has to quote its paths to work.
+  const directory = mkdtempSync(join(tmpdir(), 'splittap shop e2e-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const nowDate = new Date();
   const now = nowDate.toISOString();
@@ -567,11 +897,14 @@ test('full process walk: draft, operator confirmation, shopping over rpc, then s
   backend(['mandate-review', '--id', mandateId, '--revision', '1']);
   backend(['mandate-confirm', '--id', mandateId, '--revision', '1', '--digest', drafted.digest]);
 
-  const shopped = runShop(shopArgs);
+  // The review a person reads names the exact command that runs this reservation.
+  const shopped = runShop(shopArgs.filter((arg) => arg !== '--json'));
   assert.equal(shopped.status, 0, shopped.stderr);
-  const report = JSON.parse(shopped.stdout);
-  assert.equal(report.outcome, 'completed');
-  const operation = report.progress.accepted[0].operation;
+  const printedCommand = shopped.stdout.split(/\r?\n/).find((line) => line.startsWith('  npm run backend -- operation-run '))?.trim();
+  assert.ok(printedCommand, shopped.stdout);
+  const operationId = /--id (op-[\w-]+)/.exec(printedCommand)?.[1];
+  assert.ok(operationId, printedCommand);
+  const operation = backend(['status', '--id', operationId]).operation;
   assert.equal(operation.status, 'reserved');
   assert.equal(operation.totalMinor, 724850);
 
@@ -581,10 +914,57 @@ test('full process walk: draft, operator confirmation, shopping over rpc, then s
   assert.equal(replay.usage.toolCalls, 0);
   assert.equal(backend(['status', '--id', operation.id]).operation.totalMinor, 724850);
 
-  // Only the operator's backend process executes, here against fake providers.
-  const executed = backend(['operation-run', '--id', operation.id]);
+  // The human review of a rerun reads the ledger back, and never offers to execute twice.
+  const rereview = runShop(shopArgs.filter((arg) => arg !== '--json'));
+  assert.equal(rereview.status, 0, rereview.stderr);
+  assert.match(rereview.stdout, /Budget \(read from the ledger after the run\)/);
+  assert.match(rereview.stdout, /S\$7,248\.50 of S\$8,000\.00 allocated/);
+
+  // The shopper's status is read-only: it shows the reservation and changes nothing.
+  const statusArgs = ['status', '--mandate-id', mandateId, '--backend-db', dbPath, '--backend-config', configPath, '--operation', operation.id];
+  const before = runShop([...statusArgs, '--json']);
+  assert.equal(before.status, 0, before.stderr);
+  const view = JSON.parse(before.stdout);
+  assert.equal(view.backend, 'simulation-backend');
+  assert.equal(view.warning, null);
+  assert.equal(view.budget.reservedMinor, 724850);
+  assert.equal(view.operations[0].status, 'reserved');
+  assert.equal(backend(['status', '--id', operation.id]).operation.status, 'reserved');
+  const shown = runShop(statusArgs);
+  assert.equal(shown.status, 0, shown.stderr);
+  assert.match(shown.stdout, /Reservation +active: budget set aside, not paid/);
+  assert.match(shown.stdout, /Fake payment +not started/);
+
+  // A cart left unknown is resent exactly, with no model or key, and finds its original operation.
+  const walkJournal = createFileSubmissionJournal(dbPath, mandateId);
+  walkJournal.save({ id: 'walk-cart-1', mandateId, mandateVersion: 1, supplierId: 'store-b', lines: [laptops(), monitors()] });
+  const resentArgs = ['run', '--run-id', 'after-restart', '--mandate-id', mandateId, '--backend-db', dbPath, '--backend-config', configPath];
+  const resent = runShop([...resentArgs, '--json']);
+  assert.equal(resent.status, 0, resent.stderr);
+  const resentReport = JSON.parse(resent.stdout);
+  assert.equal(resentReport.resent[0].kind, 'accepted');
+  assert.equal(resentReport.resent[0].operation.id, operationId);
+  assert.deepEqual(walkJournal.pending(), []);
+  assert.equal(backend(['status', '--id', operationId]).operation.totalMinor, 724850);
+
+  // Only the operator's backend process executes, here against fake providers. This runs the
+  // command exactly as the review printed it, through a shell, as an operator would paste it.
+  const pasted = spawnSync(printedCommand, { shell: true, cwd: root, encoding: 'utf8', env: baseEnv() });
+  assert.equal(pasted.status, 0, `${printedCommand}\n${pasted.stderr}`);
+  const executed = JSON.parse(pasted.stdout.split(/\r?\n/).filter((line) => line.startsWith('{')).at(-1) ?? '{}');
   assert.equal(executed.operation.status, 'ordered');
   assert.equal(executed.operation.readinessStatus, 'not_assessed');
   const audit = backend(['audit', '--id', operation.id]);
   assert.ok(audit.events.some(({ kind }: { kind: string }) => kind === 'operation_reserved'));
+
+  const after = runShop(statusArgs);
+  assert.equal(after.status, 0, after.stderr);
+  assert.match(after.stdout, /Committed +S\$7,248\.50/);
+  assert.match(after.stdout, /Status +ordered: the fake order succeeded; this is not a real order/);
+  assert.match(after.stdout, /Fake payment +succeeded/);
+  assert.match(after.stdout, /Readiness +not assessed/);
+  const missing = runShop(['status', '--mandate-id', mandateId, '--backend-db', dbPath, '--backend-config', configPath, '--operation', 'op-absent']);
+  assert.equal(missing.status, 1);
+  assert.equal(missing.stdout, '');
+  assert.match(missing.stderr, /op-absent: Operation was not found/);
 });

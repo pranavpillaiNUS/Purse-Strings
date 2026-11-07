@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # 24.15.0 is the lowest supported version in package.json. Older 24.x prints a
+        # node:sqlite warning into the backend's stderr, which is meant to stay sanitized.
+        os: [ubuntu-latest, windows-latest]
+        node-version: ['24.15.0', '26']
+        include:
+          - os: ubuntu-latest
+            node-version: '24'
+          # One job only: macOS minutes count ten times over on a private repo.
+          - os: macos-latest
+            node-version: '26'
+    # Every step is offline: no secrets, no model key, no PayPal, scripted stand-ins only.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Tests
+        run: npm test
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Offline eligibility demo
+        run: npm run demo
+      - name: Full demo flow (scripted, fake providers)
+        run: npm run demo:flow

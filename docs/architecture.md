@@ -39,11 +39,11 @@ reached during the operator's authorized sandbox hold steps or the sandbox spike
 | `services/checker/src/paypal/` | Trusted provider adapter | Existing sandbox client (spike); unit-4 gateway with mocked-fetch contract tests, unit-5 sandbox additions wired into execution behind config opt-in; unverified against real PayPal |
 | `services/suppliers/src/` | Supplier interface, fixture quotes and local catalog controls | Offline simulation implemented |
 | `services/suppliers/fixtures/` | Synthetic catalog and evidence | Demo data |
-| `services/agent/` | Mandate draft/review, written by hand or by a model from plain English; bounded shopper worker over the shared client | Implemented; four live shopper runs, all against the contract mock, and two live drafting runs |
+| `services/agent/` | Mandate draft/review, written by hand or by a model from plain English; bounded shopper worker over the shared client | Implemented; eight live shopper runs, four against the contract mock and four against the real backend in temporary Windows copies, and four live drafting runs |
 
 ## Technology decisions
 
-Keep Node 24+, erasable TypeScript and ESM. Use Zod for runtime validation and
+Keep Node 24.15+ or 26+, erasable TypeScript and ESM. Use Zod for runtime validation and
 `node:test` for behavior tests. Node built-ins handle CLI arguments/files; no CLI,
 server or agent framework is needed for M0. Stdout in JSON mode contains a single
 JSON result; operational errors go to stderr. No frontend dependencies.

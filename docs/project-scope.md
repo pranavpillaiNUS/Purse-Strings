@@ -141,15 +141,16 @@ M0 is delivered by this scaffold. A partial M1 slice now supports deterministic 
 mandate draft/review from structured hire requests and kit templates, with runtime
 validation and policy narrowing. That slice establishes no confirmation or stock
 authority, and M1 is incomplete. A model can also draft from a plain-English request
-(`npm run shop -- draft`), with two live runs so far; its output is checked the same way
+(`npm run shop -- draft`), with four live runs so far; its output is checked the same way
 and stays a draft. M2 implementation exists: a SQLite ledger with atomic
 reservations, plus a simulation-only backend CLI with local operator confirmation and
 durable execution over fake providers (see `services/checker/src/ledger/README.md`).
 A partial M4 slice adds the bounded shopper worker over the shared client, tested
-against the real checker core with scripted models. It has had four live model runs,
-all against the contract mock, two of them with the hostile listing, and its CLI
-approval and exception flows do not exist. Units 4 and 5 of the backend delivery add
-a sandbox-only PayPal gateway
+against the real checker core with scripted models. It has had eight live model runs: four
+against the contract mock, and four against the real backend in temporary Windows copies
+with the backend's mode check skipped. Its CLI approval and exception flows do not exist.
+`npm run demo:flow` runs the story end to end over fake providers. Units 4 and 5 of the
+backend delivery add a sandbox-only PayPal gateway
 (`services/checker/src/paypal/gateway.ts`, wired into the execution ledger behind
 the backend config `paymentProvider` and documented in `docs/backend-api.md`) with
 fetch-mocked capture/refund/refund-read tests, operator hold commands and
