@@ -1,0 +1,10 @@
+{
+  "mcp": {
+    "servers": {
+      "paypal-sandbox": {
+        "type": "remote",
+        "url": "https://mcp.sandbox.paypal.com/http"
+      }
+    }
+  }
+}
