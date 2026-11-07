@@ -1,16 +1,20 @@
 import { appendFileSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, parseEnv } from 'node:util';
 import { z } from 'zod';
 import { createBackendClient, type BackendTransport } from '../../../packages/contracts/src/client.ts';
+import type { Operation } from '../../../packages/contracts/src/backend.ts';
 import { createMockBackend } from '../../../packages/contracts/src/mock.ts';
-import { BackendSessionError, createBackendShoppingSession } from '../../../services/agent/src/backend-session.ts';
+import { BackendSessionError, createBackendShoppingSession, resendUnresolvedCarts, type ResentCart } from '../../../services/agent/src/backend-session.ts';
 import { draftMandateWithModel, type MandateDraftOutcome } from '../../../services/agent/src/mandate-drafter.ts';
 import { createScriptedModel, type ShoppingModel } from '../../../services/agent/src/model.ts';
-import { runShoppingWorker, type ShoppingOutcome, type ShoppingRunEvent, type ShoppingRunReport } from '../../../services/agent/src/worker.ts';
+import { buildRunReview, buildStatusView, type BackendKind, type ShopperKind } from '../../../services/agent/src/review.ts';
+import { runShoppingWorker, type ShoppingOutcome, type ShoppingRunEvent } from '../../../services/agent/src/worker.ts';
 import { createBackendCliTransport } from './backend-transport.ts';
-import { bundled, printable, printOrigin, printProposal } from './mandate.ts';
+import { bundled, printable, printableLine, printOrigin, printProposal } from './mandate.ts';
+import { readLedgerFacts, renderLiveEvent, renderResentCarts, renderRunReview, renderStatus, useColor } from './review-output.ts';
+import { createFileSubmissionJournal } from './submission-journal.ts';
 
 // Separate entry point, like the backend CLI: this process holds the model key and
 // never loads checker or payment modules. It reaches the checker only through the
@@ -21,6 +25,7 @@ const HELP = `Bounded AI shopper (simulation; no real money or orders)
 Usage:
   npm run shop -- run --run-id ID --mandate-id ID BACKEND [MODEL] [options]
   npm run shop -- draft (--text TEXT | --text-file FILE) [MODEL] [draft options]
+  npm run shop -- status --mandate-id ID BACKEND [--operation ID ...] [--json]
 
 BACKEND (choose one):
   --backend-db PATH --backend-config PATH
@@ -39,12 +44,18 @@ Options:
   --max-carts N         Host limit, default 3.
   --trace FILE          Append each model turn and tool call as JSON lines.
   --json                Print one JSON report on stdout.
+  --brief               A shorter review, for recording: refused attempts become a count,
+                        the next step one line, and usage is left out. Exit codes do not
+                        change. It shapes the readable review, so --json refuses it.
 
 Exit codes: 0 completed; 2 not completed (partial, no feasible cart, limit, refused);
 3 a submission's outcome is unknown and a reservation may exist; 1 invalid input/error.
 
-An accepted proposal is a reservation, not payment, an order or delivery. Reusing a
-run ID cannot duplicate a reservation: changed content under one cart ID is refused.
+An accepted proposal is a reservation, not payment, an order or delivery. If a
+submission's outcome is unknown, the next run on that mandate sends that exact cart
+again with the same key, with no model, reports the answer and stops. Changed content
+under one cart ID is refused.
+Without --json, a run closes with a review, using one extra read of the ledger.
 
 Draft options (a model reads a plain-English request; policy checks its answer):
   --policy FILE         Company policy. Default is the bundled synthetic example.
@@ -58,6 +69,15 @@ Draft options (a model reads a plain-English request; policy checks its answer):
 Draft exit codes: 0 drafted; 2 no draft (needs input, policy refused, invalid output
 or model refused); 1 invalid input/error. A draft is never a confirmation. It lists what
 the model assumed and could not capture, and a person must review it and confirm it.
+
+Status options (read-only: no model or key, and it never executes anything):
+  --operation ID        An operation to show, repeatable. The client cannot list
+                        operations; shop run prints the ID of each reservation.
+  --json                Print one JSON view on stdout.
+
+Status exit codes: 0 shown; 1 invalid input or backend failure. It shows the budget and
+what each requirement has allocated, with reservation, payment, order, refund and
+readiness on separate lines, because those are separate facts.
 `;
 
 const DRAFT_EXIT_CODES: Record<MandateDraftOutcome, number> = {
@@ -132,63 +152,6 @@ function refuseIfPaymentCredentialsPresent(): void {
   }
 }
 
-function formatMinor(minor: number): string {
-  return `SGD ${Math.trunc(minor / 100)}.${String(Math.abs(minor) % 100).padStart(2, '0')}`;
-}
-
-function describeCall(event: Extract<ShoppingRunEvent, { type: 'tool_call' }>): string {
-  const args = event.args !== null && typeof event.args === 'object' ? event.args as Record<string, unknown> : {};
-  const lines = Array.isArray(args.lines)
-    ? (args.lines as Array<Record<string, unknown>>).map((line) => `${String(line.sku)} x${String(line.quantity)}`).join(', ')
-    : undefined;
-  return printable([args.supplierId, args.requirementId, args.sku, lines, args.cartId]
-    .filter((part) => part !== undefined).map(String).join(' '));
-}
-
-function printEvent(event: ShoppingRunEvent): void {
-  if (event.type === 'tool_call') console.log(`  > ${printable(event.tool)} ${describeCall(event)}`);
-  if (event.type === 'tool_result' && event.isError) {
-    let code = 'error';
-    try {
-      code = String((JSON.parse(event.content) as { error?: { code?: unknown } }).error?.code ?? 'error');
-    } catch { /* The report still carries the facts. */ }
-    console.log(`    x refused: ${code}`);
-  }
-  if (event.type === 'tool_result' && event.tool === 'cart.submit' && !event.isError) {
-    const kind = (JSON.parse(event.content) as { submission: { kind: string; code?: string } }).submission;
-    console.log(`    = ${kind.kind}${kind.code ? ` (${kind.code})` : ''}`);
-  }
-}
-
-function printReport(report: ShoppingRunReport): void {
-  const { progress, usage } = report;
-  console.log(`\nOutcome: ${report.outcome}${report.detail ? ` | ${report.detail}` : ''}`);
-  for (const receipt of progress.accepted) {
-    if (receipt.kind !== 'proposal-accepted') continue;
-    const { operation, cart } = receipt;
-    console.log(`  accepted ${cart.id} | ${cart.supplierId} | ${formatMinor(operation.totalMinor)} | ${operation.id} | reservation ${operation.reservationStatus}`);
-    for (const line of cart.lines) console.log(`    ${line.requirementId}: ${line.sku} x${line.quantity}`);
-  }
-  for (const rejection of progress.rejected) {
-    console.log(`  rejected ${rejection.cart.id} | ${rejection.cart.supplierId} | ${rejection.code} | ${printable(rejection.checkCodes.join(', ')) || 'no check codes'}`);
-  }
-  if (progress.refused) console.log(`  refused ${progress.refused.cart.id} | ${progress.refused.code}`);
-  if (progress.unresolved) {
-    console.log(`  UNKNOWN ${progress.unresolved.id} | a reservation may exist. Do not assume it failed; check the backend.`);
-  }
-  console.log('Requirements:');
-  for (const item of progress.requirements) {
-    console.log(`  ${item.requirementId}: ${item.required} required | ${item.priorUnits} already held | ${item.acceptedUnits} this run | ${item.remainingUnits} still needed`);
-  }
-  if (progress.budgetRemainingMinor !== null) console.log(`Budget remaining: ${formatMinor(progress.budgetRemainingMinor)}`);
-  console.log(`Usage: ${usage.modelTurns} model turns | ${usage.toolCalls}/${usage.maxToolCalls} tool calls | ${usage.inputTokens} input and ${usage.outputTokens} output tokens`);
-  if (report.modelSummary) {
-    console.log('\nModel summary (written by the model; the results above are the record):');
-    console.log(printable(report.modelSummary));
-  }
-  console.log('\nSimulation. Reservations are not payment, orders, delivery or equipment readiness.');
-}
-
 async function buildModel(scripted: string | undefined, modelId: string | undefined): Promise<ShoppingModel> {
   if (scripted !== undefined) {
     if (modelId !== undefined) throw new Error('Choose either --scripted or --model');
@@ -231,6 +194,22 @@ function buildTransport(values: {
     catalogs: values.catalog.map((path) => readJson(path, 'Mock catalog')),
   } as Parameters<typeof createMockBackend>[0]);
   return (request) => backend.handle(request);
+}
+
+/** The same codes a run would use: 3 while anything may still be reserved, 2 if a cart came back no. */
+function resentExitCode(resent: readonly ResentCart[]): number {
+  if (resent.some(({ kind }) => kind === 'unknown')) return 3;
+  return resent.some(({ kind }) => kind !== 'accepted') ? 2 : 0;
+}
+
+function backendKind(values: { 'mock-mandate'?: string | undefined }): BackendKind {
+  return values['mock-mandate'] === undefined ? 'simulation-backend' : 'contract-mock';
+}
+
+/** A path as the operator should retype it: short, and free of their home directory when it can be. */
+function displayPath(path: string): string {
+  const fromHere = relative(process.cwd(), resolve(path));
+  return fromHere === '' || fromHere.startsWith('..') || isAbsolute(fromHere) ? path : fromHere;
 }
 
 /** Where an output file will land. Lowercased because Windows and macOS usually ignore case. */
@@ -316,15 +295,68 @@ async function runDraft(args: string[]): Promise<void> {
     if (run.draft.origin) printOrigin(run.draft.origin);
     console.log('Draft only. No mandate confirmed, stock assigned or purchase authorized.');
   } else {
-    console.log(`No draft: ${run.outcome} | ${printable(run.detail ?? '')}`);
+    console.log(`No draft: ${run.outcome} | ${printableLine(run.detail ?? '')}`);
     if (run.refused) {
-      console.log(`The request as the model read it: ${printable(JSON.stringify(run.refused.request))}`);
-      for (const item of run.refused.notCaptured) console.log(`  not captured: ${printable(item)}`);
+      console.log(`The request as the model read it: ${printableLine(JSON.stringify(run.refused.request))}`);
+      for (const item of run.refused.notCaptured) console.log(`  not captured: ${printableLine(item)}`);
     }
     if (run.modelText) console.log(`The model said:\n${printable(run.modelText)}`);
   }
-  if (!values.json) console.log(`Usage: ${run.usage.modelTurns} model turns | ${run.usage.inputTokens} input and ${run.usage.outputTokens} output tokens`);
+  // A scripted stand-in has no tokens to report, and zero would read as a real count.
+  if (!values.json && values.scripted === undefined) console.log(`Usage: ${run.usage.modelTurns} model ${run.usage.modelTurns === 1 ? 'turn' : 'turns'} | ${run.usage.inputTokens} input and ${run.usage.outputTokens} output tokens`);
   if (run.outcome === 'failed' && run.detail) console.error(`shop: ${run.detail}`);
+}
+
+/**
+ * Read-only. All reads finish before anything prints, so a failure leaves stdout empty.
+ * It reaches the backend only through the shared client's two read methods.
+ */
+async function runStatus(args: string[]): Promise<void> {
+  const { values } = parseArgs({
+    args,
+    options: {
+      help: { type: 'boolean', short: 'h' },
+      json: { type: 'boolean' },
+      'mandate-id': { type: 'string' },
+      'backend-db': { type: 'string' },
+      'backend-config': { type: 'string' },
+      'mock-mandate': { type: 'string' },
+      catalog: { type: 'string', multiple: true },
+      operation: { type: 'string', multiple: true },
+    },
+  });
+  if (values.help) {
+    console.log(HELP);
+    return;
+  }
+  refuseIfPaymentCredentialsPresent();
+  const mandateId = values['mandate-id'];
+  if (!mandateId?.trim()) throw new Error('shop status requires --mandate-id');
+
+  const backend = backendKind(values);
+  const client = createBackendClient(buildTransport(values));
+  const loaded = await client.request({ apiVersion: '1', requestId: 'status-mandate', method: 'mandate.get', params: { mandateId } });
+  if (!loaded.ok) throw new Error(loaded.error.message);
+  if (loaded.method !== 'mandate.get') throw new Error('Backend response did not match mandate.get');
+  const { mandate } = loaded.result;
+
+  const operations: Operation[] = [];
+  for (const [index, operationId] of (values.operation ?? []).entries()) {
+    const response = await client.request({
+      apiVersion: '1', requestId: `status-operation-${index + 1}`, method: 'operation.get',
+      params: { mandateId: mandate.id, mandateVersion: mandate.version, operationId },
+    });
+    if (!response.ok) {
+      const hint = backend === 'contract-mock' ? ' The contract mock keeps nothing between commands.' : '';
+      throw new Error(`Operation ${operationId}: ${response.error.message}.${hint}`);
+    }
+    if (response.method !== 'operation.get') throw new Error('Backend response did not match operation.get');
+    operations.push(response.result.operation);
+  }
+
+  const view = buildStatusView({ ledger: loaded.result, operations, backend });
+  if (values.json) console.log(JSON.stringify(view));
+  else console.log(renderStatus(view, { color: useColor(process.stdout, process.env) }).join('\n'));
 }
 
 async function main(): Promise<void> {
@@ -333,11 +365,16 @@ async function main(): Promise<void> {
     await runDraft(rest);
     return;
   }
+  if (command === 'status') {
+    await runStatus(rest);
+    return;
+  }
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
       help: { type: 'boolean', short: 'h' },
       json: { type: 'boolean' },
+      brief: { type: 'boolean' },
       'run-id': { type: 'string' },
       'mandate-id': { type: 'string' },
       'backend-db': { type: 'string' },
@@ -356,14 +393,31 @@ async function main(): Promise<void> {
     console.log(HELP);
     return;
   }
-  if (positionals.length !== 1 || positionals[0] !== 'run') throw new Error('Expected shop run or shop draft. Use --help.');
+  if (positionals.length !== 1 || positionals[0] !== 'run') throw new Error('Expected shop run, draft or status. Use --help.');
+  if (values.brief && values.json) throw new Error('--brief shapes the readable review, so it cannot be used with --json');
   refuseIfPaymentCredentialsPresent();
   const runId = values['run-id'];
   const mandateId = values['mandate-id'];
   if (!runId?.trim()) throw new Error('shop run requires --run-id');
   if (!mandateId?.trim()) throw new Error('shop run requires --mandate-id');
 
-  const transport = buildTransport(values);
+  const backend = backendKind(values);
+  const client = createBackendClient(buildTransport(values));
+  const operator = values['backend-db'] !== undefined && values['backend-config'] !== undefined
+    ? { databasePath: displayPath(values['backend-db']), configPath: displayPath(values['backend-config']) }
+    : null;
+  // The contract mock keeps nothing after this command, so it has nothing to resend.
+  const journal = values['backend-db'] === undefined ? undefined : createFileSubmissionJournal(values['backend-db'], mandateId);
+  if (journal) {
+    // Before any model or key is needed, and before a new cart could be built beside this one.
+    const resent = await resendUnresolvedCarts({ runId }, client, journal);
+    if (resent.length > 0) {
+      process.exitCode = resentExitCode(resent);
+      if (values.json) console.log(JSON.stringify({ simulation: true, runId, mandateId, resent }));
+      else console.log(renderResentCarts(resent, operator).join('\n'));
+      return;
+    }
+  }
   const model = await buildModel(values.scripted, values.model);
   const maxToolCalls = positiveInteger(values['max-tool-calls'], 'max-tool-calls');
   const maxCarts = positiveInteger(values['max-carts'], 'max-carts');
@@ -373,11 +427,12 @@ async function main(): Promise<void> {
     mandateId, runId,
     ...(maxToolCalls === undefined ? {} : { maxToolCalls }),
     ...(maxCarts === undefined ? {} : { maxCarts }),
-  }, createBackendClient(transport));
+  }, client, journal);
 
-  if (!values.json) console.log(`Shopping run ${runId} | mandate ${mandateId} | simulation`);
+  if (!values.json) console.log(printableLine(`Shopping run ${runId} | mandate ${mandateId} | simulation`));
   const trace = values.trace;
   let traceFailed = false;
+  const events: ShoppingRunEvent[] = [];
   const report = await runShoppingWorker(session, model, {
     runId,
     ...(maxModelTurns === undefined ? {} : { limits: { maxModelTurns } }),
@@ -391,14 +446,31 @@ async function main(): Promise<void> {
           console.error('shop: the trace file could not be written; continuing without it');
         }
       }
-      if (!values.json) printEvent(event);
+      if (values.json) return;
+      events.push(event);
+      for (const line of renderLiveEvent(event, backend)) console.log(line);
     },
   });
 
-  if (values.json) console.log(JSON.stringify(report));
-  else printReport(report);
-  if (report.outcome === 'failed' && report.detail) console.error(`shop: ${report.detail}`);
+  // Set first: nothing in the review below can change what this run exits with.
   process.exitCode = EXIT_CODES[report.outcome];
+  if (values.json) console.log(JSON.stringify(report));
+  else {
+    let shopper: ShopperKind = { kind: 'scripted' };
+    if (values.scripted === undefined) {
+      const { DEFAULT_SHOPPER_MODEL } = await import('../../../services/agent/src/anthropic.ts');
+      shopper = { kind: 'live', modelId: values.model ?? DEFAULT_SHOPPER_MODEL };
+    }
+    // The contract mock has no ledger to read, and its mandate.get would report zeros.
+    const ledger = backend === 'simulation-backend' ? await readLedgerFacts(client, mandateId, `${runId}-review`) : null;
+    try {
+      const review = buildRunReview({ report, events, ledger, backend, shopper, budgetMinor: session.getContext().budgetMinor });
+      console.log(renderRunReview(review, { color: useColor(process.stdout, process.env), operator, brief: values.brief === true }).join('\n'));
+    } catch {
+      console.log(`\nOutcome: ${printableLine(report.outcome)}\nThe review could not be shown. Use --json for this run's report.`);
+    }
+  }
+  if (report.outcome === 'failed' && report.detail) console.error(`shop: ${printableLine(report.detail)}`);
 }
 
 try {
@@ -407,6 +479,6 @@ try {
   // Only messages this CLI wrote or the sanitized backend produced reach the operator.
   const safe = error instanceof BackendSessionError || (error instanceof Error && !(error instanceof z.ZodError));
   const message = safe ? (error as Error).message : 'The command input was invalid';
-  if (!reportedDiagnostics.has(message)) console.error(`shop: ${message}`);
+  if (!reportedDiagnostics.has(message)) console.error(`shop: ${printableLine(message)}`);
   process.exitCode = 1;
 }

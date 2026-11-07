@@ -111,7 +111,8 @@ WHERE THINGS STOOD ON NOV 7, 2026 (check with git and gh first, as this may have
 - Claude has run the whole flow live once, against the real checker, in a temporary Windows
   copy with the backend's mode check skipped. That run predates the review fixes in PR #10.
   Drafting's prompt did not change, but drafting has not been re-run live since.
-- `demo:flow` has never run on Linux or macOS.
+- The scripted `demo:flow` passes in CI on Linux. No live run has happened on Linux, and nothing
+  has run on macOS.
 
 WAITING ON DANNY (flag these, don't change his code)
 - Issue #9: the Windows runtime-directory check. Until it's fixed, `demo:flow` stops at scene 3
