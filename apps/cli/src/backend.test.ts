@@ -799,8 +799,13 @@ test('sandbox hold commands refuse closed and sanitized without credentials, and
   try {
     const configPath = paypalConfigPath(fixture);
 
-    // No .env in the invocation cwd and no PAYPAL variables: sanitized refusal.
-    const missing = runBackend(['--db', fixture.dbPath, '--config', configPath, 'operation-authorize', '--id', 'op-1']);
+    // No PAYPAL values in the environment and no .env beside the process: the
+    // invocation cwd here is the repository root, so a machine that keeps real
+    // credentials in the repo .env would satisfy the loader and skip the
+    // refusal; run it from an empty directory instead.
+    const emptyDir = join(fixture.directory, 'empty-cwd');
+    mkdirSync(emptyDir, { recursive: true });
+    const missing = runBackend(['--db', fixture.dbPath, '--config', configPath, 'operation-authorize', '--id', 'op-1'], undefined, { cwd: emptyDir });
     assert.equal(missing.status, 2);
     assert.equal(missing.stdout, '');
     assert.match(missing.stderr, /Sandbox credentials are not configured/);
