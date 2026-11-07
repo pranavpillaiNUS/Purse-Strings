@@ -99,14 +99,40 @@ test('a mistyped --dir is never cleared', (t) => {
   assert.equal(readFileSync(precious, 'utf8'), 'keep me');
 });
 
+test('closed input stops the flow at the first prompt, so nothing is confirmed', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-eof-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, [entry, '--pause', '--dir', join(directory, 'work')], {
+    cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /Input closed before Enter was pressed/);
+  assert.doesNotMatch(result.stdout, /Confirmed by OS user/);
+  assert.doesNotMatch(result.stdout, /Operation: ordered/);
+});
+
 const backendRefusedOnWindows = process.platform === 'win32'
   ? 'The backend CLI refuses its runtime directory on Windows after first use (POSIX permission check)'
   : false;
 
+test('input that closes at the confirmation prompt stops the flow before anything is confirmed', { skip: backendRefusedOnWindows }, (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-eof-confirm-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  // Enter for scene 2 and scene 3, then nothing for the operator's own prompt.
+  const result = spawnSync(process.execPath, [entry, '--pause', '--dir', join(directory, 'work')], {
+    cwd: root, encoding: 'utf8', input: '\n\n',
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stdout, /You are the operator\. Press Enter to confirm this exact digest/);
+  assert.match(result.stderr, /Input closed before Enter was pressed/);
+  assert.doesNotMatch(result.stdout, /Confirmed by OS user/);
+});
+
 test('the whole flow runs with no key or network, twice in the same directory', { skip: backendRefusedOnWindows }, (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const env = { ...process.env };
+  // A PayPal name in the terminal must not stop the shopper, which refuses to start beside one.
+  const env: NodeJS.ProcessEnv = { ...process.env, PAYPAL_CLIENT_ID: 'dummy-not-a-credential' };
   delete env.ANTHROPIC_API_KEY;
   for (const attempt of [1, 2]) {
     const result = spawnSync(process.execPath, [entry, '--dir', join(directory, 'work')], { cwd: root, encoding: 'utf8', env });
