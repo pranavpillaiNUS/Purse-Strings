@@ -3,7 +3,38 @@
 `services/checker/scripts/paypal-spike.ts` tests the PayPal behaviour the whole design depends on,
 against the real sandbox with hardcoded carts: one S$8,000 hold, three partial captures, then release the rest.
 
+## Application path (exercised 2026-11-07, PR #17 tree + one live fix)
+
+The same evening, the wired application path ran end to end against the sandbox with the gateway
+behind `paymentProvider: "paypal-sandbox"`:
+
+1. `mandate-draft` → `mandate-review` → `mandate-confirm` (dig-bound OS-user confirmation).
+2. Cart submission over rpc for one LAP-14-AIR @ 1,099.00 + 9% GST → operation
+   `op-9e0c96e2-5c33-4a4d-956c-a2cc035c24ea` **reserved** at exactly **119,791 minor (S$1,197.91)**.
+3. `operation-authorize` minted sandbox order `84356576HC687815U` (invoice id = operation id,
+   request id = binding identity) and printed one JSON line with the approval link.
+4. The named buyer approved on PayPal's hosted page ("review order" after approval
+   is cosmetic; PayPal recorded the consent server-side — the backend replayed fine).
+5. `operation-complete-authorization` upgraded the binding to `authorization_held` under
+   authorization `0DY26454FF666080L`.
+6. `operation-run` captured S$1,197.91 as `70023069VM754651G` (`COMPLETED`) and consumed
+   the reservation; **status/audit show `paymentProvider: "paypal-sandbox"`, the real sandbox ids,
+   and the supplier order as a fake provider id (`fake-order-…`) — supplier ordering stayed
+   simulated, as designed.**
+7. The audit trail reads `operation_reserved → binding_created → binding_upgraded →
+   capture_succeeded → order_succeeded`.
+
+**Live fix found by this exercise:** the gateway minted buyer orders with
+`intent: "AUTHORIZATION"`; PayPal returns `400 INVALID_PARAMETER_VALUE` — Orders v2 documents
+`AUTHORIZE`. Fetch-mocked tests could not catch a request-grammar typo, so this class of fact now
+depends on the recorded sandbox evidence above. One diagnostic probe order (`79W2716935161023K`)
+was created while reproducing the error and was never approved; no hold exists on it.
+
+**Claude-clock note for the recorded demo:** the sandbox hold's honor period ends ~3 days after
+creation, so create the demo hold on demo day.
+
 ## One-time setup (about 15 minutes)
+
 
 1. Sign in at [developer.paypal.com](https://developer.paypal.com), then go to **Testing Tools → Sandbox Accounts → Create account**:
    - **Business**, country **Singapore**. This is our app, the merchant. A Singapore account holds SGD,
