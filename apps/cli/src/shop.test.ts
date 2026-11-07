@@ -8,12 +8,14 @@ import { fileURLToPath } from 'node:url';
 import { createBackendClient, type BackendTransport } from '../../../packages/contracts/src/client.ts';
 import { CatalogSchema, MandateSchema, PolicySchema, type Catalog } from '../../../packages/contracts/src/index.ts';
 import { createMockBackend } from '../../../packages/contracts/src/mock.ts';
-import { BackendSessionError, createBackendShoppingSession } from '../../../services/agent/src/backend-session.ts';
+import { BackendSessionError, createBackendShoppingSession, resendUnresolvedCarts } from '../../../services/agent/src/backend-session.ts';
 import { createMandateDraft } from '../../../services/agent/src/mandate.ts';
 import { createScriptedModel, type ModelToolResult, type ScriptedStep } from '../../../services/agent/src/model.ts';
 import { buildRunReview, buildStatusView, groupCheckCodes } from '../../../services/agent/src/review.ts';
+import type { SubmissionJournal } from '../../../services/agent/src/shopper.ts';
 import { runShoppingWorker } from '../../../services/agent/src/worker.ts';
 import { readLedgerFacts, renderRunReview, renderStatus } from './review-output.ts';
+import { createFileSubmissionJournal } from './submission-journal.ts';
 import { createApplicationBackend } from '../../../services/checker/src/application.ts';
 import { confirmMandateRevision, definePolicySnapshot, draftMandateRevision } from '../../../services/checker/src/authority.ts';
 import { openLedgerStore } from '../../../services/checker/src/ledger/store.ts';
@@ -198,6 +200,102 @@ test('unknown mandatory evidence blocks every supplier and reserves nothing', as
   const snapshot = await totals();
   assert.equal(snapshot.reservedMinor, 0);
   assert.deepEqual(snapshot.quantities.map(({ reserved }) => reserved), [0, 0]);
+});
+
+test('a restart while the first request is still outstanding resends the exact cart, and one operation results', async (t) => {
+  const { transport, totals, directory } = ledger(t, [storeA(), storeB()]);
+  const journal = createFileSubmissionJournal(join(directory, 'app.db'), mandateId);
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let lateAnswer: Promise<unknown> | undefined;
+  const delayed: BackendTransport = async (rpc) => {
+    if (rpc.method !== 'proposal.submit') return transport(rpc);
+    lateAnswer = held.then(() => transport(rpc));
+    return lateAnswer;
+  };
+
+  // The first process gives up on an answer while its request is still on the way.
+  const session = await createBackendShoppingSession({ mandateId, runId, submitTimeoutMs: 20 }, createBackendClient(delayed), journal);
+  const first = await runShoppingWorker(session, createScriptedModel([build('store-b', [laptops(), monitors()]), submit(1)]), { runId });
+  assert.equal(first.outcome, 'unknown_submission');
+  assert.deepEqual(journal.pending(), [first.progress.unresolved]);
+  assert.equal((await totals()).reservedMinor, 0, 'The ledger cannot show that this request has stopped');
+
+  // A restart, under another run ID, resends that cart rather than building a different one.
+  const resent = await resendUnresolvedCarts({ runId: 'restart' }, createBackendClient(transport), journal);
+  assert.equal(resent.length, 1);
+  const [answer] = resent;
+  if (answer?.kind !== 'accepted') assert.fail(`Expected accepted, got ${answer?.kind}`);
+  assert.deepEqual(answer.cart, first.progress.unresolved);
+  assert.deepEqual(journal.pending(), [], 'A definite answer settles the record');
+
+  // The first request finally lands, and it is the same operation.
+  release();
+  const late = await lateAnswer as { ok: boolean; result?: { operation?: { id: string } } };
+  assert.equal(late.ok, true);
+  assert.equal(late.result?.operation?.id, answer.operation.id);
+  const snapshot = await totals();
+  assert.equal(snapshot.reservedMinor, 724850);
+  assert.deepEqual(snapshot.quantities.map(({ reserved }) => reserved), [5, 5]);
+});
+
+test('an answer that stays unknown keeps the record, and a rejection clears it', async (t) => {
+  const { transport, control, totals, directory } = ledger(t, [storeA(), storeB()]);
+  const journal = createFileSubmissionJournal(join(directory, 'app.db'), mandateId);
+  const cart = { id: 'run-cart-1', mandateId, mandateVersion: 1, supplierId: 'store-b', lines: [laptops(), monitors()] };
+  journal.save(cart);
+  const down: BackendTransport = async () => { throw new Error('backend unreachable'); };
+  const still = await resendUnresolvedCarts({ runId: 'again' }, createBackendClient(down), journal);
+  assert.deepEqual(still.map(({ kind }) => kind), ['unknown']);
+  assert.deepEqual(journal.pending(), [cart]);
+
+  control('store-b', { deliveryEvidenceStatus: 'unknown' });
+  const rejected = await resendUnresolvedCarts({ runId: 'again' }, createBackendClient(transport), journal);
+  assert.deepEqual(rejected.map(({ kind }) => kind), ['rejected']);
+  assert.deepEqual(journal.pending(), []);
+  assert.equal((await totals()).reservedMinor, 0);
+});
+
+test('a session records a cart before sending it, keeps it while unknown, and clears it once settled', async (t) => {
+  const { transport, directory } = ledger(t, [storeA(), storeB()]);
+  const log: string[] = [];
+  const real = createFileSubmissionJournal(join(directory, 'app.db'), mandateId);
+  const journal: SubmissionJournal = {
+    pending: () => real.pending(),
+    save(cart) { log.push(`save ${cart.id}`); real.save(cart); },
+    clear(cartId) { log.push(`clear ${cartId}`); real.clear(cartId); },
+  };
+  let lose = true;
+  const lossy: BackendTransport = async (rpc) => {
+    if (rpc.method !== 'proposal.submit') return transport(rpc);
+    log.push('send');
+    const response = await transport(rpc);
+    if (lose) {
+      lose = false;
+      throw new Error('response lost');
+    }
+    return response;
+  };
+  const session = await createBackendShoppingSession({ mandateId, runId }, createBackendClient(lossy), journal);
+  const report = await runShoppingWorker(session, createScriptedModel([build('store-b', [laptops(), monitors()]), submit(1), submit(1)]), { runId });
+  assert.equal(report.outcome, 'completed');
+  assert.deepEqual(log, ['save run-cart-1', 'send', 'save run-cart-1', 'send', 'clear run-cart-1']);
+  assert.deepEqual(real.pending(), []);
+});
+
+test('a cart that cannot be recorded is not sent', async (t) => {
+  const { transport, totals } = ledger(t, [storeA(), storeB()]);
+  let sent = 0;
+  const counting: BackendTransport = async (rpc) => {
+    if (rpc.method === 'proposal.submit') sent += 1;
+    return transport(rpc);
+  };
+  const journal: SubmissionJournal = { pending: () => [], save() { throw new Error('disk full'); }, clear() {} };
+  const session = await createBackendShoppingSession({ mandateId, runId }, createBackendClient(counting), journal);
+  const report = await runShoppingWorker(session, createScriptedModel([build('store-b', [laptops(), monitors()]), submit(1)]), { runId });
+  assert.equal(sent, 0);
+  assert.equal(report.progress.accepted.length, 0);
+  assert.equal((await totals()).reservedMinor, 0);
 });
 
 test('a lost response cannot reserve twice: the retry resolves to the original operation', async (t) => {
@@ -738,7 +836,8 @@ test('invalid invocations exit 1 with empty stdout', (t) => {
 // --- Every real process: the planner, the operator CLI, the shopper and execution.
 
 test('full process walk: draft, operator confirmation, shopping over rpc, then simulated execution', (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'splittap-shop-e2e-'));
+  // A space, so the printed operator command has to quote its paths to work.
+  const directory = mkdtempSync(join(tmpdir(), 'splittap shop e2e-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const nowDate = new Date();
   const now = nowDate.toISOString();
@@ -798,11 +897,14 @@ test('full process walk: draft, operator confirmation, shopping over rpc, then s
   backend(['mandate-review', '--id', mandateId, '--revision', '1']);
   backend(['mandate-confirm', '--id', mandateId, '--revision', '1', '--digest', drafted.digest]);
 
-  const shopped = runShop(shopArgs);
+  // The review a person reads names the exact command that runs this reservation.
+  const shopped = runShop(shopArgs.filter((arg) => arg !== '--json'));
   assert.equal(shopped.status, 0, shopped.stderr);
-  const report = JSON.parse(shopped.stdout);
-  assert.equal(report.outcome, 'completed');
-  const operation = report.progress.accepted[0].operation;
+  const printedCommand = shopped.stdout.split(/\r?\n/).find((line) => line.startsWith('  npm run backend -- operation-run '))?.trim();
+  assert.ok(printedCommand, shopped.stdout);
+  const operationId = /--id (op-[\w-]+)/.exec(printedCommand)?.[1];
+  assert.ok(operationId, printedCommand);
+  const operation = backend(['status', '--id', operationId]).operation;
   assert.equal(operation.status, 'reserved');
   assert.equal(operation.totalMinor, 724850);
 
@@ -833,8 +935,23 @@ test('full process walk: draft, operator confirmation, shopping over rpc, then s
   assert.match(shown.stdout, /Reservation +active: budget set aside, not paid/);
   assert.match(shown.stdout, /Fake payment +not started/);
 
-  // Only the operator's backend process executes, here against fake providers.
-  const executed = backend(['operation-run', '--id', operation.id]);
+  // A cart left unknown is resent exactly, with no model or key, and finds its original operation.
+  const walkJournal = createFileSubmissionJournal(dbPath, mandateId);
+  walkJournal.save({ id: 'walk-cart-1', mandateId, mandateVersion: 1, supplierId: 'store-b', lines: [laptops(), monitors()] });
+  const resentArgs = ['run', '--run-id', 'after-restart', '--mandate-id', mandateId, '--backend-db', dbPath, '--backend-config', configPath];
+  const resent = runShop([...resentArgs, '--json']);
+  assert.equal(resent.status, 0, resent.stderr);
+  const resentReport = JSON.parse(resent.stdout);
+  assert.equal(resentReport.resent[0].kind, 'accepted');
+  assert.equal(resentReport.resent[0].operation.id, operationId);
+  assert.deepEqual(walkJournal.pending(), []);
+  assert.equal(backend(['status', '--id', operationId]).operation.totalMinor, 724850);
+
+  // Only the operator's backend process executes, here against fake providers. This runs the
+  // command exactly as the review printed it, through a shell, as an operator would paste it.
+  const pasted = spawnSync(printedCommand, { shell: true, cwd: root, encoding: 'utf8', env: baseEnv() });
+  assert.equal(pasted.status, 0, `${printedCommand}\n${pasted.stderr}`);
+  const executed = JSON.parse(pasted.stdout.split(/\r?\n/).filter((line) => line.startsWith('{')).at(-1) ?? '{}');
   assert.equal(executed.operation.status, 'ordered');
   assert.equal(executed.operation.readinessStatus, 'not_assessed');
   const audit = backend(['audit', '--id', operation.id]);

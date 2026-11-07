@@ -9,7 +9,7 @@ import {
 } from '../../../services/agent/src/review.ts';
 import type { ShoppingRunEvent, ShoppingRunReport } from '../../../services/agent/src/worker.ts';
 import { formatSgd } from './format.ts';
-import { bar, PROVIDER_WORDING, readLedgerFacts, renderLiveEvent, renderRunReview, renderStatus, useColor } from './review-output.ts';
+import { bar, PROVIDER_WORDING, readLedgerFacts, renderLiveEvent, renderResentCarts, renderRunReview, renderStatus, useColor } from './review-output.ts';
 
 const SENTENCE = 'Simulation. Reservations are not payment, orders, delivery or equipment readiness.';
 const ESC = String.fromCharCode(0x1b);
@@ -99,11 +99,11 @@ const render = (review: RunReview): string[] => renderRunReview(review, { color:
 const flat = (lines: readonly string[]): string => lines.join(' ').replace(/ +/g, ' ');
 const stripColor = (line: string): string => line.split(ESC).map((part, index) => (index === 0 ? part : part.replace(/^\[\d+m/, ''))).join('');
 
-/** Fits 80 columns and is ASCII only, whatever went in. Only the kept sentence runs longer. */
+/** Fits 80 columns and is ASCII only, whatever went in. Only the kept sentence and a command run longer. */
 function assertTerminalSafe(lines: readonly string[]): void {
   for (const line of lines) {
     assert.doesNotMatch(line, /[^\u0020-\u007e]/, `Not printable ASCII: ${JSON.stringify(line)}`);
-    if (line !== SENTENCE) assert.ok(line.length <= 80, `${line.length} columns: ${line}`);
+    if (line !== SENTENCE && !line.startsWith('  npm run backend -- ')) assert.ok(line.length <= 80, `${line.length} columns: ${line}`);
   }
 }
 
@@ -165,14 +165,45 @@ test('rejection then recovery reads as a person would say it', () => {
   assert.equal(lines.at(-1), SENTENCE);
 });
 
+test('resent carts say what came back and what to do, with the command on one line', () => {
+  const cart = { id: 'run-cart-2', mandateId: 'm', mandateVersion: 1, supplierId: 'store-b', lines: [{ requirementId: 'r', sku: 's', quantity: 1 }] };
+  const accepted = renderResentCarts([{ kind: 'accepted', cart, operation: operation() }], OPERATOR);
+  assertTerminalSafe(accepted);
+  const acceptedText = flat(accepted);
+  assert.match(acceptedText, /with no model involved/);
+  assert.match(acceptedText, /run-cart-2 at store-b: reserved, S\$/);
+  assert.match(acceptedText, /set aside, not paid/);
+  assert.ok(accepted.some((line) => line.startsWith(`  npm run backend -- operation-run --id ${OPERATION_ID} --db `)), accepted.join('\n'));
+  assert.match(acceptedText, /new run ID/);
+  assert.equal(accepted.at(-1), SENTENCE);
+
+  const unknown = flat(renderResentCarts([{ kind: 'unknown', cart }], OPERATOR));
+  assert.match(unknown, /still unknown, and a reservation may exist/);
+  assert.match(unknown, /resends what is still unknown first/);
+  assert.doesNotMatch(unknown, /operation-run|new run ID/);
+
+  const rejected = flat(renderResentCarts([{ kind: 'rejected', cart, code: 'BUDGET_EXCEEDED', message: 'x', checkCodes: [] }], OPERATOR));
+  assert.match(rejected, /rejected\. The checker's total is more than the budget still available\. Nothing was reserved by this cart\./);
+  assert.doesNotMatch(rejected, /operation-run/);
+});
+
+test('a path in the command is quoted so a shell reads it as one argument', () => {
+  const command = (databasePath: string): string => renderRunReview(view({}), { color: false, operator: { databasePath, configPath: 'c.json' } })
+    .find((line) => line.startsWith('  npm run backend -- '))!;
+  assert.match(command('state/app.db'), /--db state\/app\.db --config c\.json$/);
+  assert.match(command('my state/app.db'), /--db "my state\/app\.db" --config/);
+  assert.match(command('a;b/app.db'), /--db 'a;b\/app\.db' --config/);
+  // The terminal text would change this one, so typing it back could name a different file.
+  assert.match(command('caf\u00e9/app.db'), /--db PATH --config/);
+});
+
 test('the next step names the exact operator command and says who runs it', () => {
   const text = render(view({})).join('\n');
   assert.match(text, /The operator runs this, never the shopper/);
-  assert.ok(text.includes([
-    `  npm run backend -- operation-run --id ${OPERATION_ID}`,
-    '    --db .runtime/app.db',
-    '    --config services/agent/fixtures/backend-demo-config.json',
-  ].join('\n')), text);
+  // One line, because pasting a wrapped command runs only its first line and then fails.
+  assert.ok(render(view({})).includes(
+    `  npm run backend -- operation-run --id ${OPERATION_ID} --db .runtime/app.db --config services/agent/fixtures/backend-demo-config.json`,
+  ), text);
   assert.match(text, /The shopper has no tool that can run it/);
   // A rerun with nothing new, or an operation already run, offers nothing to execute.
   const finished = progress(false, 48990);
@@ -367,7 +398,7 @@ test('a brief review does not shorten what must stay whole', () => {
   const unknown = renderBrief(view({ outcome: 'unknown_submission', progress: { ...progress(false, 800000), unresolved } }, { events, ledger: null }));
   assertTerminalSafe(unknown);
   assert.match(flat(unknown), /Do not treat the unknown submission as failed, and do not treat it as safe/);
-  assert.match(flat(unknown), /A retry of the same cart cannot reserve twice/);
+  assert.match(flat(unknown), /resends this exact cart with the same key, with no model, so it cannot reserve twice/);
   assert.match(flat(unknown), /These numbers may or may not include the unknown submission/);
   assert.doesNotMatch(unknown.join('\n'), /only the operator can run/);
 

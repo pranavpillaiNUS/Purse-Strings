@@ -6,14 +6,15 @@ import { z } from 'zod';
 import { createBackendClient, type BackendTransport } from '../../../packages/contracts/src/client.ts';
 import type { Operation } from '../../../packages/contracts/src/backend.ts';
 import { createMockBackend } from '../../../packages/contracts/src/mock.ts';
-import { BackendSessionError, createBackendShoppingSession } from '../../../services/agent/src/backend-session.ts';
+import { BackendSessionError, createBackendShoppingSession, resendUnresolvedCarts, type ResentCart } from '../../../services/agent/src/backend-session.ts';
 import { draftMandateWithModel, type MandateDraftOutcome } from '../../../services/agent/src/mandate-drafter.ts';
 import { createScriptedModel, type ShoppingModel } from '../../../services/agent/src/model.ts';
 import { buildRunReview, buildStatusView, type BackendKind, type ShopperKind } from '../../../services/agent/src/review.ts';
 import { runShoppingWorker, type ShoppingOutcome, type ShoppingRunEvent } from '../../../services/agent/src/worker.ts';
 import { createBackendCliTransport } from './backend-transport.ts';
 import { bundled, printable, printableLine, printOrigin, printProposal } from './mandate.ts';
-import { readLedgerFacts, renderLiveEvent, renderRunReview, renderStatus, useColor } from './review-output.ts';
+import { readLedgerFacts, renderLiveEvent, renderResentCarts, renderRunReview, renderStatus, useColor } from './review-output.ts';
+import { createFileSubmissionJournal } from './submission-journal.ts';
 
 // Separate entry point, like the backend CLI: this process holds the model key and
 // never loads checker or payment modules. It reaches the checker only through the
@@ -50,8 +51,10 @@ Options:
 Exit codes: 0 completed; 2 not completed (partial, no feasible cart, limit, refused);
 3 a submission's outcome is unknown and a reservation may exist; 1 invalid input/error.
 
-An accepted proposal is a reservation, not payment, an order or delivery. Reusing a
-run ID cannot duplicate a reservation: changed content under one cart ID is refused.
+An accepted proposal is a reservation, not payment, an order or delivery. If a
+submission's outcome is unknown, the next run on that mandate sends that exact cart
+again with the same key, with no model, reports the answer and stops. Changed content
+under one cart ID is refused.
 Without --json, a run closes with a review, using one extra read of the ledger.
 
 Draft options (a model reads a plain-English request; policy checks its answer):
@@ -191,6 +194,12 @@ function buildTransport(values: {
     catalogs: values.catalog.map((path) => readJson(path, 'Mock catalog')),
   } as Parameters<typeof createMockBackend>[0]);
   return (request) => backend.handle(request);
+}
+
+/** The same codes a run would use: 3 while anything may still be reserved, 2 if a cart came back no. */
+function resentExitCode(resent: readonly ResentCart[]): number {
+  if (resent.some(({ kind }) => kind === 'unknown')) return 3;
+  return resent.some(({ kind }) => kind !== 'accepted') ? 2 : 0;
 }
 
 function backendKind(values: { 'mock-mandate'?: string | undefined }): BackendKind {
@@ -394,6 +403,21 @@ async function main(): Promise<void> {
 
   const backend = backendKind(values);
   const client = createBackendClient(buildTransport(values));
+  const operator = values['backend-db'] !== undefined && values['backend-config'] !== undefined
+    ? { databasePath: displayPath(values['backend-db']), configPath: displayPath(values['backend-config']) }
+    : null;
+  // The contract mock keeps nothing after this command, so it has nothing to resend.
+  const journal = values['backend-db'] === undefined ? undefined : createFileSubmissionJournal(values['backend-db'], mandateId);
+  if (journal) {
+    // Before any model or key is needed, and before a new cart could be built beside this one.
+    const resent = await resendUnresolvedCarts({ runId }, client, journal);
+    if (resent.length > 0) {
+      process.exitCode = resentExitCode(resent);
+      if (values.json) console.log(JSON.stringify({ simulation: true, runId, mandateId, resent }));
+      else console.log(renderResentCarts(resent, operator).join('\n'));
+      return;
+    }
+  }
   const model = await buildModel(values.scripted, values.model);
   const maxToolCalls = positiveInteger(values['max-tool-calls'], 'max-tool-calls');
   const maxCarts = positiveInteger(values['max-carts'], 'max-carts');
@@ -403,7 +427,7 @@ async function main(): Promise<void> {
     mandateId, runId,
     ...(maxToolCalls === undefined ? {} : { maxToolCalls }),
     ...(maxCarts === undefined ? {} : { maxCarts }),
-  }, client);
+  }, client, journal);
 
   if (!values.json) console.log(printableLine(`Shopping run ${runId} | mandate ${mandateId} | simulation`));
   const trace = values.trace;
@@ -439,9 +463,6 @@ async function main(): Promise<void> {
     }
     // The contract mock has no ledger to read, and its mandate.get would report zeros.
     const ledger = backend === 'simulation-backend' ? await readLedgerFacts(client, mandateId, `${runId}-review`) : null;
-    const operator = values['backend-db'] !== undefined && values['backend-config'] !== undefined
-      ? { databasePath: displayPath(values['backend-db']), configPath: displayPath(values['backend-config']) }
-      : null;
     try {
       const review = buildRunReview({ report, events, ledger, backend, shopper, budgetMinor: session.getContext().budgetMinor });
       console.log(renderRunReview(review, { color: useColor(process.stdout, process.env), operator, brief: values.brief === true }).join('\n'));

@@ -297,15 +297,21 @@ export function childEnvironment(entry: 'main' | 'backend' | 'shop', args: reado
   return copy;
 }
 
+/** Only a real Enter counts. Closed input stops the flow, so nothing can confirm by itself. */
 function waitForEnter(prompt: string): void {
   process.stdout.write(`\n[${prompt}]`);
+  const closed = new DemoFailure('Input closed before Enter was pressed, so the flow stopped');
   const buffer = Buffer.alloc(1);
   for (;;) {
+    let bytesRead: number;
     try {
-      if (readSync(0, buffer, 0, 1, null) === 0 || buffer[0] === 10) return;
+      bytesRead = readSync(0, buffer, 0, 1, null);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EAGAIN') return;
+      if ((error as NodeJS.ErrnoException).code === 'EAGAIN') continue;
+      throw closed;
     }
+    if (bytesRead === 0) throw closed;
+    if (buffer[0] === 10) return;
   }
 }
 
