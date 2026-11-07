@@ -546,7 +546,7 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
       try {
         const order = (await client.createOrder(
           {
-            intent: 'AUTHORIZATION',
+            intent: 'AUTHORIZE',
             purchase_units: [{ amount, invoice_id: invoiceId }],
           },
           requestId,

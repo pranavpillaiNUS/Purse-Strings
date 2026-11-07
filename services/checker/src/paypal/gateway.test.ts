@@ -547,7 +547,7 @@ test('createAuthorizationOrder sends the AUTHORIZATION order with SGD money at t
   assert.equal(init.method, 'POST');
   assert.equal((init.headers as Record<string, string>)['PayPal-Request-Id'], 'mandate-a-1/hold');
   assert.deepEqual(JSON.parse(String(init.body)), {
-    intent: 'AUTHORIZATION',
+    intent: 'AUTHORIZE',
     purchase_units: [{
       amount: { currency_code: 'SGD', value: '55.40' },
       invoice_id: INVOICE,
