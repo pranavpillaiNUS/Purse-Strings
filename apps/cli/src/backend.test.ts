@@ -805,7 +805,13 @@ test('sandbox hold commands refuse closed and sanitized without credentials, and
     // refusal; run it from an empty directory instead.
     const emptyDir = join(fixture.directory, 'empty-cwd');
     mkdirSync(emptyDir, { recursive: true });
-    const missing = runBackend(['--db', fixture.dbPath, '--config', configPath, 'operation-authorize', '--id', 'op-1'], undefined, { cwd: emptyDir });
+    // The assertion expects the loader to find nothing, so the spawn must not
+    // inherit PAYPAL_* values from a shell that exports real credentials.
+    const cleanEnv = { ...process.env };
+    for (const key of Object.keys(cleanEnv)) {
+      if (/^paypal_/i.test(key)) delete cleanEnv[key];
+    }
+    const missing = runBackend(['--db', fixture.dbPath, '--config', configPath, 'operation-authorize', '--id', 'op-1'], undefined, { cwd: emptyDir, env: cleanEnv });
     assert.equal(missing.status, 2);
     assert.equal(missing.stdout, '');
     assert.match(missing.stderr, /Sandbox credentials are not configured/);

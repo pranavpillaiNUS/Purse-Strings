@@ -35,7 +35,6 @@ creation, so create the demo hold on demo day.
 
 ## One-time setup (about 15 minutes)
 
-
 1. Sign in at [developer.paypal.com](https://developer.paypal.com), then go to **Testing Tools → Sandbox Accounts → Create account**:
    - **Business**, country **Singapore**. This is our app, the merchant. A Singapore account holds SGD,
      so captures don't sit in `PENDING` waiting for currency acceptance.
@@ -89,4 +88,5 @@ Run 1 facts (authorization `48N27869UF418711G`, order `4KP481773U222774K`):
 - Captures settled with fees (S$122.69 / 81.77 / 52.20 gross→net visible on re-read), and the authorization moved to `PARTIALLY_CAPTURED` with exactly 3 captures on the order.
 - **Over-capture: the surprising result.** PayPal accepted S$507.35 against a S$495.35 remainder (`COMPLETED`) — the hold is **not** a hard ceiling on this account. The checker's own amount verification in `services/checker/src/paypal/gateway.ts` (expected amount passed per capture) is therefore the *only* cap; say this honestly in the demo/write-up.
 - The earlier run `spike-20261107190056` ended with `buyer cancelled` at the approval page (login trouble before the dashboard credentials were recovered); order `9TK54416118491612` — no hold was exercised, no state to clean up.
+- Raw request/response excerpts for this run (with PayPal `debug_id`s) stay in `spike-logs/` (gitignored); they are not reproduced in this file.
 
