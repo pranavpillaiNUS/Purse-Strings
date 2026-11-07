@@ -322,7 +322,8 @@ it recovers at store-a (`--run-id recovery`).
   with 75-hour-old records, was rejected with `MANDATORY_EVIDENCE_UNKNOWN`, and recovered at
   store-a. It is not told the 72-hour limit, and a run where it avoids store-b would show no
   rejection. The flow reports that with exit 2. Two passes are not a reliability rate. The scripted
-  flow passes in CI on Linux, but no live run has happened on Linux or macOS.
+  flow passes in CI on Linux, Windows and macOS, but no live run has happened on Linux or macOS,
+  or on Windows with the backend's folder check on.
 - **No acceptance gate is passed by this.** M4 still needs CLI review and approval, and
   bounded exceptions.
 - **Run state is not durable.** An interrupted worker keeps nothing but its optional trace.
@@ -343,8 +344,7 @@ node --test "services/agent/src/*.test.ts" "services/suppliers/src/*.test.ts" ap
 `apps/cli/src/shop.test.ts` runs the worker against the real checker core and a real
 SQLite ledger: normal purchase, a shipping jump then recovery, a split across suppliers,
 unknown evidence, a lost response, reuse of a run ID, competing runs, and a compromised
-model. Its full-process walk is skipped on Windows; see
-[the handoff](CONFIRMATION_HANDOFF.md).
+model.
 
 `createOfflineShoppingSession` remains as a single-cart rehearsal that never contacts a
 backend. Its receipt always says `eligible` with zero placeholder amounts and an `unknown`

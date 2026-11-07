@@ -45,10 +45,10 @@ A unit-4 PayPal gateway contract exists at `services/checker/src/paypal/gateway.
 path; nothing about it is verified against a real PayPal account. Reproduction
 commands and proof-class distinctions live in `docs/backend-delivery-review.md`.
 
-**Known problem:** on Windows, `apps/cli/src/backend.ts` refuses its runtime directory after
-first use because of a POSIX permission check, and 8 tests in
-`apps/cli/src/backend.test.ts` fail. Issue #9 tracks the fix, and `npm run demo:flow` stops there too until then. Report these as already known, and do not weaken the
-check without Role A's agreement. Details are in `services/agent/CONFIRMATION_HANDOFF.md`.
+**Runtime folders:** the backend refuses a runtime folder other accounts can reach. On Windows it
+reads the real owner and access list (`apps/cli/src/windows-acl.ts`) and refuses what it can't
+verify. Do not weaken either check without Role A's agreement. The rules and limits are in
+`docs/backend-api.md`.
 
 ## Team, ownership and branches
 
@@ -59,7 +59,7 @@ which person you are working for, ask.
 | --- | --- |
 | `services/checker/` (rules, ledger, execution worker, PayPal client and spike), payment execution, audit log, approval and exception flow | Role A, Money: Danny |
 | `services/suppliers/` (stores, fixtures, control panel), `services/agent/` (mandate drafting, bounded shopper) | Role B, Shopping: Pranav |
-| `apps/cli/` | Shared. Each role adds commands for its own features: `backend.ts` is Role A; `store.ts`, `mandate.ts`, `shop.ts` and `backend-transport.ts` are Role B. Tell the other person before changing shared parsing or output code. |
+| `apps/cli/` | Shared. Each role adds commands for its own features: `backend.ts` and `windows-acl.ts` are Role A; `store.ts`, `mandate.ts`, `shop.ts` and `backend-transport.ts` are Role B. Tell the other person before changing shared parsing or output code. |
 | `packages/contracts/` | Shared. Changes need agreement from both people. |
 | `config/`, `examples/`, `docs/`, root config files, this file | Shared. Tell the other person about changes. |
 
@@ -187,7 +187,7 @@ aim to reach them.
 
 - Inspect `git status` and applicable instructions before editing. Preserve unrelated
   work and the existing PayPal spike unless the task requires a change.
-- Use Node 24+, erasable TypeScript and ESM. Validate external data with runtime
+- Use Node 24.15+ or 26+, erasable TypeScript and ESM. Validate external data with runtime
   schemas; TypeScript types do not validate model, file or network input.
 - CLI parsing/output lives in `apps/cli/`; pure policy checks in
   `services/checker/src/rules/`; suppliers in `services/suppliers/`; model calls in

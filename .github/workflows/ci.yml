@@ -14,13 +14,21 @@ concurrency:
 
 jobs:
   checks:
-    # Linux only for now: add windows-latest once issue #9 is fixed, or it stays red.
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['24', '26']
+        # 24.15.0 is the lowest supported version in package.json. Older 24.x prints a
+        # node:sqlite warning into the backend's stderr, which is meant to stay sanitized.
+        os: [ubuntu-latest, windows-latest]
+        node-version: ['24.15.0', '26']
+        include:
+          - os: ubuntu-latest
+            node-version: '24'
+          # One job only: macOS minutes count ten times over on a private repo.
+          - os: macos-latest
+            node-version: '26'
     # Every step is offline: no secrets, no model key, no PayPal, scripted stand-ins only.
     steps:
       - uses: actions/checkout@v7

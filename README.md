@@ -19,7 +19,7 @@ using fake providers.
 
 ## Run
 
-Requires Node 24+ and npm. No API keys or network calls are used by the offline commands.
+Requires Node 24.15+ or 26+, and npm. No API keys or network calls are used by the offline commands.
 
 ```sh
 npm ci
@@ -158,10 +158,10 @@ named operations, with no model or key.
 it cannot be combined with `--json`. The bars show money and units **allocated**,
 meaning reserved or committed, not delivered. A reservation sets budget aside; it makes no payment.
 
-This PowerShell walkthrough uses the scripted model, so it needs no API key. **It stops
-at the second backend command on Windows**, because of the runtime-directory check
-described in the [handoff](services/agent/CONFIRMATION_HANDOFF.md#blocked-on-windows).
-The contract-mock command in the agent README works everywhere.
+This PowerShell walkthrough uses the scripted model, so it needs no API key. The backend
+keeps its state in `.runtime/backend/`, a private folder it creates itself, and refuses an
+existing folder with wider access. If that happens, delete the folder and run the command
+again. [The backend API](docs/backend-api.md#private-runtime-folders) has the exact rules.
 
 ```powershell
 $now = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -173,25 +173,25 @@ npm.cmd run --silent cli -- store reset --catalog services/suppliers/state/store
 
 # Plan, then the operator stores, reviews and confirms the exact revision.
 npm.cmd run --silent cli -- mandate draft --request services/agent/fixtures/demo-hire-request.json --now $now --proposal-out services/agent/state/proposal.json
-$draft = npm.cmd run --silent backend -- --db .runtime/app.db --config $config mandate-draft --file services/agent/state/proposal.json | ConvertFrom-Json
-npm.cmd run --silent backend -- --db .runtime/app.db --config $config mandate-review --id engineering-hires-demo --revision 1
-npm.cmd run --silent backend -- --db .runtime/app.db --config $config mandate-confirm --id engineering-hires-demo --revision 1 --digest $draft.digest
+$draft = npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config mandate-draft --file services/agent/state/proposal.json | ConvertFrom-Json
+npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config mandate-review --id engineering-hires-demo --revision 1
+npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config mandate-confirm --id engineering-hires-demo --revision 1 --digest $draft.digest
 
 # A compromised model obeys the hostile listing. Everything is refused, nothing reserved.
-npm.cmd run --silent shop -- run --run-id compromised --mandate-id engineering-hires-demo --backend-db .runtime/app.db --backend-config $config --scripted services/agent/fixtures/compromised-shopping-calls.json
+npm.cmd run --silent shop -- run --run-id compromised --mandate-id engineering-hires-demo --backend-db .runtime/backend/app.db --backend-config $config --scripted services/agent/fixtures/compromised-shopping-calls.json
 
 # Store-b removes the listing. Live Claude would not buy from it while the listing was there.
 npm.cmd run --silent cli -- store reset --catalog services/suppliers/state/store-b.json --seed store-b --now $now
 
 # An honest run compares both stores and reserves the cheaper cart. Prints the operation ID.
-npm.cmd run --silent shop -- run --run-id demo --mandate-id engineering-hires-demo --backend-db .runtime/app.db --backend-config $config --scripted services/agent/fixtures/demo-shopping-calls.json
+npm.cmd run --silent shop -- run --run-id demo --mandate-id engineering-hires-demo --backend-db .runtime/backend/app.db --backend-config $config --scripted services/agent/fixtures/demo-shopping-calls.json
 
 # A read-only look: the ledger's numbers and this operation, with each fact on its own line.
-npm.cmd run --silent shop -- status --mandate-id engineering-hires-demo --backend-db .runtime/app.db --backend-config $config --operation OPERATION_ID
+npm.cmd run --silent shop -- status --mandate-id engineering-hires-demo --backend-db .runtime/backend/app.db --backend-config $config --operation OPERATION_ID
 
 # Only the operator's backend process executes, here against fake providers.
-npm.cmd run --silent backend -- --db .runtime/app.db --config $config operation-run --id OPERATION_ID
-npm.cmd run --silent backend -- --db .runtime/app.db --config $config audit --id OPERATION_ID
+npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config operation-run --id OPERATION_ID
+npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config audit --id OPERATION_ID
 ```
 
 To use Claude, add `ANTHROPIC_API_KEY` to `.env` and drop `--scripted`. Delete `.runtime/`
@@ -208,10 +208,9 @@ cart rejected followed by recovery, and execution over fake providers. It needs 
 network. Add `--live` for Claude, which spends API credit, and `--pause` for recording. The
 scene-by-scene recording plan is in [the demo script](docs/demo-script.md).
 
-**It stops at scene 3 on Windows**, because of the same
-[runtime-directory check](services/agent/CONFIRMATION_HANDOFF.md#blocked-on-windows). The
-scripted flow passes in CI on Linux with Node 24 and 26. Live Claude has run it only in temporary
-Windows copies with that check skipped, and it has not run on macOS.
+The scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and on macOS with
+Node 26. Live Claude has run it only in temporary Windows copies with the backend's folder check
+skipped.
 
 ## Status
 

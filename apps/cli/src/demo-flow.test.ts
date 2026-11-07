@@ -225,6 +225,16 @@ test('the runner holds nothing: it imports only Node built-ins and starts each c
   assert.doesNotMatch(source, /import\(/);
 });
 
+test('documented backend state has its own folder, so running this flow first cannot get it refused', () => {
+  // The flow creates .runtime/ as an ordinary folder, and the backend refuses an existing
+  // folder it did not make private. .runtime/backend/ is one the backend creates itself.
+  const config = read('services/agent/fixtures/backend-demo-config.json') as { fakeProviderDb: string };
+  assert.equal(config.fakeProviderDb, '../../../.runtime/backend/providers.db');
+  for (const doc of ['README.md', 'docs/backend-api.md', 'docs/backend-delivery-review.md']) {
+    assert.doesNotMatch(readFileSync(join(root, doc), 'utf8'), /\.runtime\/app\.db/, doc);
+  }
+});
+
 test('a mistyped --dir is never cleared', (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-keep-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -248,11 +258,7 @@ test('closed input stops the flow at the first prompt, so nothing is confirmed',
   assert.doesNotMatch(result.stdout, /Operation: ordered/);
 });
 
-const backendRefusedOnWindows = process.platform === 'win32'
-  ? 'The backend CLI refuses its runtime directory on Windows after first use (POSIX permission check)'
-  : false;
-
-test('input that closes at the confirmation prompt stops the flow before anything is confirmed', { skip: backendRefusedOnWindows }, (t) => {
+test('input that closes at the confirmation prompt stops the flow before anything is confirmed', (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-eof-confirm-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   // Enter for scene 2 and scene 3, then nothing for the operator's own prompt.
@@ -265,7 +271,7 @@ test('input that closes at the confirmation prompt stops the flow before anythin
   assert.doesNotMatch(result.stdout, /Confirmed by OS user/);
 });
 
-test('the whole flow runs with no key or network, twice in the same directory', { skip: backendRefusedOnWindows }, (t) => {
+test('the whole flow runs with no key or network, twice in the same directory', (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   // A PayPal name in the terminal must not stop the shopper, which refuses to start beside one.

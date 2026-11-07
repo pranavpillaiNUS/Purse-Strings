@@ -47,9 +47,9 @@ The rules do not require a separate AI tools list. We keep one below as accurate
 | Repo made public | Both. Pranav changes the setting | Not done. The repo is private. A scan of its history on Nov 7 found no real secrets. It did find personal details you should both see first. The report is outside the repo. Scan again before the change, because commits are still landing |
 | License visible | Both | In place. `LICENSE` is MIT and GitHub detects it. The copyright line names only `pranavpillaiNUS`, so Danny should confirm that is fine. The public can see it only once the repo is public |
 | Complete setup and run instructions | Pranav | Partly done. `README.md` has run commands. `docs/new-device-setup.md` is a team guide and still says the repo is private. The opening below is not pasted in yet |
-| Working demo instructions | Both | Not ready. `npm run demo:flow` is documented. It stops at scene 3 on Windows (issue #9, Danny). The scripted flow passes in CI on Linux with Node 24 and 26. Live Claude has run it only in temporary Windows copies with that check skipped. It has not run on macOS. It runs on fake providers |
+| Working demo instructions | Both | Not ready. `npm run demo:flow` is documented. The scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and on macOS with Node 26, once PR #15 merges. Live Claude has run it only in temporary Windows copies with the backend's folder check skipped. It runs on fake providers |
 | Judge access until judging ends on Dec 15, with any credentials they need | Both | Not done. The repo must stay public and the instructions must keep working. The scripted flow needs no key. `--live` needs an Anthropic key. **[PAYPAL, Danny and Pranav: decide how judges run the PayPal path, using sandbox details only and committing no secret to the repo. See the proposal below.]** |
-| Name the platform it runs on | Both | Not decided. The rules require consistent running on the intended platform. The tests and the scripted flow pass in CI on Linux. Windows is blocked by issue #9, and macOS is untested |
+| Name the platform it runs on | Both | Not decided. The rules require consistent running on the intended platform. The tests and the scripted flow pass in CI on Linux, Windows and macOS, once PR #15 merges. Name only platforms where the PayPal path has also run, because the rules hold us to what we name |
 | Video under 3 minutes, public on YouTube | Pranav, with Danny for scene 6 | Not done. `docs/demo-script.md` is the recording plan and targets 2:45. No video exists. Scene 6 has to be recorded after PayPal is in the purchase path |
 | No copyrighted music or third-party trademarks | Pranav | Cannot be checked until a video exists. A search on Nov 7 found no common hardware brand names in the fixtures, examples, policy files or demo flow. SKUs are synthetic, such as `LAP-14-AIR`. The narration and screen name Claude, a third-party mark, and PayPal, the sponsor. Section 11 says to ask in writing if a term is ambiguous, so consider asking Devpost whether naming the AI tool you used is fine |
 | Devpost text | Both. Pranav drafts, Danny writes the PayPal parts | Draft below, with PayPal placeholders open. Nothing is entered on Devpost |
@@ -65,7 +65,7 @@ video alone.
 
 | Path | What a judge needs | Proposal |
 | --- | --- | --- |
-| Scripted flow | Node 24 or newer | The first command in the README. It needs no key or network, so PayPal must stay opt-in for this to keep working |
+| Scripted flow | Node 24.15+ or 26+ | The first command in the README. It needs no key or network, so PayPal must stay opt-in for this to keep working |
 | PayPal sandbox path | A sandbox client ID and secret, and a sandbox buyer login to approve the hold | A separate sandbox app and buyer just for judges, so nothing they do affects Danny's. Sandbox only, given privately and never in the repo. Delete them after winners are announced |
 | Live Claude | An Anthropic key | Their own key, or a separate key with a low spend limit, given privately. A run costs about 30 cents |
 
@@ -268,7 +268,7 @@ mandate, and shops within that mandate using four bounded tools.
 
 ## Run the story
 
-Needs Node 24 or newer and npm. After `npm ci`, one command runs it:
+Needs Node 24.15+ or 26+, and npm. After `npm ci`, one command runs it:
 
 ```sh
 npm run demo:flow
@@ -278,11 +278,8 @@ It needs no API key or network. It runs six scenes, with every date generated fr
 panel for two fake stores, a plain-English request, a person confirming it, a hostile listing, a store
 change that gets a cart rejected followed by recovery, and execution over fake providers.
 
-[WINDOWS, remove once issue #9 is fixed: on Windows it stops at scene 3, because of a runtime-directory
-permission check.]
-
-[PLATFORMS: as of Nov 7, the scripted flow passes in CI on Linux with Node 24 and 26, and macOS is
-untested. Update this, then state what you saw.]
+[PLATFORMS: as of Nov 8, the scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and on
+macOS with Node 26. Update this, then state what you saw.]
 
 ## What this proves
 
@@ -319,7 +316,7 @@ from the official rules. Ties go to the higher score on the first criterion, the
 | Criterion | What we show today | Still needed |
 | --- | --- | --- |
 | **Stage One, pass or fail:** reasonably fits the theme and reasonably applies the required APIs and SDKs | AI is in place: Claude drafts mandates and shops, with live runs recorded in `services/agent/README.md` | **[PAYPAL, after Danny's work lands: what the purchase path does in the sandbox.]** Without it, we expect to fail this stage |
-| **Technological Implementation:** "How thoroughly and skillfully does the project use PayPal Developer Platform and AI tool(s)? Does the project reflect genuine effort and a working, non-trivial implementation?" | A checker with behavior tests, a SQLite ledger with atomic reservations, durable execution with restart recovery over fake providers, and a shopper with no payment credentials | **[PAYPAL: real sandbox results.]** A clean run on the platform we name, and the issue #9 fix if that includes Windows |
+| **Technological Implementation:** "How thoroughly and skillfully does the project use PayPal Developer Platform and AI tool(s)? Does the project reflect genuine effort and a working, non-trivial implementation?" | A checker with behavior tests, a SQLite ledger with atomic reservations, durable execution with restart recovery over fake providers, and a shopper with no payment credentials | **[PAYPAL: real sandbox results.]** A clean run on the platform we name |
 | **Design:** "Does the project deliver a complete, coherent product experience — not just a technical proof of concept?" | One complete terminal flow in six scenes, ending on a budget and status dashboard. Facts come from the backend, and Claude's words are labelled as Claude's. There is no website in this stage, by decision | Record the rebuilt output. This is our weakest criterion to defend with a terminal, and the buyer's PayPal approval has to fit into the flow |
 | **Potential Impact:** "Does the project make a credible, specific case for solving a real problem for a real audience — and does the solution actually address that problem based on what's demonstrated?" | A real job for a defined user: equip hires on time, within budget, with a person accountable. All data is synthetic, and no outcome is measured | Nothing we can measure before the deadline. Do not invent numbers. Stock reuse is in the request but not built, and the demo says so |
 | **Innovation/Idea:** "How creative and novel is the concept and does the project differ from existing concepts?" | A confirmed mandate, an independent checker and price-free carts, in place of an agent with a payment button | **[PAYPAL: how the sandbox fits this design, if results support it.]** |

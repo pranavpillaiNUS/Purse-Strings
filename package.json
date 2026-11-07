@@ -5,7 +5,7 @@
   "description": "Your agent shops. You hold the purse strings.",
   "license": "MIT",
   "engines": {
-    "node": ">=24"
+    "node": "^24.15.0 || >=26"
   },
   "workspaces": [
     "apps/*",

@@ -23,9 +23,9 @@ and says how many lines it left out.
 For a scripted rehearsal, say "the scripted stand-in" wherever the narration below says
 "Claude", and omit the live-only part of scene 4 that starts "Now Claude".
 
-**On Windows, the flow stops in scene 3** until the runtime-directory check in issue #9 is
-resolved. Record on Linux, or after that fix. The scripted flow passes in CI on Linux, but a live
-take has not run there, so rehearse one first. macOS is untested.
+The scripted flow passes in CI on Linux, Windows and macOS. A live take has not run on Linux or
+macOS, or on Windows with the backend's folder check on, so rehearse one first on the machine you
+record with.
 
 ## The script
 

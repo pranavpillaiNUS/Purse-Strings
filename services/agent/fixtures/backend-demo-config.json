@@ -2,5 +2,5 @@
   "version": 1,
   "policyFiles": ["../../../config/policies/hardware.example.json"],
   "catalogFiles": ["../../suppliers/state/store-a.json", "../../suppliers/state/store-b.json"],
-  "fakeProviderDb": "../../../.runtime/providers.db"
+  "fakeProviderDb": "../../../.runtime/backend/providers.db"
 }
