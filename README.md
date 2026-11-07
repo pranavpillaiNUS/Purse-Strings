@@ -204,9 +204,14 @@ within budget. This walkthrough uses dated fixtures, which stop working after No
 
 `npm run demo:flow` runs the whole story with every date generated from today: the control
 panel, a plain-English request, confirmation, a hostile listing, a store change that gets a
-cart rejected followed by recovery, and execution over fake providers. It needs no key or
-network. Add `--live` for Claude, which spends API credit, and `--pause` for recording. The
+cart rejected followed by recovery, and execution over fake providers. Add `--live` for Claude, which spends API credit, and `--pause` for recording. The
 scene-by-scene recording plan is in [the demo script](docs/demo-script.md).
+
+`--sandbox-paypal` connects scene 6's payment capture to the PayPal sandbox: the
+generated backend config gains `paymentProvider: "paypal-sandbox"`, the flow needs
+sandbox credentials in `.env` (it stops before any reservation without them) and
+pauses while a sandbox buyer approves the hold in a browser. The supplier order stays
+simulated in both variants, and the default flow still needs no key or network.
 
 The scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and on macOS with
 Node 26. Live Claude has run it only in temporary Windows copies with the backend's folder check

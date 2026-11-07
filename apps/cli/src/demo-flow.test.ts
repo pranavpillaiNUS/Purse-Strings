@@ -7,8 +7,9 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createMandateDraft } from '../../../services/agent/src/mandate.ts';
 import {
-  checkSummary, childEnvironment, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor, revisionSummary, scriptedDraftCalls,
-  STALE_HOURS, storeTable, summarizeTrace, wrapCommand, wrapLine, type StoreView,
+  checkSummary, childEnvironment, demoBackendConfig, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor,
+  revisionSummary, runSandboxPayment, sandboxCredentialRefusal, scriptedDraftCalls, SANDBOX_CREDENTIAL_PROBE_ID, STALE_HOURS,
+  storeTable, summarizeTrace, wrapCommand, wrapLine, type SandboxPaymentBackend, type StoreView,
 } from './demo-flow.ts';
 import { formatSgd } from './format.ts';
 import { PROVIDER_WORDING } from './review-output.ts';
@@ -302,6 +303,11 @@ test('the whole flow runs with no key or network, twice in the same directory', 
     assert.match(stdout, /Readiness +not assessed/);
     assert.match(stdout, /this is not PayPal and not a real order/);
     assert.match(stdout, /PayPal is not in this path yet/);
+    // Default mode: byte-for-byte the pre-sandbox flow. No provider flag on the config,
+    // no hold command, nothing of the sandbox purchase path on screen.
+    assert.doesNotMatch(stdout, /operation-authorize|paypal-sandbox/i);
+    const generatedConfig = JSON.parse(readFileSync(join(work, 'config.json'), 'utf8')) as Record<string, unknown>;
+    assert.equal('paymentProvider' in generatedConfig, false);
 
     // The count on screen is the trace's, so it cannot drift from what the run recorded.
     const { refused, accepted } = summarizeTrace(readFileSync(join(work, 'compromised.jsonl'), 'utf8'));
@@ -318,4 +324,133 @@ test('the whole flow runs with no key or network, twice in the same directory', 
     assert.ok(!stdout.includes(root.replace(/[\\/]$/, '')), 'The repository path must not reach the screen');
     for (const line of stdout.split(/\r?\n/)) assert.ok(line.length <= 100, `${line.length} columns: ${line}`);
   }
+});
+
+const baseConfig = { policyFile: 'p.json', catalogFiles: ['a.json', 'b.json'], fakeProviderDb: 'providers.db' };
+
+test('the generated backend config gains the sandbox provider only when the flag asks for it', () => {
+  assert.deepEqual(demoBackendConfig(baseConfig), {
+    version: 1, policyFiles: ['p.json'], catalogFiles: ['a.json', 'b.json'], fakeProviderDb: 'providers.db',
+  });
+  assert.deepEqual(demoBackendConfig({ ...baseConfig, paymentProvider: 'paypal-sandbox' }), {
+    version: 1, policyFiles: ['p.json'], catalogFiles: ['a.json', 'b.json'], fakeProviderDb: 'providers.db',
+    paymentProvider: 'paypal-sandbox',
+  });
+});
+
+test('the sandbox credential probe id stays short enough for a PayPal request id', () => {
+  assert.ok(SANDBOX_CREDENTIAL_PROBE_ID.length > 0 && SANDBOX_CREDENTIAL_PROBE_ID.length <= 100);
+  assert.match(SANDBOX_CREDENTIAL_PROBE_ID, /^[A-Za-z0-9_-]+$/);
+});
+
+test('the loader\'s credential refusals map to operator guidance, other stderr does not', () => {
+  assert.match(sandboxCredentialRefusal('backend: Sandbox credentials are not configured: PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET must come from the process environment or the invocation directory .env') ?? '', /^Add the sandbox PayPal keys/);
+  assert.match(sandboxCredentialRefusal('backend: Only the sandbox PayPal environment is supported in this stage; PAYPAL_ENV was not "sandbox"') ?? '', /not the PayPal sandbox/);
+  assert.equal(sandboxCredentialRefusal('backend: Operation was not found'), null);
+  // No value ever rides through, only names.
+  assert.doesNotMatch(sandboxCredentialRefusal('backend: Sandbox credentials are not configured: PAYPAL_CLIENT_ID values stay out') ?? '', /SECRET=.|secret./);
+});
+
+// An offline fake runner stands in for the spawned backend: no network anywhere. The
+// whole-flow sandbox run needs a browser and real sandbox credentials, so the wiring is
+// proven here instead; the spawn tests cover flag-default equality and the early abort.
+function fakeBackend(
+  authorize: SandboxPaymentBackend['authorize'],
+  complete: SandboxPaymentBackend['complete'],
+  execute: SandboxPaymentBackend['execute'],
+): SandboxPaymentBackend {
+  return { authorize, complete, execute };
+}
+
+test('(offline fake runner) the sandbox scene runs hold, buyer wait, completion, execution, in that order', async () => {
+  const order: string[] = [];
+  const output: string[] = [];
+  const step = (name: string, data: Record<string, unknown>) => async () => {
+    order.push(name);
+    return { ok: true as const, data };
+  };
+  const result = await runSandboxPayment({
+    backend: fakeBackend(
+      step('authorize', { approvalUrl: 'https://www.sandbox.paypal.com/mock/approve' }),
+      step('complete', { authorizationId: 'AUTHDEMO1' }),
+      step('execute', { paymentProvider: 'paypal-sandbox', operation: { status: 'ordered' }, providerIds: { authorizationId: 'AUTHDEMO1', captureId: 'CAPDEMO1' } }),
+    ),
+    operationId: 'op-demo-1',
+    waitForBuyer: () => { order.push('buyer'); },
+    print: (line) => output.push(line),
+  });
+  assert.deepEqual(order, ['authorize', 'buyer', 'complete', 'execute']);
+  assert.equal(result.status, 'ordered');
+  assert.deepEqual([result.authorizationId, result.captureId], ['AUTHDEMO1', 'CAPDEMO1']);
+  const screen = output.join('\n');
+  assert.match(screen, /https:\/\/www\.sandbox\.paypal\.com\/mock\/approve/);
+  assert.match(screen, /Payment provider: paypal-sandbox/);
+  assert.match(screen, /authorizationId=AUTHDEMO1 captureId=CAPDEMO1/);
+  assert.match(screen, /supplier order stayed simulated \(fake\)/);
+  assert.match(screen, /never real money/);
+});
+
+test('(offline fake runner) an unapproved buyer prints the backend message as-is and nothing executes', async () => {
+  const order: string[] = [];
+  const output: string[] = [];
+  const refused = {
+    ok: false as const,
+    stderr: 'backend: The sandbox buyer has not approved this hold yet',
+  };
+  let conclusion: unknown;
+  try {
+    await runSandboxPayment({
+      backend: fakeBackend(
+        async () => { order.push('authorize'); return { ok: true as const, data: { approvalUrl: 'https://www.sandbox.paypal.com/mock/approve' } }; },
+        async () => { order.push('complete'); return refused; },
+        async () => { order.push('execute'); return { ok: true as const, data: {} }; },
+      ),
+      operationId: 'op-demo-2',
+      waitForBuyer: () => { order.push('buyer'); },
+      print: (line) => output.push(line),
+    });
+  } catch (error) { conclusion = error; }
+  assert.ok(conclusion instanceof Error);
+  assert.ok((conclusion as Error).message.includes('The sandbox buyer has not approved this hold yet'),
+    (conclusion as Error).message);
+  assert.deepEqual(order, ['authorize', 'buyer', 'complete']);
+  assert.match(output.join('\n'), /The sandbox buyer has not approved this hold yet/);
+});
+
+test('(offline fake runner) the flow stops loudly when the operation does not end ordered', async () => {
+  await assert.rejects(
+    runSandboxPayment({
+      backend: fakeBackend(
+        async () => ({ ok: true as const, data: { approvalUrl: 'https://www.sandbox.paypal.com/mock/approve' } }),
+        async () => ({ ok: true as const, data: { authorizationId: 'AUTHDEMO1' } }),
+        async () => ({ ok: true as const, data: { paymentProvider: 'paypal-sandbox', operation: { status: 'reconciliation_required' } } }),
+      ),
+      operationId: 'op-demo-3',
+      waitForBuyer: () => {},
+      print: () => {},
+    }),
+    /ended as "reconciliation_required"/,
+  );
+});
+
+test('the sandbox flag aborts before anything is reserved when the credentials are absent', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-sandbox-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  // PAYPAL_ENV=live makes the backend's credential loader refuse deterministically,
+  // even on a machine whose .env carries real sandbox keys, and it refuses before the
+  // probe would ever reach the network: the spawn stays offline.
+  const env: NodeJS.ProcessEnv = { ...process.env, PAYPAL_ENV: 'live' };
+  delete env.ANTHROPIC_API_KEY;
+  const work = join(directory, 'work');
+  const result = spawnSync(process.execPath, [entry, '--sandbox-paypal', '--dir', work], {
+    cwd: root, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.equal(result.status, 1, result.stderr);
+  const combined = result.stdout + result.stderr;
+  assert.match(combined, /Sandbox mode stopped before any scene or reservation/);
+  assert.match(combined, /not the PayPal sandbox/);
+  // The generated config did ask for the sandbox provider, and nothing was reserved.
+  const generatedConfig = JSON.parse(readFileSync(join(work, 'config.json'), 'utf8')) as Record<string, unknown>;
+  assert.equal(generatedConfig.paymentProvider, 'paypal-sandbox');
+  assert.ok(!/Recovery: |Operation: ordered|Attempted/.test(result.stdout), result.stdout);
 });

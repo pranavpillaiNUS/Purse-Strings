@@ -17,14 +17,67 @@ export const EXECUTION_PROVIDER = {
   statement: 'Fake providers stand in for payment and the supplier: this is not PayPal and not a real order.',
 } as const;
 
+/**
+ * Scene 6's wording when --sandbox-paypal is on. The money is a real PayPal sandbox
+ * call; every supplier-side fact stays simulated. Never shown without the flag, which
+ * also means no credential is touched and no PayPal call path is reachable.
+ */
+export const SANDBOX_EXECUTION_STATEMENT =
+  'Payment capture goes through the PayPal SANDBOX; the supplier order is still simulated, and a sandbox buyer must approve the hold in their browser.';
+
+/** The backend config the flow writes, with paymentProvider added only for the sandbox flag. */
+export function demoBackendConfig(input: {
+  policyFile: string;
+  catalogFiles: readonly string[];
+  fakeProviderDb: string;
+  paymentProvider?: 'paypal-sandbox';
+}): object {
+  return {
+    version: 1,
+    policyFiles: [input.policyFile],
+    catalogFiles: [...input.catalogFiles],
+    fakeProviderDb: input.fakeProviderDb,
+    ...(input.paymentProvider === undefined ? {} : { paymentProvider: input.paymentProvider }),
+  };
+}
+
+/**
+ * Maps the backend's sanitized credential refusals (names only, never values) to an
+ * operator instruction, or null when credentials were found.
+ */
+export function sandboxCredentialRefusal(stderr: string): string | null {
+  const text = inert(stderr.trim());
+  if (text.includes('Sandbox credentials are not configured')) {
+    return 'Add the sandbox PayPal keys (PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET) to .env at the repository root, then run again.';
+  }
+  if (text.includes('Only the sandbox PayPal environment')) {
+    return 'The credentials in this invocation are not the PayPal sandbox (PAYPAL_ENV must be "sandbox").';
+  }
+  return null;
+}
+
+/**
+ * A probe hold on an id with no operation: credentials load before the not-found
+ * refusal in the backend, and that refusal happens before any provider call, so this
+ * checks credentials without reserving anything or reaching the network.
+ */
+export const SANDBOX_CREDENTIAL_PROBE_ID = 'demo-sandbox-credential-probe';
+
 const HELP = `Repeatable end-to-end demo (simulation; no real money, suppliers, orders or PayPal)
 
 Usage:
-  npm run demo:flow -- [--live] [--pause] [--dir PATH]
+  npm run demo:flow -- [--live] [--pause] [--sandbox-paypal] [--dir PATH]
 
   --live    Claude drafts and shops, which spends API credit (about 57,000 tokens).
             Without it, a scripted stand-in plays Claude: no key or network.
   --pause   Wait for Enter between scenes, for recording.
+  --sandbox-paypal
+            Scene 6's payment capture runs through the PayPal sandbox. The generated
+            backend config gains paymentProvider "paypal-sandbox", the flow needs
+            PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET from .env (it stops before any
+            reservation without them), the hold's approval link comes on screen, and a
+            sandbox buyer must approve it in a browser before Enter continues. The
+            supplier order stays simulated. Default off: no credentials, no network.
   --dir     Working directory, cleared at the start. Default .runtime/demo.
 
 Every date is generated from today, so the flow does not expire. Scenes: the control
@@ -217,6 +270,89 @@ function say(text: string): void {
   }
 }
 
+/** Scene 6's sandbox execution as a pure sequence; tests drive it offline with a fake backend. */
+export type SandboxCallResult =
+  | { ok: true; data: Record<string, unknown> }
+  | { ok: false; stderr: string };
+
+export interface SandboxPaymentBackend {
+  /** Runs `operation-authorize`: the hold, or its sanitized refusal. */
+  authorize(operationId: string): Promise<SandboxCallResult>;
+  /** Runs `operation-complete-authorization` after the buyer approval. */
+  complete(operationId: string): Promise<SandboxCallResult>;
+  /** Runs the normal `operation-run`. */
+  execute(operationId: string): Promise<SandboxCallResult>;
+}
+
+export interface SandboxPaymentInput {
+  backend: SandboxPaymentBackend;
+  operationId: string;
+  /** Waits until the operator pressed Enter after the buyer approved on PayPal's hosted page. */
+  waitForBuyer: () => void | Promise<void>;
+  print: (line: string) => void;
+}
+
+export interface SandboxPaymentResult {
+  status: string;
+  authorizationId?: string;
+  captureId?: string;
+  /** The one-line summary the Result section pushes. */
+  summary: string;
+}
+
+const stopText = (stderr: string): string => inert(stderr.trim()) || 'the command refused without a message';
+
+/**
+ * The sandbox payment step, in the backend's own order: hold → buyer approval →
+ * authorization completed → normal execution. Refusals stop the flow with the
+ * backend's message untouched; nothing is released and the operation keeps its
+ * reservation until the operator reconciles.
+ */
+export async function runSandboxPayment(input: SandboxPaymentInput): Promise<SandboxPaymentResult> {
+  const { backend, operationId, waitForBuyer, print } = input;
+  const hold = await backend.authorize(operationId);
+  if (!hold.ok) {
+    throw new DemoFailure(`The sandbox hold was refused before the buyer step: ${stopText(hold.stderr)}`);
+  }
+  const { approvalUrl } = hold.data as { approvalUrl?: unknown };
+  if (typeof approvalUrl !== 'string' || !approvalUrl.startsWith('https://')) {
+    throw new DemoFailure('The hold did not return a buyer approval link, so the flow cannot continue');
+  }
+  print('');
+  print('Approve the hold as the sandbox buyer in a browser (no real money), then return and press Enter:');
+  print(approvalUrl);
+  await waitForBuyer();
+  const finished = await backend.complete(operationId);
+  if (!finished.ok) {
+    // The buyer may not have approved. The backend's closed message shows as-is.
+    print(stopText(finished.stderr));
+    print('');
+    throw new DemoFailure(stopText(finished.stderr));
+  }
+  const held = finished.data as { authorizationId?: unknown };
+  const executed = await backend.execute(operationId);
+  if (!executed.ok) throw new DemoFailure(`The sandbox execution was refused: ${stopText(executed.stderr)}`);
+  const run = executed.data as { paymentProvider?: unknown; operation?: { status?: unknown }; providerIds?: Record<string, unknown> };
+  if (run.operation?.status !== 'ordered') {
+    throw new DemoFailure(`The operation ended as ${JSON.stringify(run.operation?.status)}`);
+  }
+  const id = (source: unknown, name: string): string | undefined =>
+    typeof source === 'string' && source.length > 0 && source.length <= 64 && /^[A-Za-z0-9_-]+$/.test(source) ? source : undefined;
+  const authorizationId = id(held.authorizationId, 'authorizationId') ?? id(run.providerIds?.authorizationId, 'authorizationId');
+  const captureId = id(run.providerIds?.captureId, 'captureId');
+  print(`Payment provider: ${run.paymentProvider === 'paypal-sandbox' ? 'paypal-sandbox' : stopText(String(run.paymentProvider))} — a real PayPal SANDBOX capture, never real money`);
+  if (authorizationId !== undefined || captureId !== undefined) {
+    print(`Sandbox ids: ${[...(authorizationId !== undefined ? [`authorizationId=${authorizationId}`] : []), ...(captureId !== undefined ? [`captureId=${captureId}`] : [])].join(' ')}`);
+  }
+  print('The supplier order stayed simulated (fake); this sandbox capture did not place a real order.');
+  return {
+    status: 'ordered',
+    ...(authorizationId !== undefined ? { authorizationId } : {}),
+    ...(captureId !== undefined ? { captureId } : {}),
+    summary: 'Execution: sandbox PayPal capture; the supplier order stayed simulated',
+  };
+}
+
 interface Evidence {
   status: string;
   observedAt: string;
@@ -334,6 +470,7 @@ async function main(): Promise<void> {
       help: { type: 'boolean', short: 'h' },
       live: { type: 'boolean' },
       pause: { type: 'boolean' },
+      'sandbox-paypal': { type: 'boolean' },
       dir: { type: 'string' },
     },
   });
@@ -343,6 +480,7 @@ async function main(): Promise<void> {
   }
 
   const live = values.live === true;
+  const sandbox = values['sandbox-paypal'] === true;
   const directory = resolve(root, values.dir ?? '.runtime/demo');
   const local = (name: string): string => {
     const path = join(directory, name);
@@ -415,7 +553,11 @@ async function main(): Promise<void> {
   }
 
   console.log(`Demo flow | ${live ? 'live Claude (spends API credit)' : 'scripted stand-in, not Claude'} | ${plan.now}`);
-  console.log('Simulation: no real money, suppliers or orders. PayPal is not in this path yet.');
+  if (sandbox) {
+    console.log(`Sandbox mode: scene 6's payment capture goes through the PayPal sandbox; the supplier order stays simulated.`);
+  } else {
+    console.log('Simulation: no real money, suppliers or orders. PayPal is not in this path yet.');
+  }
 
   scene('The control panel', 'Two fake stores we run from this panel: prices, shipping, stock and records can change on cue.');
   run('main', ['store', 'reset', '--catalog', paths.storeA, '--seed', 'store-a', '--now', plan.now], { capture: true, quiet: true });
@@ -430,12 +572,22 @@ async function main(): Promise<void> {
   console.log('');
   for (const line of storeTable(stores, plan.now)) console.log(line);
   console.log('Synthetic supplier state only. No stock reserved, order placed or payment made.');
-  writeFileSync(paths.config, JSON.stringify({
-    version: 1,
-    policyFiles: [policyFile],
+  writeFileSync(paths.config, JSON.stringify(demoBackendConfig({
+    policyFile,
     catalogFiles: [join(directory, 'store-a.json'), join(directory, 'store-b.json')],
     fakeProviderDb: join(directory, 'runtime', 'providers.db'),
-  }));
+    ...(sandbox ? { paymentProvider: 'paypal-sandbox' as const } : {}),
+  })));
+  if (sandbox) {
+    // Early, before any reservation: the backend loads credentials before its
+    // not-found refusal, and the refusal happens before any provider call.
+    const probe = run('backend', [...backendRoot, 'operation-authorize', '--id', SANDBOX_CREDENTIAL_PROBE_ID], { capture: true, quiet: true, accept: [2] });
+    const refusal = sandboxCredentialRefusal(probe.stderr);
+    if (refusal !== null) throw new DemoFailure(`Sandbox mode stopped before any scene or reservation: ${refusal}`);
+    if (!inert(probe.stderr.trim()).includes('Operation was not found')) {
+      throw new DemoFailure(`Sandbox mode stopped before any scene or reservation: ${inert(probe.stderr.trim()) || 'the credential probe was refused'}`);
+    }
+  }
 
   scene('A plain-English request', `The operations manager writes:\n  "${plan.requestText}"\nA model drafts the mandate, and policy checks its answer.\nIt lists what it assumed and could not capture.`);
   writeFileSync(paths.request, plan.requestText);
@@ -521,17 +673,45 @@ async function main(): Promise<void> {
     results.push(`Recovery: ${rejection ? `${rejection.supplierId} rejected, then ` : ''}${reservation.supplierId} reserved`);
   }
 
-  scene('Execution', `Only the operator runs this, never the shopper. ${EXECUTION_PROVIDER.statement}`);
+  scene('Execution', `Only the operator runs this, never the shopper. ${sandbox ? SANDBOX_EXECUTION_STATEMENT : EXECUTION_PROVIDER.statement}`);
   if (reservation) {
-    const executed = backend<{ operation: { status: string } }>('operation-run', ['--id', reservation.operationId]);
-    // operation-run exits 0 whatever status the operation ends in, so the status is what counts.
-    if (executed.operation.status !== 'ordered') throw new DemoFailure(`The operation ended as ${executed.operation.status}`);
-    console.log(`Operation: ${executed.operation.status}, over ${EXECUTION_PROVIDER.label}`);
-    const audit = backend<{ events: Array<{ kind: string }> }>('audit', ['--id', reservation.operationId]);
-    console.log(`Audit trail: ${audit.events.map(({ kind }) => kind).join(', ')}`);
-    run('shop', ['status', '--mandate-id', mandateId, ...shopBackend, '--operation', reservation.operationId], {
-      shown: ['status', '--mandate-id', mandateId, '--operation', reservation.operationId],
-    });
+    if (sandbox) {
+      /** One backend command as data, so a refusal comes back instead of ending the flow. */
+      const call = (action: string): ((id: string) => Promise<SandboxCallResult>) => async (id) => {
+        const result = run('backend', [...backendRoot, action, '--id', id], { shown: [action, '--id', id], capture: true, accept: [0, 2] });
+        return result.status === 0
+          ? { ok: true as const, data: JSON.parse(result.stdout) as Record<string, unknown> }
+          : { ok: false as const, stderr: result.stderr };
+      };
+      const sandboxRun = await runSandboxPayment({
+        backend: {
+          authorize: call('operation-authorize'),
+          complete: call('operation-complete-authorization'),
+          execute: call('operation-run'),
+        },
+        operationId: reservation.operationId,
+        // The approval cannot be skipped, so this waits even without --pause.
+        waitForBuyer: () => { waitForEnter('The sandbox buyer has approved the hold; press Enter to complete it'); },
+        print: (line) => console.log(line),
+      });
+      results.push(sandboxRun.summary);
+      const audit = backend<{ events: Array<{ kind: string }> }>('audit', ['--id', reservation.operationId]);
+      console.log(`Audit trail: ${audit.events.map(({ kind }) => kind).join(', ')}`);
+      run('shop', ['status', '--mandate-id', mandateId, ...shopBackend, '--operation', reservation.operationId], {
+        shown: ['status', '--mandate-id', mandateId, '--operation', reservation.operationId],
+      });
+      say('The supplier order above stayed simulated (fake); only the payment capture was the PayPal sandbox, and it is never real money.');
+    } else {
+      const executed = backend<{ operation: { status: string } }>('operation-run', ['--id', reservation.operationId]);
+      // operation-run exits 0 whatever status the operation ends in, so the status is what counts.
+      if (executed.operation.status !== 'ordered') throw new DemoFailure(`The operation ended as ${executed.operation.status}`);
+      console.log(`Operation: ${executed.operation.status}, over ${EXECUTION_PROVIDER.label}`);
+      const audit = backend<{ events: Array<{ kind: string }> }>('audit', ['--id', reservation.operationId]);
+      console.log(`Audit trail: ${audit.events.map(({ kind }) => kind).join(', ')}`);
+      run('shop', ['status', '--mandate-id', mandateId, ...shopBackend, '--operation', reservation.operationId], {
+        shown: ['status', '--mandate-id', mandateId, '--operation', reservation.operationId],
+      });
+    }
   } else {
     console.log('Skipped, because nothing was reserved.');
     results.push('Execution: skipped, because nothing was reserved');
@@ -542,7 +722,9 @@ async function main(): Promise<void> {
   console.log('\n=== Result ===');
   for (const line of results) say(`  ${line}`);
   say(`Ran in ${seconds} seconds.${live ? ` Shopping used ${tokens.input} input and ${tokens.output} output tokens; drafting is on top of that.` : ''}`);
-  console.log('Simulation: no real money, suppliers or orders. PayPal is not in this path yet.');
+  console.log(sandbox
+    ? 'Sandbox mode: the payment capture was the PayPal sandbox, never real money; the supplier order and both stores stayed simulated.'
+    : 'Simulation: no real money, suppliers or orders. PayPal is not in this path yet.');
   if (unusable.length > 0) {
     console.log('\nNot a usable take:');
     for (const problem of unusable) say(`  - ${inert(problem)}`);

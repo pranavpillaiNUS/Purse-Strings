@@ -3,8 +3,9 @@
 How to record the hackathon video from `npm run demo:flow`. The video must run under 3
 minutes. This script targets 2:45, which leaves room for small overruns.
 
-**This cannot be submitted yet.** The hackathon requires PayPal, and scene 6 runs on fake
-providers. Re-record scene 6 once sandbox PayPal is in the purchase path.
+**This cannot be submitted yet.** The hackathon requires PayPal, and the default scene 6
+still runs on fake providers. A sandbox PayPal variant of scene 6 exists
+(`--sandbox-paypal`, below); verify it against a live sandbox account before recording it.
 
 ## Before you record
 
@@ -76,6 +77,35 @@ providers stand in for payment and the supplier: this is not PayPal or a real or
 dashboard reads S$7,510.10 committed and S$489.90 remaining. "Allocated" means reserved or
 committed, not delivered. Fake payment, order and readiness are separate facts. Readiness
 says not assessed; payment doesn't mean equipment has arrived.
+
+### Sandbox variant for scene 6 (`--sandbox-paypal`, opt-in)
+
+The default flow stays the one CI and first runs rely on: no key, no network, scene 6 on
+fake providers. `npm run demo:flow -- --live --pause --sandbox-paypal` connects scene 6's
+payment to the verified PayPal path instead. The generated backend config gains
+`paymentProvider: "paypal-sandbox"` (through the strict config schema), and the supplier
+order stays simulated in every variant; only the payment capture is a real call.
+
+Before anything is reserved, the flow checks the credentials with a probe hold on an id
+that has no operation. Without sandbox credentials in `.env` it stops before scene 2 with
+an instruction to add them, so the run never gets halfway through. Set them up as in the
+[spike](paypal-spike.md): `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`
+(`PAYPAL_ENV=sandbox` if used), from `cp .env.example .env`. Never point the demo at live
+keys, and rehearse once — this variant has not been verified against a live sandbox account.
+
+Scene 6 then plays as a two-person scene:
+
+- The operator's terminal runs `operation-authorize`, prints the sandbox approval link
+  prominently, and waits for Enter. Meanwhile the buyer opens the link in a browser,
+  signs in as the *personal* sandbox buyer on PayPal's hosted page and approves (like the
+  spike's step 6).
+- Enter completes it: `operation-complete-authorization`, then the normal `operation-run`.
+  If the buyer pressed Enter without approving, the flow stops and prints the backend's
+  own message as-is, "The sandbox buyer has not approved this hold yet"; nothing executes.
+  Enter that closes without approval stops the flow, so nothing can confirm by itself.
+- Afterwards the screen shows `paymentProvider: paypal-sandbox` with the sandbox ids
+  (`authorizationId`, `captureId`) a viewer can match in the sandbox's Activity page,
+  next to the statement that the supplier order stayed simulated (fake).
 
 ## What not to say
 
