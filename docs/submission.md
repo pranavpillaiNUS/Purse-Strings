@@ -48,7 +48,7 @@ The rules do not require a separate AI tools list. We keep one below as accurate
 | License visible | Both | In place. `LICENSE` is MIT and GitHub detects it. The copyright line names only `pranavpillaiNUS`, so Danny should confirm that is fine. The public can see it only once the repo is public |
 | Complete setup and run instructions | Pranav | Partly done. `README.md` has run commands. `docs/new-device-setup.md` is a team guide and still says the repo is private. The opening below is not pasted in yet |
 | Working demo instructions | Both | Not ready. `npm run demo:flow` is documented. It stops at scene 3 on Windows (issue #9, Danny). The scripted flow passes in CI on Linux with Node 24 and 26. Live Claude has run it only in temporary Windows copies with that check skipped. It has not run on macOS. It runs on fake providers |
-| Judge access until judging ends on Dec 15, with any credentials they need | Both | Not done. The repo must stay public and the instructions must keep working. The scripted flow needs no key. `--live` needs an Anthropic key. **[PAYPAL, Danny and Pranav: decide how judges run the PayPal path, using sandbox details only and committing no secret to the repo.]** |
+| Judge access until judging ends on Dec 15, with any credentials they need | Both | Not done. The repo must stay public and the instructions must keep working. The scripted flow needs no key. `--live` needs an Anthropic key. **[PAYPAL, Danny and Pranav: decide how judges run the PayPal path, using sandbox details only and committing no secret to the repo. See the proposal below.]** |
 | Name the platform it runs on | Both | Not decided. The rules require consistent running on the intended platform. The tests and the scripted flow pass in CI on Linux. Windows is blocked by issue #9, and macOS is untested |
 | Video under 3 minutes, public on YouTube | Pranav, with Danny for scene 6 | Not done. `docs/demo-script.md` is the recording plan and targets 2:45. No video exists. Scene 6 has to be recorded after PayPal is in the purchase path |
 | No copyrighted music or third-party trademarks | Pranav | Cannot be checked until a video exists. A search on Nov 7 found no common hardware brand names in the fixtures, examples, policy files or demo flow. SKUs are synthetic, such as `LAP-14-AIR`. The narration and screen name Claude, a third-party mark, and PayPal, the sponsor. Section 11 says to ask in writing if a term is ambiguous, so consider asking Devpost whether naming the AI tool you used is fine |
@@ -56,6 +56,26 @@ The rules do not require a separate AI tools list. We keep one below as accurate
 | AI tools list | Both | Draft below, with items for each of you to confirm. Codex's summary says the rules do not explicitly require it. Keep it anyway, as accurate disclosure |
 | PayPal in the purchase path | Danny | **Not done. This is the blocker.** The purchase path runs on fake providers. `services/checker/src/paypal/gateway.ts` is a sandbox-only contract with fetch-mocked tests. Only its own tests call it, and it has not been verified against a real PayPal account |
 | Sandbox spike results recorded | Danny | Not done. The spike code exists (`npm run spike:paypal`). The results table in `docs/paypal-spike.md` is empty |
+
+## Judge access: proposal
+
+Nothing here is decided. The rules ask for "any test account credentials, API keys, or sandbox login
+details necessary", free until judging ends on Dec 15. Judges may also judge from the text, images and
+video alone.
+
+| Path | What a judge needs | Proposal |
+| --- | --- | --- |
+| Scripted flow | Node 24 or newer | The first command in the README. It needs no key or network, so PayPal must stay opt-in for this to keep working |
+| PayPal sandbox path | A sandbox client ID and secret, and a sandbox buyer login to approve the hold | A separate sandbox app and buyer just for judges, so nothing they do affects Danny's. Sandbox only, given privately and never in the repo. Delete them after winners are announced |
+| Live Claude | An Anthropic key | Their own key, or a separate key with a low spend limit, given privately. A run costs about 30 cents |
+
+Pranav and Danny still need to:
+
+1. Look for a private testing-instructions field on the Devpost submission form. Devpost blocks automated
+   reading, so this can't be checked from here. If there is none, ask Devpost how to share credentials privately.
+2. Decide whether to offer a Claude key at all. The scripted flow and the video may be enough, but the rules
+   don't say so directly.
+3. Run the PayPal path once from a fresh clone, using only the judge details, before submitting.
 
 ## Devpost description draft
 
