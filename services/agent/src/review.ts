@@ -32,6 +32,7 @@ const PLAIN_WORDING: ReadonlyMap<string, string> = new Map([
   ['CATALOG_TIMEOUT', "This store's catalog did not answer in time."],
   ['CART_NOT_FOUND', 'That cart ID is not the one that can be submitted now.'],
   ['SUBMISSION_UNRESOLVED', 'An earlier submission is unresolved; only it can be retried.'],
+  ['SUBMISSION_NOT_RECORDED', 'The submission could not be recorded, so it was not sent.'],
   // Closed backend codes. QUANTITY_EXCEEDED is also a tool-boundary code.
   ['QUANTITY_EXCEEDED', 'More units than this requirement still needs.'],
   ['BUDGET_EXCEEDED', "The checker's total is more than the budget still available."],

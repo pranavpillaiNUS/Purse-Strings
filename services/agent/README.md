@@ -179,8 +179,12 @@ so a model claiming success changes nothing.
 | `BUSY`, `INTERNAL_ERROR`, timeout or lost response | Unknown: a reservation may exist. No other cart can be built until the same cart ID resolves it |
 
 One cart always carries the same idempotency key, so retrying can only return the
-original operation. Reusing a run ID is safe too: a fresh session reads the ledger's
-holdings first, and changed content under an existing cart ID is refused.
+original operation. Each cart is saved before it is sent, in a folder beside the backend
+database, and removed once its outcome is known. If a cart is left unknown, the next
+`shop run` on that mandate, under any run ID, sends that exact cart again with no model,
+reports the answer and stops. That also recovers the operation's ID. Reading the ledger
+can't replace this, because a request still on its way isn't in the ledger yet. Changed
+content under an existing cart ID is refused.
 
 ### Run it
 
@@ -322,9 +326,9 @@ it recovers at store-a (`--run-id recovery`).
 - **No acceptance gate is passed by this.** M4 still needs CLI review and approval, and
   bounded exceptions.
 - **Run state is not durable.** An interrupted worker keeps nothing but its optional trace.
-  The ledger holds the facts, and a rerun with the same run ID reads them. Nothing here
-  looks up an operation by cart ID, so an `unknown_submission` needs the same run rerun or
-  an operator check.
+  The ledger holds the facts, and a rerun reads them. The one exception is a cart that may
+  still be on its way, which the next run resends first. Anyone who can write to that folder
+  could plant a cart there, but it still has to pass the checker and the operator.
 - **No deployment isolation.** The worker should run without payment secrets under its own
   OS identity; the environment guard and module boundary do not prove that alone.
 

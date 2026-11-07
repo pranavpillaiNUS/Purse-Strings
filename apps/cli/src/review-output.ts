@@ -4,14 +4,17 @@ import {
   plainReason, readRunEvent, SCRIPTED_PLACEHOLDER_SUMMARY,
   type BackendKind, type BudgetView, type LedgerFacts, type RunEventReading, type RunReview, type StatusView, type StoreDecision,
 } from '../../../services/agent/src/review.ts';
+import type { ResentCart } from '../../../services/agent/src/backend-session.ts';
 import { formatSgd } from './format.ts';
 import { printable, printableLine } from './mandate.ts';
 
+// A command the operator must run stays on one line, whatever its length, so it pastes as written.
 // Renders reviews for a terminal: 80 columns and ASCII, because PowerShell 5.1 can mangle
 // Unicode. Every supplier or model string passes through `safe` or `safeLines` first.
 
 const WIDTH = 80;
 const SIMULATION_SENTENCE = 'Simulation. Reservations are not payment, orders, delivery or equipment readiness.';
+const BOLD_FREE_NEXT_STEP = 'Next step';
 
 /** Who performs execution today. The one place to change when real PayPal lands. */
 export const PROVIDER_WORDING = {
@@ -63,26 +66,6 @@ function wrap(text: string, firstIndent: string, restIndent = firstIndent): stri
   }
   if (line) lines.push(line);
   return lines.map((item, index) => `${index === 0 ? firstIndent : restIndent}${item}`);
-}
-
-/** A command broken only between its parts, so a flag stays beside its value. */
-function commandLines(parts: readonly string[]): string[] {
-  const lines: string[] = [];
-  let line = '  ';
-  for (const part of parts) {
-    const next = line.trim() ? `${line} ${part}` : `${line}${part}`;
-    if (next.length <= WIDTH) {
-      line = next;
-      continue;
-    }
-    if (line.trim()) lines.push(line);
-    // A part too long for any line still wraps rather than overflows.
-    const wrapped = wrap(part, '    ');
-    lines.push(...wrapped.slice(0, -1));
-    line = wrapped.at(-1) ?? '    ';
-  }
-  lines.push(line);
-  return lines;
 }
 
 /** A table cell: padded to width, or cut with a marker when it does not fit. */
@@ -283,9 +266,25 @@ export interface OperatorPaths {
   configPath: string;
 }
 
+/**
+ * A path as a shell will read it. Plain paths stay bare, and spaces get double quotes, which
+ * every shell here reads the same way. Anything else gets single quotes, which sh and
+ * PowerShell take literally but escape differently. A path the terminal text would have to
+ * change can't be retyped from it, so that shows a placeholder instead.
+ */
 function pathArgument(path: string): string {
-  const shown = safe(path);
-  return /\s/.test(shown) ? `"${shown}"` : shown;
+  if (safe(path) !== path) return 'PATH';
+  if (/^[\w./:\\@%+=,~-]+$/.test(path)) return path;
+  if (/^[\w./:\\@%+=,~ ()-]+$/.test(path)) return `"${path}"`;
+  return process.platform === 'win32' ? `'${path.replaceAll("'", "''")}'` : `'${path.replaceAll("'", "'\\''")}'`;
+}
+
+/** One line, because pasting a wrapped command runs only its first line. */
+function operatorCommand(operationId: string, operator: OperatorPaths | null): string {
+  const flags = operator
+    ? `--db ${pathArgument(operator.databasePath)} --config ${pathArgument(operator.configPath)}`
+    : '--db PATH --config PATH';
+  return `  npm run backend -- operation-run --id ${safe(operationId)} ${flags}`;
 }
 
 function nextStepLines(review: RunReview, paint: Paint, operator: OperatorPaths | null): string[] {
@@ -301,17 +300,12 @@ function nextStepLines(review: RunReview, paint: Paint, operator: OperatorPaths 
   if (review.unresolved) {
     say('Do not treat the unknown submission as failed, and do not treat it as safe.');
     say(`Read the ledger first. ${readOnlyView}`);
-    say('Then rerun this same run ID. A retry of the same cart cannot reserve twice.');
+    say('Then run the shopper again on this mandate. It first resends this exact cart with the same key, with no model, so it cannot reserve twice.');
     return lines;
   }
   if (review.operationsToRun.length > 0) {
-    say('The operator runs this, never the shopper. One command, wrapped to fit:');
-    const flags = operator
-      ? [`--db ${pathArgument(operator.databasePath)}`, `--config ${pathArgument(operator.configPath)}`]
-      : ['--db PATH', '--config PATH'];
-    for (const id of review.operationsToRun) {
-      lines.push(...commandLines(['npm run backend -- operation-run', `--id ${safe(id)}`, ...flags]));
-    }
+    say('The operator runs this, never the shopper:');
+    for (const id of review.operationsToRun) lines.push(operatorCommand(id, operator));
     say('The shopper has no tool that can run it.');
     say(readOnlyView);
     if (review.requirements.some(({ remainingUnits }) => remainingUnits > 0)) {
@@ -325,6 +319,37 @@ function nextStepLines(review: RunReview, paint: Paint, operator: OperatorPaths 
     return lines;
   }
   say('Nothing waits for the operator from this run. Units are still needed: a person decides whether to change the stores or the mandate and run the shopper again.');
+  return lines;
+}
+
+/** What an earlier run left unknown, once it has been sent again. Nothing else happened in this run. */
+export function renderResentCarts(resent: readonly ResentCart[], operator: OperatorPaths | null): string[] {
+  const lines = [
+    ...wrap('An earlier submission on this mandate had an unknown outcome. Its exact cart and key were sent again, with no model involved. Nothing else ran.', ''),
+    '',
+  ];
+  for (const item of resent) {
+    const cart = `${safe(item.cart.id)} at ${safe(item.cart.supplierId)}`;
+    if (item.kind === 'accepted') {
+      lines.push(...wrap(`${cart}: reserved, ${formatSgd(item.operation.totalMinor)} set aside, not paid. This is the original operation if the first request got through.`, '  ', '    '));
+    } else if (item.kind === 'unknown') {
+      lines.push(...wrap(`${cart}: still unknown, and a reservation may exist.`, '  ', '    '));
+    } else {
+      lines.push(...wrap(`${cart}: ${item.kind}. ${plainReason(item.code)} Nothing was reserved by this cart.`, '  ', '    '));
+    }
+  }
+  lines.push('', BOLD_FREE_NEXT_STEP);
+  const reserved = resent.flatMap((item) => (item.kind === 'accepted' ? [item.operation.id] : []));
+  if (resent.some(({ kind }) => kind === 'unknown')) {
+    lines.push(...wrap('Run the shopper again on this mandate. It resends what is still unknown first.', '  '));
+  } else {
+    if (reserved.length > 0) {
+      lines.push(...wrap('The operator runs this, never the shopper:', '  '));
+      for (const id of reserved) lines.push(operatorCommand(id, operator));
+    }
+    lines.push(...wrap('To shop for any units still needed, run the shopper again with a new run ID.', '  '));
+  }
+  lines.push('', SIMULATION_SENTENCE);
   return lines;
 }
 
