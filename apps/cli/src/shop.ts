@@ -10,11 +10,13 @@ import { BackendSessionError, createBackendShoppingSession, resendUnresolvedCart
 import { draftMandateWithModel, type MandateDraftOutcome } from '../../../services/agent/src/mandate-drafter.ts';
 import { createScriptedModel, type ShoppingModel } from '../../../services/agent/src/model.ts';
 import { buildRunReview, buildStatusView, type BackendKind, type ShopperKind } from '../../../services/agent/src/review.ts';
+import { createSavedRecoveryReview, createSavedRunReview } from '../../../services/agent/src/saved-review.ts';
 import { runShoppingWorker, type ShoppingOutcome, type ShoppingRunEvent } from '../../../services/agent/src/worker.ts';
 import { createBackendCliTransport } from './backend-transport.ts';
 import { bundled, printable, printableLine, printOrigin, printProposal } from './mandate.ts';
 import { readLedgerFacts, renderLiveEvent, renderResentCarts, renderRunReview, renderStatus, useColor } from './review-output.ts';
 import { createFileSubmissionJournal } from './submission-journal.ts';
+import { prepareSavedReviewFile, readSavedReviewFile } from './saved-review-file.ts';
 
 // Separate entry point, like the backend CLI: this process holds the model key and
 // never loads checker or payment modules. It reaches the checker only through the
@@ -26,6 +28,7 @@ Usage:
   npm run shop -- run --run-id ID --mandate-id ID BACKEND [MODEL] [options]
   npm run shop -- draft (--text TEXT | --text-file FILE) [MODEL] [draft options]
   npm run shop -- status --mandate-id ID BACKEND [--operation ID ...] [--json]
+  npm run shop -- review --file FILE [--brief | --json]
 
 BACKEND (choose one):
   --backend-db PATH --backend-config PATH
@@ -43,6 +46,8 @@ Options:
   --max-model-turns N   Host limit, default 16.
   --max-carts N         Host limit, default 3.
   --trace FILE          Append each model turn and tool call as JSON lines.
+  --review-out FILE     Save the full normalized historical review to a new file,
+                        including with --brief or --json. Never overwrites a file.
   --json                Print one JSON report on stdout.
   --brief               A shorter review, for recording: refused attempts become a count,
                         the next step one line, and usage is left out. Exit codes do not
@@ -78,6 +83,12 @@ Status options (read-only: no model or key, and it never executes anything):
 Status exit codes: 0 shown; 1 invalid input or backend failure. It shows the budget and
 what each requirement has allocated, with reservation, payment, order, refund and
 readiness on separate lines, because those are separate facts.
+
+Review options (historical file only: no model, key or backend):
+  --file FILE           Replay a saved review. It is editable historical data,
+                        never authority or current ledger facts. Use shop status
+                        for current facts. --brief shortens the readable view;
+                        --json prints the historical envelope. Exit 0 when read.
 `;
 
 const DRAFT_EXIT_CODES: Record<MandateDraftOutcome, number> = {
@@ -359,6 +370,29 @@ async function runStatus(args: string[]): Promise<void> {
   else console.log(renderStatus(view, { color: useColor(process.stdout, process.env) }).join('\n'));
 }
 
+/** Every read and validation completes before output; this never opens a backend. */
+function runSavedReview(args: string[]): void {
+  const { values } = parseArgs({ args, options: {
+    help: { type: 'boolean', short: 'h' },
+    file: { type: 'string' },
+    brief: { type: 'boolean' },
+    json: { type: 'boolean' },
+  } });
+  if (values.help) { console.log(HELP); return; }
+  if (values.brief && values.json) throw new Error('--brief shapes the readable review, so it cannot be used with --json');
+  refuseIfPaymentCredentialsPresent();
+  if (!values.file?.trim()) throw new Error('shop review requires --file');
+  const saved = readSavedReviewFile(values.file);
+  if (values.json) console.log(JSON.stringify(saved));
+  else {
+    const options = { color: useColor(process.stdout, process.env), brief: values.brief === true, historicalSavedAt: saved.savedAt };
+    const lines = saved.kind === 'saved-shop-review'
+      ? renderRunReview(saved.review, options)
+      : renderResentCarts(saved.resent, null, options);
+    console.log(lines.join('\n'));
+  }
+}
+
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
   if (command === 'draft') {
@@ -367,6 +401,10 @@ async function main(): Promise<void> {
   }
   if (command === 'status') {
     await runStatus(rest);
+    return;
+  }
+  if (command === 'review') {
+    runSavedReview(rest);
     return;
   }
   const { values, positionals } = parseArgs({
@@ -384,6 +422,7 @@ async function main(): Promise<void> {
       scripted: { type: 'string' },
       model: { type: 'string' },
       trace: { type: 'string' },
+      'review-out': { type: 'string' },
       'max-tool-calls': { type: 'string' },
       'max-model-turns': { type: 'string' },
       'max-carts': { type: 'string' },
@@ -393,7 +432,7 @@ async function main(): Promise<void> {
     console.log(HELP);
     return;
   }
-  if (positionals.length !== 1 || positionals[0] !== 'run') throw new Error('Expected shop run, draft or status. Use --help.');
+  if (positionals.length !== 1 || positionals[0] !== 'run') throw new Error('Expected shop run, draft, status or review. Use --help.');
   if (values.brief && values.json) throw new Error('--brief shapes the readable review, so it cannot be used with --json');
   refuseIfPaymentCredentialsPresent();
   const runId = values['run-id'];
@@ -401,76 +440,95 @@ async function main(): Promise<void> {
   if (!runId?.trim()) throw new Error('shop run requires --run-id');
   if (!mandateId?.trim()) throw new Error('shop run requires --mandate-id');
 
-  const backend = backendKind(values);
-  const client = createBackendClient(buildTransport(values));
-  const operator = values['backend-db'] !== undefined && values['backend-config'] !== undefined
-    ? { databasePath: displayPath(values['backend-db']), configPath: displayPath(values['backend-config']) }
-    : null;
-  // The contract mock keeps nothing after this command, so it has nothing to resend.
-  const journal = values['backend-db'] === undefined ? undefined : createFileSubmissionJournal(values['backend-db'], mandateId);
-  if (journal) {
-    // Before any model or key is needed, and before a new cart could be built beside this one.
-    const resent = await resendUnresolvedCarts({ runId }, client, journal);
-    if (resent.length > 0) {
-      process.exitCode = resentExitCode(resent);
-      if (values.json) console.log(JSON.stringify({ simulation: true, runId, mandateId, resent }));
-      else console.log(renderResentCarts(resent, operator).join('\n'));
-      return;
-    }
-  }
-  const model = await buildModel(values.scripted, values.model);
   const maxToolCalls = positiveInteger(values['max-tool-calls'], 'max-tool-calls');
   const maxCarts = positiveInteger(values['max-carts'], 'max-carts');
   const maxModelTurns = positiveInteger(values['max-model-turns'], 'max-model-turns');
-
-  const session = await createBackendShoppingSession({
-    mandateId, runId,
-    ...(maxToolCalls === undefined ? {} : { maxToolCalls }),
-    ...(maxCarts === undefined ? {} : { maxCarts }),
-  }, client, journal);
-
-  if (!values.json) console.log(printableLine(`Shopping run ${runId} | mandate ${mandateId} | simulation`));
-  const trace = values.trace;
-  let traceFailed = false;
-  const events: ShoppingRunEvent[] = [];
-  const report = await runShoppingWorker(session, model, {
-    runId,
-    ...(maxModelTurns === undefined ? {} : { limits: { maxModelTurns } }),
-    onEvent(event) {
-      // Written before the tool runs, so the intent survives a crash during the call.
-      if (trace && !traceFailed) {
-        try {
-          appendFileSync(trace, `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`);
-        } catch {
-          traceFailed = true;
-          console.error('shop: the trace file could not be written; continuing without it');
+  const databasePath = values['backend-db'];
+  const protectedPaths = [values.trace, values.scripted, values['mock-mandate'], values['backend-config'], databasePath,
+    ...(values.catalog ?? []), ...(databasePath === undefined ? [] : [`${databasePath}-wal`, `${databasePath}-shm`, `${databasePath}-journal`])]
+    .filter((path): path is string => path !== undefined);
+  const destination = values['review-out'] === undefined ? undefined
+    : prepareSavedReviewFile(values['review-out'], protectedPaths, databasePath === undefined ? undefined : `${resolve(databasePath)}.shop-journal`);
+  try {
+    const backend = backendKind(values);
+    const client = createBackendClient(buildTransport(values));
+    const operator = values['backend-db'] !== undefined && values['backend-config'] !== undefined
+      ? { databasePath: displayPath(values['backend-db']), configPath: displayPath(values['backend-config']) }
+      : null;
+    // The contract mock keeps nothing after this command, so it has nothing to resend.
+    const journal = values['backend-db'] === undefined ? undefined : createFileSubmissionJournal(values['backend-db'], mandateId);
+    if (journal) {
+      // Before any model or key is needed, and before a new cart could be built beside this one.
+      const resent = await resendUnresolvedCarts({ runId }, client, journal);
+      if (resent.length > 0) {
+        process.exitCode = resentExitCode(resent);
+        if (values.json) console.log(JSON.stringify({ simulation: true, runId, mandateId, resent }));
+        else console.log(renderResentCarts(resent, operator).join('\n'));
+        if (destination) {
+          try { destination.save(createSavedRecoveryReview({ runId, mandateId, resent }, new Date().toISOString())); }
+          catch { console.error('shop: WARNING: the recovery review could not be saved. The outcome above still stands; use shop status for current facts.'); }
         }
+        return;
       }
-      if (values.json) return;
-      events.push(event);
-      for (const line of renderLiveEvent(event, backend)) console.log(line);
-    },
-  });
+    }
+    const model = await buildModel(values.scripted, values.model);
 
-  // Set first: nothing in the review below can change what this run exits with.
-  process.exitCode = EXIT_CODES[report.outcome];
-  if (values.json) console.log(JSON.stringify(report));
-  else {
-    let shopper: ShopperKind = { kind: 'scripted' };
-    if (values.scripted === undefined) {
-      const { DEFAULT_SHOPPER_MODEL } = await import('../../../services/agent/src/anthropic.ts');
-      shopper = { kind: 'live', modelId: values.model ?? DEFAULT_SHOPPER_MODEL };
+    const session = await createBackendShoppingSession({
+      mandateId, runId,
+      ...(maxToolCalls === undefined ? {} : { maxToolCalls }),
+      ...(maxCarts === undefined ? {} : { maxCarts }),
+    }, client, journal);
+
+    if (!values.json) console.log(printableLine(`Shopping run ${runId} | mandate ${mandateId} | simulation`));
+    const trace = values.trace;
+    let traceFailed = false;
+    const events: ShoppingRunEvent[] = [];
+    const report = await runShoppingWorker(session, model, {
+      runId,
+      ...(maxModelTurns === undefined ? {} : { limits: { maxModelTurns } }),
+      onEvent(event) {
+        // Written before the tool runs, so the intent survives a crash during the call.
+        if (trace && !traceFailed) {
+          try {
+            appendFileSync(trace, `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`);
+          } catch {
+            traceFailed = true;
+            console.error('shop: the trace file could not be written; continuing without it');
+          }
+        }
+        if (!values.json || destination) events.push(event);
+        if (values.json) return;
+        for (const line of renderLiveEvent(event, backend)) console.log(line);
+      },
+    });
+
+    // Set first: nothing in the review below can change what this run exits with.
+    process.exitCode = EXIT_CODES[report.outcome];
+    if (values.json) console.log(JSON.stringify(report));
+    if (!values.json || destination) {
+      let shopper: ShopperKind = { kind: 'scripted' };
+      if (values.scripted === undefined) {
+        const { DEFAULT_SHOPPER_MODEL } = await import('../../../services/agent/src/anthropic.ts');
+        shopper = { kind: 'live', modelId: values.model ?? DEFAULT_SHOPPER_MODEL };
+      }
+      // The contract mock has no ledger to read, and its mandate.get would report zeros.
+      const ledger = backend === 'simulation-backend' ? await readLedgerFacts(client, mandateId, `${runId}-review`) : null;
+      try {
+        const review = buildRunReview({ report, events, ledger, backend, shopper, budgetMinor: session.getContext().budgetMinor });
+        if (!values.json) console.log(renderRunReview(review, { color: useColor(process.stdout, process.env), operator, brief: values.brief === true }).join('\n'));
+        if (destination) {
+          try { destination.save(createSavedRunReview(review, new Date().toISOString())); }
+          catch { console.error('shop: WARNING: the review could not be saved. The outcome above still stands; use shop status for current facts.'); }
+        }
+      } catch {
+        if (!values.json) console.log(`\nOutcome: ${printableLine(report.outcome)}\nThe review could not be shown. Use --json for this run's report.`);
+        if (destination) console.error('shop: WARNING: the review could not be saved. The outcome above still stands; use shop status for current facts.');
+      }
     }
-    // The contract mock has no ledger to read, and its mandate.get would report zeros.
-    const ledger = backend === 'simulation-backend' ? await readLedgerFacts(client, mandateId, `${runId}-review`) : null;
-    try {
-      const review = buildRunReview({ report, events, ledger, backend, shopper, budgetMinor: session.getContext().budgetMinor });
-      console.log(renderRunReview(review, { color: useColor(process.stdout, process.env), operator, brief: values.brief === true }).join('\n'));
-    } catch {
-      console.log(`\nOutcome: ${printableLine(report.outcome)}\nThe review could not be shown. Use --json for this run's report.`);
-    }
+    if (report.outcome === 'failed' && report.detail) console.error(`shop: ${printableLine(report.detail)}`);
+  } finally {
+    destination?.cancel();
   }
-  if (report.outcome === 'failed' && report.detail) console.error(`shop: ${printableLine(report.detail)}`);
 }
 
 try {

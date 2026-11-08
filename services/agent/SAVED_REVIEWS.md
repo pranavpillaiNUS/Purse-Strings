@@ -5,13 +5,15 @@ It preserves the final normalized shopper review, including comparisons, backend
 decisions, unknown outcomes and the ledger figures observed after that run. It does
 not resume an interrupted worker or authenticate an audit record.
 
-## Interface being implemented
+## Interface
 
 - `shop run --review-out NEW.json` saves a completed command's review without
-  changing its normal stdout or run exit code. This includes a command that only
+  changing its JSON stdout or run exit code. This includes a command that only
   resends an earlier unresolved cart before stopping.
 - `shop review --file FILE [--brief|--json]` validates and replays that file offline.
   It needs no model key, reads no backend and changes no purchasing state.
+- `demo:flow` saves each shopper run as `<runId>.review.json` in its take directory,
+  alongside the existing trace. These snapshots precede any later scene-6 execution.
 - Every replay identifies its capture time and historical status. It preserves
   recorded unknowns and separates estimates, reservations, payment, supplier order
   and readiness. It gives no execution or retry instructions from saved state;
@@ -36,6 +38,9 @@ These are editable local snapshots. Valid JSON, a schema version or a capture ti
 does not authenticate their contents. They never confirm a mandate, assign stock,
 authorize payment, reconcile an unknown result or establish current ledger totals.
 The backend ledger and its current read methods remain authoritative.
+An ordinary resend may return an operation that has already advanced beyond its
+original reservation. Its readable recovery output must show the returned payment,
+order and refund facts and omit execution commands for an operation no longer reserved.
 
 ## Acceptance
 

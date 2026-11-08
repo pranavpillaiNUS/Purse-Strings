@@ -164,7 +164,10 @@ A partial M4 slice adds the bounded shopper worker over the shared client, teste
 against the real checker core with scripted models. It has had eight live model runs: four
 against the contract mock, and four against the real backend in temporary Windows copies
 with the backend's mode check skipped. Its CLI approval and exception flows do not exist.
-`npm run demo:flow` runs the story end to end over fake providers. Units 4 and 5 of the
+`npm run demo:flow` runs the story end to end over fake providers. Shopper reviews can
+be saved and replayed offline with an explicit historical label; demo takes save each
+run's review before execution. These editable snapshots add no purchasing authority
+or interrupted-worker recovery. Units 4 and 5 of the
 backend delivery add a sandbox-only PayPal gateway
 (`services/checker/src/paypal/gateway.ts`, wired into the execution ledger behind
 the backend config `paymentProvider` and documented in `docs/backend-api.md`) with
