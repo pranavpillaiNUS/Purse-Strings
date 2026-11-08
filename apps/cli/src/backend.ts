@@ -416,8 +416,10 @@ function assertDistinctDatabases(applicationPath: string, providerPath: string):
     throw new CliError('The application database and fake provider database must be distinct files');
   }
   try {
-    const appStats = statSync(applicationPath);
-    const providerStats = statSync(providerPath);
+    // BigInt, because a Windows file ID is 64 bits with a sequence number on top. Above
+    // 2^53 a Number rounds, and two files created one after another can compare equal.
+    const appStats = statSync(applicationPath, { bigint: true });
+    const providerStats = statSync(providerPath, { bigint: true });
     if (appStats.dev === providerStats.dev && appStats.ino === providerStats.ino) {
       throw new CliError('The application database and fake provider database must be distinct files');
     }
