@@ -1,0 +1,211 @@
+import assert from 'node:assert/strict';
+import { request as httpRequest, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import test from 'node:test';
+import { runInNewContext } from 'node:vm';
+import type { DashboardState } from './dashboard-state.ts';
+import { createDashboardServer, loadDashboardAssets, SECURITY_HEADERS } from './dashboard.ts';
+
+const NOW = '2026-11-08T09:00:00.000Z';
+const HOUR_MS = 3_600_000;
+
+function stateWithRecord(observedAt: string): DashboardState {
+  return {
+    version: 1,
+    generatedAt: NOW,
+    source: { kind: 'backend', label: 'engineering-hires-demo' },
+    demo: null,
+    mandate: {
+      id: 'engineering-hires-demo', revision: 1, digest: 'd'.repeat(64), confirmationStatus: 'confirmed', confirmedAt: NOW,
+      currency: 'SGD', budgetMinor: 800000, purchaseBy: '2026-11-18T00:00:00.000Z', readyBy: '2026-11-19T00:00:00.000Z',
+      deliveryLocationId: 'singapore-office', allowedSuppliers: ['store-a'], requirements: [], evidenceMaxAgeHours: 72,
+    },
+    ledger: null,
+    stores: [{ supplierId: 'store-a', shippingMinor: 0, deliveryBy: '2026-11-18T00:00:00.000Z', oldestRecordAt: observedAt, recordStatuses: ['verified'], products: [] }],
+    operations: [], notices: [], problems: [],
+  };
+}
+
+async function listen(server: Server): Promise<number> {
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return (server.address() as AddressInfo).port;
+}
+
+function send(port: number, path: string, method = 'GET', host = `127.0.0.1:${port}`): Promise<{ status: number; headers: Record<string, unknown>; body: string }> {
+  return new Promise((resolve, reject) => {
+    const outgoing = httpRequest({ host: '127.0.0.1', port, path, method, headers: { host } }, (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => resolve({ status: response.statusCode ?? 0, headers: response.headers, body }));
+    });
+    outgoing.on('error', reject);
+    outgoing.end();
+  });
+}
+
+test('a malformed request URL returns 400 and the same dashboard server keeps answering read-only requests', async (t) => {
+  let reads = 0;
+  const state = stateWithRecord(NOW);
+  const server = createDashboardServer({ read: async () => { reads += 1; return state; }, assets: loadDashboardAssets(), log: () => {} });
+  const port = await listen(server);
+  t.after(() => { server.close(); server.closeAllConnections(); });
+  assert.equal((server.address() as AddressInfo).address, '127.0.0.1');
+
+  for (const method of ['GET', 'HEAD']) {
+    const malformed = await send(port, '//[', method);
+    assert.equal(malformed.status, 400, method);
+    assert.equal(malformed.body, method === 'HEAD' ? '' : 'The request URL could not be read.\n');
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) assert.equal(malformed.headers[name.toLowerCase()], value, name);
+  }
+  assert.equal(reads, 0, 'invalid URLs do not read ledger state');
+  const later = await send(port, '/api/state');
+  assert.equal(later.status, 200);
+  assert.deepEqual(JSON.parse(later.body), state);
+  assert.equal(reads, 1);
+  const head = await send(port, '/', 'HEAD');
+  assert.equal(head.status, 200);
+  assert.equal(head.body, '');
+  assert.equal((await send(port, '/api/state', 'POST')).status, 405);
+  assert.equal((await send(port, '/api/state', 'GET', 'other.example')).status, 403);
+  assert.equal(reads, 1, 'refused methods and hosts still do not read state');
+});
+
+/** Only the DOM operations used by the shipped renderer; markup is never parsed. */
+class ClientNode {
+  readonly tagName: string | null;
+  readonly attributes = new Map<string, string>();
+  readonly style: Record<string, string> = {};
+  childNodes: ClientNode[] = [];
+  className = '';
+  private text: string | null;
+
+  constructor(tagName: string | null, text: string | null = null) {
+    this.tagName = tagName;
+    this.text = text;
+  }
+
+  readonly classList = {
+    add: (...names: string[]): void => { this.className = [...new Set([...this.className.split(/\s+/).filter(Boolean), ...names])].join(' '); },
+    remove: (...names: string[]): void => { this.className = this.className.split(/\s+/).filter((name) => name && !names.includes(name)).join(' '); },
+  };
+
+  setAttribute(name: string, value: string): void { this.attributes.set(name, value); }
+  append(...children: ClientNode[]): void { this.childNodes.push(...children); }
+  replaceChildren(...children: ClientNode[]): void { this.text = null; this.childNodes = children; }
+  get textContent(): string { return this.text ?? this.childNodes.map((child) => child.textContent).join(''); }
+  set textContent(value: string) { this.text = value; this.childNodes = []; }
+}
+
+function descendants(node: ClientNode, predicate: (node: ClientNode) => boolean): ClientNode[] {
+  return [...(predicate(node) ? [node] : []), ...node.childNodes.flatMap((child) => descendants(child, predicate))];
+}
+
+async function renderClient(state: DashboardState, initialTime = NOW) {
+  let clock = Date.parse(initialTime);
+  const elements = Object.fromEntries(['app', 'badges', 'updated'].map((id) => [id, new ClientNode('div')]));
+  const scheduled: Array<() => Promise<void>> = [];
+  const fetched: string[] = [];
+  let firstPollFinished!: () => void;
+  const ready = new Promise<void>((resolve) => { firstPollFinished = resolve; });
+  class ClockDate extends Date { static override now(): number { return clock; } }
+  runInNewContext(loadDashboardAssets().script, {
+    Node: ClientNode,
+    Date: ClockDate,
+    document: {
+      getElementById: (id: string) => elements[id],
+      createElement: (tag: string) => new ClientNode(tag),
+      createTextNode: (text: string) => new ClientNode(null, text),
+    },
+    fetch: async (path: string) => {
+      fetched.push(path);
+      return { ok: true, text: async () => JSON.stringify(state) };
+    },
+    setTimeout: (callback: () => Promise<void>, delay: number) => {
+      assert.equal(delay, 1500);
+      scheduled.push(callback);
+      firstPollFinished();
+    },
+  }, { filename: 'dashboard/app.js', timeout: 1000 });
+  await ready;
+  const app = elements.app!;
+  assert.doesNotMatch(elements.updated!.textContent, /Connection lost/, 'the actual client renderer completed');
+  return {
+    app,
+    fetched,
+    recordCell: (): ClientNode => {
+      const rows = descendants(app, (node) => node.tagName === 'tr');
+      const row = rows.find((node) => node.childNodes[0]?.textContent === 'Oldest record');
+      assert.ok(row?.childNodes[1], 'the actual Stores table contains its evidence row');
+      return row.childNodes[1];
+    },
+    pollAt: async (iso: string): Promise<void> => {
+      clock = Date.parse(iso);
+      const callback = scheduled.shift();
+      assert.ok(callback, 'the client scheduled another poll');
+      await callback();
+      assert.doesNotMatch(elements.updated!.textContent, /Connection lost/);
+    },
+  };
+}
+
+test('the rendered Stores evidence uses the exact age limit before rounding hours for display', async () => {
+  for (const [ageMs, stale] of [[72 * HOUR_MS, false], [72 * HOUR_MS + 1, true], [72.5 * HOUR_MS, true]] as const) {
+    const observedAt = new Date(Date.parse(NOW) - ageMs).toISOString();
+    const client = await renderClient(stateWithRecord(observedAt));
+    const record = client.recordCell();
+    assert.equal(record.className === 'stale', stale, `${ageMs} milliseconds old`);
+    assert.match(record.textContent, /^72 h old/);
+    assert.equal(record.textContent.includes('past the 72 h policy limit'), stale);
+    assert.deepEqual(client.fetched, ['/api/state']);
+  }
+});
+
+test('unchanged API state still becomes visibly stale when the next poll crosses the age limit', async () => {
+  const observedAt = new Date(Date.parse(NOW) - 72 * HOUR_MS).toISOString();
+  const client = await renderClient(stateWithRecord(observedAt));
+  assert.equal(client.recordCell().className, '');
+  await client.pollAt(new Date(Date.parse(NOW) + 1).toISOString());
+  assert.equal(client.recordCell().className, 'stale');
+  assert.match(client.recordCell().textContent, /past the 72 h policy limit/);
+  assert.deepEqual(client.fetched, ['/api/state', '/api/state']);
+});
+
+test('the rendered Stores evidence flags a future observation instead of describing it as fresh', async () => {
+  const future = new Date(Date.parse(NOW) + 1).toISOString();
+  const client = await renderClient(stateWithRecord(future));
+  assert.equal(client.recordCell().className, 'stale');
+  assert.match(client.recordCell().textContent, /Future-dated record: not valid evidence/);
+  await client.pollAt(future);
+  assert.equal(client.recordCell().className, '');
+  assert.match(client.recordCell().textContent, /^0 h old/);
+});
+
+test('the rendered mandate distinguishes trusted confirmation, refusal and unknown status in both dashboard modes', async () => {
+  for (const demoMode of [false, true]) {
+    for (const status of ['confirmed', 'unconfirmed', 'unknown'] as const) {
+      const state = stateWithRecord(NOW);
+      state.mandate!.confirmationStatus = status;
+      // A timestamp by itself cannot turn unknown/unconfirmed into authority.
+      state.mandate!.confirmedAt = NOW;
+      if (demoMode) state.demo = {
+        mode: 'scripted', paymentProvider: 'fake', startedAt: NOW, updatedAt: NOW, scenes: [], scene: 0,
+        results: [], waiting: 'operator-confirm', finished: false, failure: null,
+      };
+      const client = await renderClient(state);
+      const mandate = descendants(client.app, (node) => node.tagName === 'section')
+        .find((node) => node.childNodes[0]?.textContent.startsWith('Mandate'));
+      assert.ok(mandate);
+      const chips = descendants(mandate, (node) => node.className.split(' ').includes('chip'));
+      assert.equal(chips.length, 1);
+      if (status === 'confirmed') {
+        assert.match(chips[0]!.textContent, /^Confirmed /);
+        assert.match(chips[0]!.className, /tone-good/);
+      } else {
+        assert.match(chips[0]!.textContent, status === 'unconfirmed' ? /^Not confirmed:/ : /^Confirmation unknown:/);
+        assert.match(chips[0]!.className, /tone-warn/);
+        assert.doesNotMatch(chips[0]!.className, /tone-good/);
+      }
+    }
+  }
+});

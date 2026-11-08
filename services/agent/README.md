@@ -269,8 +269,9 @@ tracking is not built.
 
 Here and in the run review, "allocated" means reserved or committed, not delivered.
 A reservation sets budget aside; it is not a PayPal authorization hold or payment.
-Status JSON names these totals `budget.allocatedMinor` and
-`requirements[].allocatedUnits`. The shared operation additionally carries the
+Status JSON preserves the active mandate's `confirmedAt` from `mandate.get`, and names
+these totals `budget.allocatedMinor` and `requirements[].allocatedUnits`.
+The shared operation additionally carries the
 optional backend-owned `paymentProvider` field; it is never accepted in a cart.
 
 ### Live runs

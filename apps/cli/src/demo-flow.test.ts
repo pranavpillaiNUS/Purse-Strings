@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -10,7 +10,7 @@ import { createMandateDraft } from '../../../services/agent/src/mandate.ts';
 import {
   awaitEnter, checkSummary, childEnvironment, demoBackendConfig, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor,
   revisionSummary, runSandboxPayment, sandboxCredentialRefusal, scriptedDraftCalls, SANDBOX_CREDENTIAL_PROBE_ID, STALE_HOURS,
-  storeTable, summarizeTrace, wrapCommand, wrapLine, type SandboxPaymentBackend, type StoreView,
+  storeTable, summarizeTrace, wrapCommand, wrapLine, type DemoSession, type SandboxPaymentBackend, type StoreView,
 } from './demo-flow.ts';
 import { formatSgd } from './format.ts';
 import { PROVIDER_WORDING } from './review-output.ts';
@@ -246,6 +246,7 @@ test('a mistyped --dir is never cleared', (t) => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Refusing to clear/);
   assert.equal(readFileSync(precious, 'utf8'), 'keep me');
+  assert.equal(existsSync(join(directory, 'session.json')), false, 'nothing is written into a folder it refused');
 });
 
 test('a previous sandbox demo keeps its ledger and intents on flagged and unflagged reruns', (t) => {
@@ -349,6 +350,13 @@ test('closed input stops the flow at the first prompt, so nothing is confirmed',
   assert.match(result.stderr, /Input closed before Enter was pressed/);
   assert.doesNotMatch(result.stdout, /Confirmed by OS user/);
   assert.doesNotMatch(result.stdout, /Operation: ordered/);
+  // The dashboard follows the session file, so it says where and why the flow stopped.
+  const session = JSON.parse(readFileSync(join(directory, 'work', 'session.json'), 'utf8')) as DemoSession;
+  assert.equal(session.scene, 1);
+  assert.match(session.failure ?? '', /Input closed before Enter was pressed/);
+  assert.equal(session.waiting, null);
+  assert.equal(session.finished, false);
+  assert.equal(session.mandate, null);
 });
 
 test('input that closes at the confirmation prompt stops the flow before anything is confirmed', (t) => {

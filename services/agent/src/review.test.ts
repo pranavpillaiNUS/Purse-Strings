@@ -335,6 +335,7 @@ test('the status view keeps operation facts separate and warns about the mock', 
   };
   const view = buildStatusView({ ledger, operations: [], backend: 'simulation-backend' });
   assert.equal(view.warning, null);
+  assert.equal(view.confirmedAt, mandate.confirmedAt, 'the status view preserves the backend mandate confirmation');
   assert.deepEqual(view.budget, { totalMinor: 800000, committedMinor: 100, reservedMinor: 200, remainingMinor: 799700, allocatedMinor: 300 });
   assert.deepEqual(view.requirements.map(({ allocatedUnits, remainingUnits }) => [allocatedUnits, remainingUnits]), [[3, 2], [0, 5]]);
   // Allocated is a ledger word: reserved plus committed, whatever a payment provider later holds.

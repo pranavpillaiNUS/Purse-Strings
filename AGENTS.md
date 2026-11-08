@@ -10,10 +10,12 @@ This is our entry for PayPal's "Build What's Next with PayPal and AI" hackathon.
 **Deadline: Nov 12, 2026, 3:00 PM US Eastern** (4:00 AM Nov 13 in Singapore). The
 project must meaningfully use both PayPal (sandbox only) and AI.
 
-**Stage one is CLI input/output only. Do not build a website, frontend or web server.**
-Prove contracts, policy decisions and durable execution through terminal commands
-before introducing a UI. JSON files/stdin and explicit CLI commands are the
-review surface. Website work requires a later, separate scope.
+**Stage one purchasing remains CLI input/output only.** JSON files/stdin and explicit
+CLI commands prove contracts, policy decisions and durable execution. Both people
+agreed on Nov 8 to start stage two with a local, read-only dashboard; see
+`docs/project-scope.md`. It may display existing read-command results on 127.0.0.1.
+Confirmation, authorization and execution remain terminal commands. Any page that
+acts, or hosting beyond this machine, requires a separate scope agreed by both people.
 
 Read `docs/project-scope.md` for outcomes and milestones, `docs/architecture.md` for
 boundaries/ownership and `README.md` for commands. `services/agent/README.md` covers the
@@ -32,15 +34,18 @@ Everything runnable is a simulation: no real money, suppliers or orders.
 | `npm run backend` | SQLite ledger with atomic budget and quantity reservations, local operator confirmation, and durable execution with crash recovery over **fake** payment and supplier providers; the backend config may additionally select `paymentProvider: "paypal-sandbox"` to route capture/refund effects through the sandbox gateway while the supplier order stays fake |
 | `npm run shop` | The bounded shopper (`run`): a model or a scripted stand-in proposes price-free carts to that backend through the shared client, and the run closes with a plain-language review. Mandate drafting (`draft`): a model turns a plain-English request into a policy-checked draft. A read-only view (`status`) of ledger numbers and named operations, with no model or key |
 | `npm run demo:flow` | The whole story in one command, with dates generated from today: control panel, plain-English request, confirmation, hostile listing, store change, rejection and recovery, and execution over **fake** providers. `--live` uses Claude. `--sandbox-paypal` connects scene 6's payment capture to the PayPal sandbox (operator-only; needs sandbox credentials, aborts cleanly without them; the supplier order stays simulated). See `docs/demo-script.md` |
-| `npm run spike:paypal` | A separate, interactive PayPal sandbox spike connected to none of the above. `docs/paypal-spike.md` records no results yet |
+| `npm run dashboard` | Local read-only view of demo scenes, mandate confirmation, budget, operations, audit history and stores through existing read commands; no actions, keys, frontend dependencies or external hosting |
+| `npm run spike:paypal` | A separate, interactive PayPal sandbox spike connected to none of the above. `docs/paypal-spike.md` records Nov 7–8 manual observations; unused-hold void/final-capture closure remains unexercised |
 
 **Not built (for real):** real money at a real supplier, real suppliers, stock attestation
 and assignment, CLI approvals and exceptions, delivery and readiness tracking,
-production authentication. PayPal sandbox purchase-path wiring exists in code: capture and
-refund are sandbox-verified-pending behind config opt-in (`paymentProvider`), with no live
-request and no sandbox-account behavior verified, so a sandbox `capture` is a mocked-contract
-plus crash-test fact, not a validated payment. Never describe these as implemented beyond that
-wiring. Fake-provider results such as `ordered` are not real orders, and a reservation is not
+production authentication. PayPal sandbox purchase-path wiring exists behind config opt-in
+(`paymentProvider`), with mocked-contract and crash-test evidence. `docs/paypal-spike.md`
+also records a Nov 7 application capture on the earlier PR #17 tree plus the AUTHORIZE
+fix, and separate Nov 7–8
+spike runs. Those historical observations do not validate recovery on the current tree,
+unused-hold closure or real purchasing. Do not describe the current recovery path as
+sandbox-account verified. Fake-provider results such as `ordered` are not real orders, and a reservation is not
 payment. No gate after M0 is recorded as passed; see `docs/project-scope.md`.
 
 The PayPal sandbox gateway (`services/checker/src/paypal/gateway.ts`, documented in
@@ -49,9 +54,10 @@ The PayPal sandbox gateway (`services/checker/src/paypal/gateway.ts`, documented
 commands (`operation-authorize`, `operation-complete-authorization`) place a sandbox hold on a
 reserved operation before `operation-run`; the durable worker resolves crashes through
 sandbox reads; sandbox credentials are read in-process only by the commands that call PayPal
-from the invocation directory `.env`/environment. Everything in that path is proven by
-fetch-mocked tests and fake-fetch child-process crash evidence; nothing is verified against a
-real PayPal account. A unit-4 four-method capture/refund/refund-read contract remains intact.
+from the invocation directory `.env`/environment. Automated evidence for that path uses
+fetch-mocked tests and fake-fetch child-process crashes; the current cleanup ran no account
+exercise. Keep this separate from the limited historical manual observations above.
+A unit-4 four-method capture/refund/refund-read contract remains intact.
 Reproduction commands and proof-class distinctions live in `docs/backend-delivery-review.md`.
 
 **Runtime folders:** the backend refuses a runtime folder other accounts can reach. On Windows it
@@ -68,7 +74,7 @@ which person you are working for, ask.
 | --- | --- |
 | `services/checker/` (rules, ledger, execution worker, PayPal client and spike), payment execution, audit log, approval and exception flow | Role A, Money: Danny |
 | `services/suppliers/` (stores, fixtures, control panel), `services/agent/` (mandate drafting, bounded shopper) | Role B, Shopping: Pranav |
-| `apps/cli/` | Shared. Each role adds commands for its own features: `backend.ts` and `windows-acl.ts` are Role A; `store.ts`, `mandate.ts`, `shop.ts` and `backend-transport.ts` are Role B. Tell the other person before changing shared parsing or output code. |
+| `apps/cli/` | Shared. Each role adds commands for its own features: `backend.ts` and `windows-acl.ts` are Role A; `store.ts`, `mandate.ts`, `shop.ts`, `backend-transport.ts` and the dashboard files are Role B. Tell the other person before changing shared parsing or output code. Adding a command to `DASHBOARD_READ_COMMANDS` needs both people's agreement. |
 | `packages/contracts/` | Shared. Changes need agreement from both people. |
 | `config/`, `examples/`, `docs/`, root config files, this file | Shared. Tell the other person about changes. |
 
@@ -99,7 +105,8 @@ role work alone, but it checks no policy, budget, evidence or deadlines, so acce
 is not a checker decision.
 
 **Role A build order:** 1) PayPal sandbox spike: hold S$8,000, partial captures, release the
-rest (`npm run spike:paypal`; code exists, no results recorded in `docs/paypal-spike.md`);
+rest (`npm run spike:paypal`; captures/refund observations are recorded in
+`docs/paypal-spike.md`, but unused-hold release still needs evidence);
 2) checker and unit tests (eligibility rules exist); 3) ledger, audit log and durable
 execution (exist as a simulation over fake providers); 4) PayPal gateway: mocked contract
 tests first (`.audit/backend-delivery/unit4.md`), then connect it to execution so purchases
@@ -110,9 +117,9 @@ stock on cue (`store` commands; `store-a`, `store-b` and a hostile seed exist); 
 drafting and confirmation (deterministic draft/review, model drafting from a plain-English
 request (`shop draft`) and the file handoff to the backend exist); 3) the agent with its bounded
 tools (`npm run shop` exists; for what live runs have shown, see
-`services/agent/README.md`); 4) review and dashboard output, as CLI output until both people
-agree to start the stage-two website (`shop run` closes with a review and `shop status` is a
-read-only view; neither approves, excepts or executes anything); 5) a prompt-injection
+`services/agent/README.md`); 4) review output through `shop run` and read-only views through
+`shop status` and the agreed stage-two local dashboard; none approves, excepts or executes
+anything; 5) a prompt-injection
 listing for the demo (the seed and a scripted compromised run exist).
 
 | Target date | Milestone |
@@ -217,6 +224,8 @@ aim to reach them.
   transactional guarantees.
 - Do not push, deploy or run sandbox transactions unless your user asks. Update scope
   status only when acceptance criteria are demonstrated. Do not install frontend deps.
+  Keep dashboard work within the agreed local read-only scope; action UI and external
+  hosting require both people's agreement.
 
 ## Knowledge graph
 

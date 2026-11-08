@@ -19,6 +19,7 @@
     "cli": "node apps/cli/src/main.ts",
     "demo": "node apps/cli/src/main.ts demo",
     "demo:flow": "node apps/cli/src/demo-flow.ts",
+    "dashboard": "node apps/cli/src/dashboard.ts",
     "backend": "node apps/cli/src/backend.ts",
     "shop": "node apps/cli/src/shop.ts"
   },

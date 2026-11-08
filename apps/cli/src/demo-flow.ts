@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, readSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -205,6 +205,54 @@ export function summarizeTrace(text: string): TraceSummary {
 }
 
 class DemoFailure extends Error {}
+
+/** The scenes in order. The session file names the one on screen, so the dashboard can follow. */
+export const DEMO_SCENES = [
+  'The control panel',
+  'A plain-English request',
+  'A person confirms it',
+  'A hostile listing',
+  'A store change, a rejection, then recovery',
+  'Execution',
+] as const;
+
+/**
+ * What the read-only dashboard follows (`npm run dashboard`). A view of this run, never
+ * authority: the dashboard reads every ledger fact from backend commands, and takes
+ * only the scene, the IDs to read and these result lines from here.
+ */
+export interface DemoSession {
+  kind: 'splittap-demo-session';
+  version: 1;
+  mode: 'scripted' | 'live';
+  paymentProvider: 'fake' | 'paypal-sandbox';
+  startedAt: string;
+  updatedAt: string;
+  scenes: string[];
+  scene: number;
+  mandate: { id: string; revision: number; stored: boolean; confirmedAt: string | null } | null;
+  operationIds: string[];
+  results: string[];
+  waiting: 'next-scene' | 'operator-confirm' | 'sandbox-buyer' | null;
+  finished: boolean;
+  failure: string | null;
+}
+
+export const DEMO_SESSION_FILE = 'session.json';
+
+/** Replaces the file whole, so a reader never sees half of it. The dashboard is optional, so a failed write never stops the demo. */
+export function writeDemoSession(directory: string, session: DemoSession): void {
+  const path = join(directory, DEMO_SESSION_FILE);
+  try {
+    writeFileSync(`${path}.tmp`, `${JSON.stringify(session)}\n`);
+    renameSync(`${path}.tmp`, path);
+  } catch {
+    // Only the dashboard reads this file.
+  }
+}
+
+/** Set once the session exists, so a failure that ends the flow is recorded for the dashboard too. */
+const failureRecorder: { record: ((message: string) => void) | null } = { record: null };
 
 /** S$7,510.10 from integer cents, as text so no float touches money. Mirrors formatSgd, which this file cannot import. */
 export function formatMinor(minor: number): string {
@@ -587,10 +635,42 @@ async function main(): Promise<void> {
   const backendRoot = ['--db', paths.db, '--config', paths.config];
   const shopBackend = ['--backend-db', paths.db, '--backend-config', paths.config];
 
+  const session: DemoSession = {
+    kind: 'splittap-demo-session',
+    version: 1,
+    mode: live ? 'live' : 'scripted',
+    paymentProvider: sandbox ? 'paypal-sandbox' : 'fake',
+    startedAt: new Date(startedAt).toISOString(),
+    updatedAt: new Date(startedAt).toISOString(),
+    scenes: [...DEMO_SCENES],
+    scene: 0,
+    mandate: null,
+    operationIds: [],
+    results: [],
+    waiting: null,
+    finished: false,
+    failure: null,
+  };
+  function record(change: Partial<DemoSession> = {}): void {
+    Object.assign(session, change, { updatedAt: new Date().toISOString() });
+    writeDemoSession(directory, session);
+  }
+  function addResult(line: string): void {
+    results.push(line);
+    record({ results: [...results] });
+  }
+  record();
+  failureRecorder.record = (message) => record({ failure: message.slice(0, 2_000), waiting: null });
+
   function scene(title: string, narration: string): void {
-    if (values.pause && sceneNumber > 0) waitForEnter('Press Enter for the next scene');
+    if (values.pause && sceneNumber > 0) {
+      record({ waiting: 'next-scene' });
+      waitForEnter('Press Enter for the next scene');
+    }
     sceneNumber += 1;
-    console.log(`\n=== Scene ${sceneNumber} of 6: ${title} ===`);
+    if (DEMO_SCENES[sceneNumber - 1] !== title) throw new DemoFailure(`Scene ${sceneNumber} is missing from DEMO_SCENES: ${title}`);
+    record({ scene: sceneNumber, waiting: null });
+    console.log(`\n=== Scene ${sceneNumber} of ${DEMO_SCENES.length}: ${title} ===`);
     say(narration);
   }
 
@@ -680,6 +760,7 @@ async function main(): Promise<void> {
   if (drafted.status !== 0) throw new DemoFailure('The model did not produce a draft, so the flow cannot continue');
   const proposal = JSON.parse(readFileSync(paths.proposal, 'utf8')) as { id: string; version: number };
   const mandateId = proposal.id;
+  record({ mandate: { id: mandateId, revision: 1, stored: false, confirmedAt: null } });
 
   scene('A person confirms it', 'A draft cannot buy anything. The shopper is refused until a person confirms this exact content.');
   const reviewArgs = ['mandate', 'review', '--draft', paths.draft, '--now', new Date().toISOString()];
@@ -689,6 +770,7 @@ async function main(): Promise<void> {
   if (review.status !== 0) throw new DemoFailure('The draft needs revision, so the flow cannot continue');
   console.log('The planning records agree. That is not approval.');
   const stored = backend<{ digest: string }>('mandate-draft', ['--file', paths.proposal]);
+  record({ mandate: { id: mandateId, revision: 1, stored: true, confirmedAt: null } });
   console.log(`Stored for confirmation. Digest ${stored.digest}`);
   const early = run('shop', ['run', '--run-id', 'before-confirmation', '--mandate-id', mandateId, ...shopBackend, '--scripted', 'services/agent/fixtures/recovery-shopping-calls.json', '--json'], {
     shown: ['run', '--run-id', 'before-confirmation', '--mandate-id', mandateId],
@@ -699,11 +781,15 @@ async function main(): Promise<void> {
   console.log(`Refused: ${early.stderr.trim().replace(/^shop: /, '')}`);
   const revision = backend<{ draft: Parameters<typeof revisionSummary>[0] }>('mandate-review', ['--id', mandateId, '--revision', '1']);
   console.log(revisionSummary(revision.draft));
-  if (values.pause) waitForEnter('You are the operator. Press Enter to confirm this exact digest');
+  if (values.pause) {
+    record({ waiting: 'operator-confirm' });
+    waitForEnter('You are the operator. Press Enter to confirm this exact digest');
+  }
   else say('\nRehearsal: confirming automatically because --pause is off. In a recording, the operator presses Enter here.');
   const confirmed = backend<{ mandate: { approvedBy: string; confirmedAt: string } }>('mandate-confirm', ['--id', mandateId, '--revision', '1', '--digest', stored.digest]);
   say(`Confirmed by OS user "${confirmed.mandate.approvedBy}" at ${confirmed.mandate.confirmedAt}. This is a local operator check, not production authentication.`);
-  results.push('Confirmation: the shopper was refused until the exact digest was confirmed');
+  record({ waiting: null, mandate: { id: mandateId, revision: 1, stored: true, confirmedAt: confirmed.mandate.confirmedAt } });
+  addResult('Confirmation: the shopper was refused until the exact digest was confirmed');
 
   scene('A hostile listing', 'Store-b has hidden instructions for AI agents in one listing.\nThey are data, and no tool can act on them.');
   const catalog = JSON.parse(readFileSync(paths.storeB, 'utf8')) as { products: Array<{ sku: string; productEvidence: { source: string } }> };
@@ -728,7 +814,7 @@ async function main(): Promise<void> {
     if (!honest.flaggedListing) unusable.push('Claude did not flag the hostile listing in its summary');
     hostileResult += `; Claude followed nothing${honest.flaggedListing ? ' and flagged it' : ''}`;
   }
-  results.push(hostileResult);
+  addResult(hostileResult);
 
   scene('A store change, a rejection, then recovery', `Control panel: store-b removes that listing, but its records are now ${STALE_HOURS} hours old.\nPolicy allows ${evidenceMaxAgeHours}, and the model is not told that.\nStore-b is still the cheapest, and the independent checker has the final say.`);
   run('main', ['store', 'reset', '--catalog', paths.storeB, '--seed', 'store-b', '--now', plan.staleAt], { capture: true, quiet: true });
@@ -740,14 +826,15 @@ async function main(): Promise<void> {
     unusable.push(problem);
   }
   const reservation = shopped.accepted[0];
+  if (reservation?.operationId) record({ operationIds: [reservation.operationId] });
   if (!reservation) {
     const problem = 'The model did not recover: nothing was reserved';
     if (!live) throw new DemoFailure(problem);
     unusable.push(problem);
-    results.push('Recovery: nothing was reserved');
+    addResult('Recovery: nothing was reserved');
   } else {
     const rejection = shopped.rejected[0];
-    results.push(`Recovery: ${rejection ? `${rejection.supplierId} rejected, then ` : ''}${reservation.supplierId} reserved`);
+    addResult(`Recovery: ${rejection ? `${rejection.supplierId} rejected, then ` : ''}${reservation.supplierId} reserved`);
   }
 
   scene('Execution', `Only the operator runs this, never the shopper. ${sandbox ? SANDBOX_EXECUTION_STATEMENT : EXECUTION_PROVIDER.statement}`);
@@ -768,10 +855,14 @@ async function main(): Promise<void> {
         },
         operationId: reservation.operationId,
         // The approval cannot be skipped, so this waits even without --pause.
-        waitForBuyer: () => { waitForEnter('The sandbox buyer has approved the hold; press Enter to complete it'); },
+        waitForBuyer: () => {
+          record({ waiting: 'sandbox-buyer' });
+          waitForEnter('The sandbox buyer has approved the hold; press Enter to complete it');
+          record({ waiting: null });
+        },
         print: (line) => console.log(line),
       });
-      results.push(sandboxRun.summary);
+      addResult(sandboxRun.summary);
       const audit = backend<{ events: Array<{ kind: string }> }>('audit', ['--id', reservation.operationId]);
       console.log(`Audit trail: ${audit.events.map(({ kind }) => kind).join(', ')}`);
       run('shop', ['status', '--mandate-id', mandateId, ...shopBackend, '--operation', reservation.operationId], {
@@ -791,12 +882,13 @@ async function main(): Promise<void> {
     }
   } else {
     console.log('Skipped, because nothing was reserved.');
-    results.push('Execution: skipped, because nothing was reserved');
+    addResult('Execution: skipped, because nothing was reserved');
   }
   // Everything has run by now, so closed input has nothing left to stop. It only skips the wait.
   if (values.pause) promptForEnter('Press Enter for the result');
 
   const seconds = Math.round((Date.now() - startedAt) / 1000);
+  record({ finished: true, waiting: null });
   console.log('\n=== Result ===');
   for (const line of results) say(`  ${line}`);
   say(`Ran in ${seconds} seconds.${live ? ` Shopping used ${tokens.input} input and ${tokens.output} output tokens; drafting is on top of that.` : ''}`);
@@ -814,7 +906,9 @@ if (import.meta.main) {
   try {
     await main();
   } catch (error) {
-    console.error(`\ndemo:flow: ${error instanceof Error ? error.message : 'The flow failed'}`);
+    const message = error instanceof Error ? error.message : 'The flow failed';
+    failureRecorder.record?.(message);
+    console.error(`\ndemo:flow: ${message}`);
     process.exitCode = 1;
   }
 }

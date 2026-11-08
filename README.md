@@ -4,9 +4,10 @@ Help a small-company operations manager equip new hires on time, using approved
 hardware, suppliers and an all-in budget. The AI proposes; independent rules and
 human-confirmed authority govern execution. The name is provisional.
 
-**Stage one is terminal input/output only.** Prove the purchasing core before building
-a website. The checker supports offline eligibility and simulated payment execution
-using fake providers.
+**Everything happens in the terminal.** Drafting, confirmation, authorization and execution
+are CLI commands. Stage two adds one [read-only dashboard](#dashboard) that shows what those
+commands report and can change nothing. The checker supports offline eligibility and
+simulated payment execution using fake providers.
 
 ## Start here
 
@@ -223,6 +224,36 @@ The scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and 
 Node 26. Live Claude has run it only in temporary Windows copies with the backend's folder check
 skipped.
 
+## Dashboard
+
+A read-only page that follows `demo:flow` scene by scene. It needs no key, internet access
+or extra install:
+
+```sh
+npm run dashboard                       # serves http://127.0.0.1:7070, follows .runtime/demo
+npm run demo:flow -- --pause            # in a second terminal; the page updates as it runs
+```
+
+It shows the current scene, the stored mandate, the ledger's budget and units, each operation
+with payment, supplier order, refund and readiness as separate facts, its audit trail, any PayPal
+sandbox IDs to match on the sandbox Activity page, and the two stores with record ages against
+the policy limit. Pass the same `--dir` as `demo:flow` to follow another take. To follow one
+mandate in any backend instead:
+
+```sh
+npm run dashboard -- --backend-db PATH --backend-config PATH --mandate-id ID --operation ID
+```
+
+It is a view, not a second ledger. It starts only read commands (backend `mandate-review`,
+`status` and `audit`, `shop status` and `store show`), each in its own process with no model key
+or PayPal detail, and `demo:flow` adds only the scene and result lines through
+`session.json` in its working directory. Confirmation comes from the backend's active
+mandate revision; session metadata cannot confirm it. An unavailable or mismatched read
+is shown as unknown. Child reads run one at a time, and store freshness is compared with
+the exact age limit before rounding for display. The server listens on 127.0.0.1, answers only to
+`127.0.0.1` or `localhost` host names, accepts only GET and HEAD, and the page loads nothing
+from elsewhere. Exit codes: 0 stopped normally, 2 a bad option or a busy port, 1 anything else.
+
 ## Status
 
 **Implemented:** runtime contracts, company-policy/mandate examples, fixture supplier,
@@ -245,21 +276,20 @@ only. Unit 5 wires that gateway into the execution ledger behind the backend
 config (`paymentProvider: "paypal-sandbox"`): operator-only hold commands
 (`operation-authorize`, `operation-complete-authorization`) place a sandbox hold
 on a reserved operation before `operation-run`, and the durable worker recovers
-crashes through sandbox reads. Nothing here has been verified against a real
-PayPal account, the supplier order stays fake in every configuration, and no
-live or unscripted PayPal request has ever been sent; [delivery
-evidence](docs/backend-delivery-review.md) separates simulated execution,
-contract coverage and code wiring from account feasibility.
+crashes through sandbox reads. [Manual sandbox notes](docs/paypal-spike.md) record
+a Nov 7 application capture on the earlier PR #17 tree plus the AUTHORIZE fix, and separate Nov 7–8 spike
+runs. These limited historical observations do not validate the current recovery
+path, unused-hold release or real supplier ordering. This checkpoint ran offline;
+the supplier order stays fake in every configuration. [Delivery
+evidence](docs/backend-delivery-review.md) distinguishes the automated evidence
+from those manual observations and remaining account exercises.
 
-**Planned (still unimplemented):** stock assignment, at least one authorized
-interactive sandbox exercise recorded in `docs/paypal-spike.md` (buyer consent on
-PayPal's hosted page during the operator's own authorized steps), and the
-`packages/contracts` `paymentProvider` proposal
-through the ledger, real supplier
+**Remaining:** stock assignment, authorized account exercises for current-path
+response-loss recovery and unused-hold closure (see `docs/paypal-spike.md`), real supplier
 execution, exceptions and equipment-readiness tracking. All will be tested through the
-CLI. No custom website is in the scaffold or stage-one acceptance; the only browser
-page involved anywhere is PayPal's own hosted buyer-consent screen during the
-optional sandbox spike.
+CLI. The only page we serve is the read-only [dashboard](#dashboard), which no stage-one
+acceptance depends on. The only other browser page involved is PayPal's own hosted
+buyer-consent screen during the sandbox hold steps or the optional spike.
 
 ## Separate PayPal feasibility spike
 

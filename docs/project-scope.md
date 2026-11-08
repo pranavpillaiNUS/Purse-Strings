@@ -14,12 +14,12 @@ location on time, with spend reconciled and exceptions attributable to a human.
 transactional budget govern what can execute. Do not claim universal novelty or
 prompt-injection immunity.
 
-**Delivery constraint:** stage one uses CLI input/output exclusively. No custom
-website, frontend or web framework is built, and purchasing behavior is
-browser-free; the one browser step anywhere is PayPal's own hosted buyer-consent
-page, which the operator (or demo operator) reaches only during the authorized
-sandbox hold commands or the sandbox spike, not a site we build. Build and test the
-purchasing implementation before adding any website. Later UI work calls the proven core.
+**Delivery constraint:** stage one purchasing uses CLI input/output exclusively. The
+agreed stage-two local read-only dashboard below displays those command results without
+adding purchasing actions. The only purchasing step that opens a browser is PayPal's
+hosted buyer-consent page, reached by the operator during authorized sandbox hold
+commands or the sandbox spike. Later UI actions require separate agreement and must
+call the proven core.
 
 ## Representative task
 
@@ -72,11 +72,26 @@ execution. Stage one is complete only when CLI acceptance scenarios below are pr
 M1–M5 command names and contracts will be finalized with each implementation; do not
 add empty commands that report success. M0's fixture checks are not those implementations.
 
-## Stage two — deferred
+## Stage two — read-only dashboard started
 
-A website may later provide mandate review, exceptions, progress and readiness views.
-It must reuse the tested application core and persisted operations. No website files
-or dependencies are part of this scaffold or stage-one acceptance.
+Both people agreed on Nov 8 to start stage two with a read-only dashboard
+(`npm run dashboard`, `apps/cli/src/dashboard.ts`). It shows the demo's scene, the stored
+mandate, the ledger's budget and units, each operation's separate payment, supplier order,
+refund and readiness facts with its audit trail, and the stores. Every fact comes from an
+existing read command (backend `mandate-review`, `status` and `audit`, `shop status`,
+`store show`); `demo:flow` adds only the scene, the IDs to read and its result lines. It
+serves one page on 127.0.0.1, needs no key, and adds no frontend dependency or build step.
+Confirmation is bound to the backend's active mandate revision, never the session file.
+Unavailable or mismatched confirmation reads remain unknown. Dashboard child reads run
+sequentially to avoid racing their SQLite validation, and evidence freshness uses exact
+elapsed time before rounding its display.
+Nothing in stage-one acceptance depends on it.
+
+Still deferred, each needing both people's agreement: any page that acts (mandate review and
+confirmation, approvals, exceptions, running or reconciling operations), progress and
+readiness views beyond what the ledger records, and anything served beyond this machine. A
+page that acts must reuse the tested application core and persisted operations, and keep the
+same authority boundaries as the CLI.
 
 ## Prototype boundaries
 
@@ -154,12 +169,13 @@ backend delivery add a sandbox-only PayPal gateway
 (`services/checker/src/paypal/gateway.ts`, wired into the execution ledger behind
 the backend config `paymentProvider` and documented in `docs/backend-api.md`) with
 fetch-mocked capture/refund/refund-read tests, operator hold commands and
-crash-recovery evidence through sandbox reads; no PayPal request has been sent by
-any of this and feasibility on a real sandbox account remains unverified. No gate after M0 is
-recorded as passed,
-and M3 and M5 are planned. See `docs/backend-delivery-review.md` for the distinction
-between simulated execution, mocked contract coverage and real feasibility. PayPal
-feasibility is unverified
-until `docs/paypal-spike.md` records observed results, and the one authorized
-interactive buyer-consent exercise is the next PayPal step. The original hackathon schedule
+crash-recovery evidence through sandbox reads. `docs/paypal-spike.md` records limited
+historical manual observations: a Nov 7 application capture on the earlier PR #17 tree plus the AUTHORIZE fix,
+and separate Nov 7–8 spike captures and a refund. They do not establish response-loss
+recovery on the current tree or unused-hold closure. This checkpoint ran offline.
+No gate after M0 is recorded as passed; M3 remains incomplete and M5 is planned.
+See `docs/backend-delivery-review.md` for the distinction between simulated execution,
+mocked contract coverage and manual account observations. The next PayPal evidence
+requires authorized account exercises for current-path recovery and hold closure.
+The original hackathon schedule
 is preserved in `docs/hackathon-plan.md`, not adopted as a current commitment.

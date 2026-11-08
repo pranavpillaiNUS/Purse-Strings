@@ -28,6 +28,20 @@ The scripted flow passes in CI on Linux, Windows and macOS. A live take has not 
 macOS, or on Windows with the backend's folder check on, so rehearse one first on the machine you
 record with.
 
+### With the dashboard beside the terminal
+
+1. Start `npm run dashboard` in one terminal and open http://127.0.0.1:7070. It waits for the
+   flow, so it can start first. For a sandbox take, pass the same `--dir` to both commands.
+2. Put the browser beside the recording terminal, then run the flow with `--pause` there.
+3. The page follows each scene: the stores in scene 1, the mandate from scene 3, "Not
+   confirmed" until the operator presses Enter, the results of scenes 4 and 5, then the
+   operation, its audit trail and, in sandbox mode, the PayPal IDs in scene 6. It says when
+   the flow waits for Enter or for the sandbox buyer.
+
+The page is read-only. Every action still happens in the terminal, which is the point to make
+on camera: the AI proposes, the checker decides, a person confirms, and the dashboard only
+shows what the ledger recorded.
+
 ## The script
 
 The narration is about 350 words, which is about 2:20 at a normal pace, and the rest is time
