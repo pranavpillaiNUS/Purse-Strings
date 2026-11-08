@@ -112,24 +112,40 @@ function readNumber(row: RawRow, column: string): number {
   return value;
 }
 
+// Matches the busy_timeout below: how long one opener waits for another
+// before a contended open surfaces as SQLITE_BUSY.
+const OPEN_BUSY_BUDGET_MS = 5000;
+const sleepCell = new Int32Array(new SharedArrayBuffer(4));
+
+// Opening stays synchronous for every caller, so the pause blocks this thread.
+function sleepSync(milliseconds: number): void {
+  Atomics.wait(sleepCell, 0, 0, milliseconds);
+}
+
 export function openLedgerStore(databasePath: string): DatabaseSync {
   const database = new DatabaseSync(databasePath);
   try {
     // busy_timeout must be set before journal_mode and the rest of open: SQLite
     // does not honor the busy handler for the WAL switch itself, so only the
     // waiting-read retry below rescues a contended opener.
-    database.exec('PRAGMA busy_timeout = 5000');
+    database.exec(`PRAGMA busy_timeout = ${OPEN_BUSY_BUDGET_MS}`);
     // The WAL switch fails immediately on SQLITE_BUSY under concurrent openers
     // instead of honoring busy_timeout. A waiting read does honor it, and the
     // winner's committed switch makes the file permanently WAL, so on BUSY wait
     // through one read and retry the now no-op switch instead of surfacing it.
-    for (let attempt = 1; ; attempt += 1) {
+    // The read does not wait while the other opener holds only a shared lock,
+    // so a fixed count of back-to-back retries can all collide (CI saw five
+    // fail inside 200 ms). Retry within the busy_timeout budget instead, with
+    // a short random pause so two openers stop meeting in lockstep.
+    const walDeadline = Date.now() + OPEN_BUSY_BUDGET_MS;
+    for (;;) {
       try {
         database.exec('PRAGMA journal_mode = WAL');
         break;
       } catch (error) {
-        if (!isSqliteBusy(error) || attempt >= 5) throw error;
+        if (!isSqliteBusy(error) || Date.now() >= walDeadline) throw error;
         database.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
+        sleepSync(5 + Math.floor(Math.random() * 20));
       }
     }
     database.exec('PRAGMA synchronous = FULL');
