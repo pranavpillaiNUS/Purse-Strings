@@ -488,7 +488,7 @@ function mayContainSandboxState(directory: string): boolean {
     return runtimeExists && (prior.version !== 1 || (prior.paymentProvider !== undefined && prior.paymentProvider !== 'fake'));
   } catch {
     // A missing/unreadable config is not evidence that existing runtime state
-    // belongs only to fake providers. Do not discard what cannot be classified.
+    // belongs only to a local simulation. Keep what cannot be classified.
     return runtimeExists;
   }
 }

@@ -1,7 +1,7 @@
 # Graph Report - Splittap-pay  (2026-11-08)
 
 ## Corpus Check
-- 135 files · ~177,779 words
+- 135 files · ~177,899 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 6 file(s) not represented in the graph (top: (none) 4, .tsv 1, .example 1)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `18a2f7bc`
+- Built from commit: `161bfaed`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -111,16 +111,16 @@
 10. `CatalogSchema` - 24 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `Observations (records, no code)` --references--> `authorizeOperationHold()`  [INFERRED]
-  .audit/backend-delivery/unit5-result.md → services/checker/src/execution/paypal-provider.ts
-- `PayPal gateway (unit-4 contract + unit-5 sandbox additions)` --references--> `GatewayInputError`  [INFERRED]
-  docs/backend-api.md → services/checker/src/paypal/gateway.ts
 - `Delivered` --references--> `GatewayUnknown`  [INFERRED]
   .audit/backend-delivery/unit5-result.md → services/checker/src/paypal/gateway.ts
-- `The contract mock, and why accepting a mock result proves nothing` --references--> `createMockBackend()`  [INFERRED]
-  docs/backend-api.md → packages/contracts/src/mock.ts
-- `Authority and evidence` --references--> `BudgetSnapshot`  [INFERRED]
-  docs/architecture.md → packages/contracts/src/index.ts
+- `Applied` --references--> `DENIED()`  [INFERRED]
+  .audit/backend-delivery/unit5-result.md → services/checker/src/paypal/client.test.ts
+- `Observations (records, no code)` --references--> `authorizeOperationHold()`  [INFERRED]
+  .audit/backend-delivery/unit5-result.md → services/checker/src/execution/paypal-provider.ts
+- `M0 — delivered by the scaffold` --references--> `BudgetSnapshot`  [INFERRED]
+  docs/backend-delivery-review.md → packages/contracts/src/index.ts
+- `Milestones M4/M5` --references--> `createBackendClient()`  [INFERRED]
+  docs/backend-delivery-review.md → packages/contracts/src/client.ts
 
 ## Import Cycles
 - None detected.
@@ -453,17 +453,17 @@ Nodes (6): cart(), assertSupportedCurrency(), fromMinor(), paypalMoney(), SUPPOR
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `runTransaction()` connect `paypal-provider.ts` to `tests/store.test.ts`, `cli/src/backend.test.ts`, `createExecutionWorker`, `README.md`, `application.ts`, `worker-paypal.test.ts`, `ledger/store.ts`, `execution/worker.ts`, `Unit 2 result: trusted authority and SQLite atomic reservations`, `authority.ts`, `execution/worker.test.ts`?**
-  _High betweenness centrality (0.045) - this node is a cross-community bridge._
+- **Why does `Durable ledger (M2 slice — authority + reservations)` connect `README.md` to `paypal-provider.ts`, `execution/worker.ts`?**
+  _High betweenness centrality (0.058) - this node is a cross-community bridge._
 - **Are the 4 inferred relationships involving `openLedgerStore()` (e.g. with `Change (exact)` and `Minors`) actually correct?**
   _`openLedgerStore()` has 4 INFERRED edges - model-reasoned connections that need verification._
 - **Should `paypal-spike.ts` be split into smaller, more focused modules?**
   _Cohesion score 0.1010752688172043 - nodes in this community are weakly interconnected._
-- **Why does `Durable ledger (M2 slice — authority + reservations)` connect `README.md` to `paypal-provider.ts`, `execution/worker.ts`?**
-  _High betweenness centrality (0.042) - this node is a cross-community bridge._
+- **Why does `runTransaction()` connect `paypal-provider.ts` to `tests/store.test.ts`, `cli/src/backend.test.ts`, `createExecutionWorker`, `README.md`, `application.ts`, `worker-paypal.test.ts`, `ledger/store.ts`, `execution/worker.ts`, `Unit 2 result: trusted authority and SQLite atomic reservations`, `authority.ts`, `execution/worker.test.ts`?**
+  _High betweenness centrality (0.047) - this node is a cross-community bridge._
 - **Should `gateway.test.ts` be split into smaller, more focused modules?**
   _Cohesion score 0.07198228128460686 - nodes in this community are weakly interconnected._
-- **Why does `Hackathon project: an AI purchasing agent that can't overspend` connect `Hackathon project: an AI purchasing agent that can't overspend` to `README.md`?**
-  _High betweenness centrality (0.028) - this node is a cross-community bridge._
+- **Why does `@anthropic-ai/sdk` connect `agent/package.json` to `src/worker.ts`?**
+  _High betweenness centrality (0.032) - this node is a cross-community bridge._
 - **Should `package.json` be split into smaller, more focused modules?**
   _Cohesion score 0.09486166007905138 - nodes in this community are weakly interconnected._
