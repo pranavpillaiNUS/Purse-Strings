@@ -244,7 +244,21 @@ async function holdAndCapture(redirected: Promise<'approved' | 'cancelled'>) {
   }
   record('Buyer approval', 'PASS', 'buyer approved the hold');
 
-  const authorized = await paypal.authorizeOrder(order.id, `${runId}-authorize`);
+  // The browser hits our /return before PayPal's server-side approval state has
+  // fully settled, so an immediate authorize can replay as 422 ORDER_NOT_APPROVED.
+  // Retry briefly; a genuinely unapproved order still fails after the window.
+  let authorized;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      authorized = await paypal.authorizeOrder(order.id, `${runId}-authorize`);
+      break;
+    } catch (error) {
+      const message = describe(error);
+      if (attempt >= 6 || !message.includes('ORDER_NOT_APPROVED')) throw error;
+      console.log(`  Authorize replayed ORDER_NOT_APPROVED (attempt ${attempt}); PayPal state may lag the redirect, retrying...`);
+      await sleep(5000 * attempt);
+    }
+  }
   const auth = authorized.purchase_units?.[0]?.payments?.authorizations?.[0];
   if (!auth) throw new Error(`Authorize call returned no authorization for order ${order.id}`);
   openAuthorizationId = auth.id;

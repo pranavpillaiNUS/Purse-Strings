@@ -80,6 +80,7 @@ Fill this in after each run. It is evidence for the write-up and the demo.
 | Date | Currency | Captures OK | Idempotent | Concurrent | Hard ceiling | Void after partial | Final capture | Refund |
 |---|---|---|---|---|---|---|---|---|
 | 2026-11-07 (run `spike-20261107190313`, log in gitignored `spike-logs/`) | SGD | yes — 3 of 3 `COMPLETED`, re-read from PayPal with net amounts | yes — replay with the same `PayPal-Request-Id` returned the original capture `56E36975AL768471P` | yes — B and C captured at the same moment, no `PREVIOUS_REQUEST_IN_PROGRESS` | **WARN — no**: PayPal accepted an over-capture of S$507.35 when only S$495.35 remained | skipped — the over-capture consumed the remainder, so this row needs the `--finish=final` run | not yet run | not yet run |
+| 2026-11-08 (run `spike-20261108062830`, `--finish=final --refund`, log in gitignored `spike-logs/`) | SGD | yes — 3 of 3 `COMPLETED`, re-read from PayPal with net amounts (fees 122.69 / 81.77 / 52.20) | yes — replay with the same `PayPal-Request-Id` returned the original capture `3HR51156CD066832X` | yes — B and C captured in parallel, both `COMPLETED` | **WARN — no**, reproduced: PayPal accepted S$507.35 against a S$495.35 remainder | skipped — the over-capture probe used `final_capture=false` and consumed the remainder, leaving nothing to void | skipped — same cause; a dedicated final-capture pass is still owed | yes — partial refund `100.00` returned `COMPLETED` and the capture re-read as `PARTIALLY_REFUNDED` |
 
 Run 1 facts (authorization `48N27869UF418711G`, order `4KP481773U222774K`):
 
@@ -89,4 +90,12 @@ Run 1 facts (authorization `48N27869UF418711G`, order `4KP481773U222774K`):
 - **Over-capture: the surprising result.** PayPal accepted S$507.35 against a S$495.35 remainder (`COMPLETED`) — the hold is **not** a hard ceiling on this account. The checker's own amount verification in `services/checker/src/paypal/gateway.ts` (expected amount passed per capture) is therefore the *only* cap; say this honestly in the demo/write-up.
 - The earlier run `spike-20261107190056` ended with `buyer cancelled` at the approval page (login trouble before the dashboard credentials were recovered); order `9TK54416118491612` — no hold was exercised, no state to clean up.
 - Raw request/response excerpts for this run (with PayPal `debug_id`s) stay in `spike-logs/` (gitignored); they are not reproduced in this file.
+
+Run 2 facts (`--finish=final --refund`, run `spike-20261108062830`, authorization `4A446567Y9042202W`, order `0YL616644P7131011`):
+
+- Reproduces every run-1 result and adds the partial refund: refund `5MV8654727882740K` for `100.00` of capture `3HR51156CD066832X` came back `COMPLETED`, and a fresh capture read showed `PARTIALLY_REFUNDED`.
+- **Racing bug found and fixed.** Two earlier `--finish=final` attempts (`spike-20261108061154`, `spike-20261108061237`) died with `422 ORDER_NOT_APPROVED` on the authorize: the buyer's browser hits our local `/return` before PayPal's server-side approval state settles, so an immediate `authorizeOrder` can replay before the order is authorizable. The spike now retries `authorizeOrder` briefly on `ORDER_NOT_APPROVED` (up to 6 attempts with backoff); a genuinely unapproved order still fails after the window.
+- Over-capture warning held again: `507.35` accepted against a `495.35` remainder (`COMPLETED`). The checker's per-capture amount verification remains the only budget cap — state this in the demo and write-up.
+- The over-capture step and closing steps are one design gap: with the remainder consumed by the probe, neither void nor `final_capture=true` was exercised on this pass. Either cap the last probe to the true remainder (then void the rest) or drop the probe's amount to leave a remainder.
+- Hold timing: created 2026-11-08T06:34:08Z, honor period ends ~2026-11-11, full expiry 2026-12-07. The three-day staleness rule stands: create demo holds on demo day.
 
