@@ -137,10 +137,13 @@ it uses the PowerShell that ships with Windows, which adds about half a second p
 
 - **Owner:** the current user, SYSTEM or Administrators, including the built-in Administrator account.
 - **Access:** allow entries for those accounts only, whether set directly or inherited from a
-  parent. Deny entries are fine, because they only take access away.
+  parent. Deny entries don't count as too open, because they only take access away.
 - **Refused:** any other allow entry, even read-only, and anything the backend can't read or parse.
   That includes a machine where PowerShell can't run or is locked to Constrained Language Mode,
   a drive with no access lists, and accounts Windows writes in a short form, such as Guest.
+- **Deny entries naming the current user** are refused with their own message, because the backend
+  couldn't work there. A deny through a group, such as Everyone, isn't detected: the command can
+  still fail with "the command failed unexpectedly" (exit 1).
 - **New files:** a folder must also have an allow entry that new files inherit. With none, Windows
   gives a new database the creating process's default access, which can reach further.
 - **Links:** a junction or link is judged by the folder it reaches.
@@ -155,8 +158,8 @@ parent folders, and nothing stops access changing after the check. Administrator
 always reach the files. This is not production authentication or multi-user isolation.
 
 **How it was checked:** `apps/cli/src/backend.test.ts` uses real Windows permissions for inherited
-and direct access, folders that don't pass access on, open database files, junctions and an
-unreadable descriptor. A folder owned by another account is
+and direct access, folders that don't pass access on, deny entries naming the user, open database
+files, junctions and an unreadable descriptor. A folder owned by another account is
 covered only by a logic test in `apps/cli/src/windows-acl.test.ts`, because creating a real one needs
 admin rights.
 

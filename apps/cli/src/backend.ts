@@ -327,10 +327,13 @@ function assertPrivateWindowsDirectory(directory: string, label: string, fresh =
     throw new CliError(`${label} is not owned by the operating-system user running this command`);
   }
   if (verdict === 'too_open') {
-    throw new CliError(`${label} permissions are too open; refusing to chmod an existing unsafe directory`);
+    throw new CliError(`${label} permissions are too open; refusing to use or change it`);
   }
   if (verdict === 'no_file_inheritance') {
     throw new CliError(`${label} does not pass its private access on to new files; refusing to use it`);
+  }
+  if (verdict === 'denies_user') {
+    throw new CliError(`${label} has a deny entry for the user running this command; fix its access or use another location`);
   }
   if (verdict !== 'ok') {
     throw new CliError(`${label} could not be validated as a runtime directory`);
@@ -357,6 +360,9 @@ function assertPrivateWindowsDatabase(database: string, label: string): void {
     }
     if (verdict === 'too_open') {
       throw new CliError(`${label} permissions are too open; refusing to use or change it`);
+    }
+    if (verdict === 'denies_user') {
+      throw new CliError(`${label} has a deny entry for the user running this command; fix its access or use another location`);
     }
     if (verdict !== 'ok') {
       throw new CliError(`${label} could not be validated`);
@@ -519,9 +525,11 @@ function providerFacts(database: DatabaseSync, operationId: string, paymentProvi
   }
   const effects: EffectStorageRow[] = loadEffectRows(database, operationId);
   const byKind = new Map(effects.map((effect) => [effect.kind, effect] as const));
-  const captureId = providerIdFilter(byKind.get('capture')?.providerId ?? null);
+  const capture = byKind.get('capture');
+  const captureId = providerIdFilter(capture?.state === 'succeeded' ? capture.providerId : null);
   if (captureId !== undefined) facts.captureId = captureId;
-  const refundId = providerIdFilter(byKind.get('refund')?.providerId ?? null);
+  const refund = byKind.get('refund');
+  const refundId = providerIdFilter(refund?.state === 'succeeded' ? refund.providerId : null);
   if (refundId !== undefined) facts.refundId = refundId;
   return facts;
 }
