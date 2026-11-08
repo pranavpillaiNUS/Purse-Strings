@@ -528,6 +528,8 @@ export interface StatusView {
   warning: string | null;
   mandateId: string;
   mandateVersion: number;
+  /** From mandate.get, rather than a draft or orchestration file. */
+  confirmedAt: string;
   budget: { totalMinor: number; committedMinor: number; reservedMinor: number; remainingMinor: number; allocatedMinor: number };
   requirements: Array<{
     requirementId: string; required: number; committedUnits: number; reservedUnits: number; allocatedUnits: number; remainingUnits: number;
@@ -551,6 +553,7 @@ export function buildStatusView(input: { ledger: LedgerFacts; operations: readon
     warning: backend === 'contract-mock' ? MOCK_WARNING : null,
     mandateId: mandate.id,
     mandateVersion: mandate.version,
+    confirmedAt: mandate.confirmedAt,
     budget: {
       totalMinor: mandate.budgetMinor, committedMinor: snapshot.committedMinor, reservedMinor: snapshot.reservedMinor,
       remainingMinor: mandate.budgetMinor - allocatedMinor, allocatedMinor,

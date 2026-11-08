@@ -147,6 +147,7 @@ const ProviderSchema = z.enum(['fake', 'paypal-sandbox']);
 const OperationSchema = z.object({
   id: z.string(),
   mandateId: z.string(),
+  mandateVersion: z.number().int().positive(),
   cartId: z.string(),
   supplierId: z.string(),
   status: z.enum(['reserved', 'running', 'reconciliation_required', 'ordered', 'failed', 'compensation_pending', 'compensated']),
@@ -182,8 +183,11 @@ const AuditOutputSchema = z.object({
 
 const ShopStatusSchema = z.object({
   kind: z.literal('shop-status'),
+  simulation: z.literal(true),
+  backend: z.literal('simulation-backend'),
   mandateId: z.string(),
   mandateVersion: z.number().int().positive(),
+  confirmedAt: TimestampSchema,
   budget: z.object({ totalMinor: MinorSchema, committedMinor: MinorSchema, reservedMinor: MinorSchema, remainingMinor: z.number().int() }),
   requirements: z.array(z.object({
     requirementId: z.string(), required: z.number().int(), committedUnits: z.number().int(),
@@ -277,6 +281,8 @@ export interface DashboardState {
     id: string;
     revision: number;
     digest: string;
+    /** Confirmation belongs to this exact revision and comes only from the backend. */
+    confirmationStatus: 'confirmed' | 'unconfirmed' | 'unknown';
     confirmedAt: string | null;
     currency: string;
     budgetMinor: number;
@@ -419,7 +425,7 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
   let mandateId: string | null;
   let revision: number | null = null;
   let confirmedAt: string | null = null;
-  let readLedger: boolean;
+  let confirmationStatus: 'confirmed' | 'unconfirmed' | 'unknown' = 'unknown';
   let operationIds: readonly string[];
 
   if (source.kind === 'demo') {
@@ -442,31 +448,33 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
       mode: value.mode, paymentProvider: value.paymentProvider, startedAt: value.startedAt, updatedAt: value.updatedAt,
       scenes: value.scenes, scene: value.scene, results: value.results, waiting: value.waiting, finished: value.finished, failure: value.failure,
     };
-    mandateId = value.mandate?.stored ? value.mandate.id : null;
+    // Session metadata selects what to inspect; it cannot establish or suppress
+    // the backend's confirmation facts, even while a demo scene is catching up.
+    mandateId = value.mandate?.id ?? null;
     revision = value.mandate?.revision ?? null;
-    confirmedAt = value.mandate?.confirmedAt ?? null;
-    readLedger = confirmedAt !== null;
     operationIds = value.operationIds;
-    if (value.mandate !== null && !value.mandate.stored) state.notices.push('The model has drafted a mandate. It is not stored for confirmation yet.');
-    else if (value.mandate !== null && confirmedAt === null) state.notices.push('The mandate is stored but not confirmed. The shopper is refused until a person confirms it.');
+    if (value.mandate !== null && !value.mandate.stored) state.notices.push('Demo scene: preparing the mandate for storage and confirmation.');
   } else {
     mandateId = source.mandateId;
-    readLedger = true;
     operationIds = source.operationIds;
   }
 
   const catalogPaths = readCatalogPaths(configPath);
-  const storeReads = catalogPaths.map((catalog) => run('main', ['store', 'show', '--catalog', catalog, '--json']));
-  const shopRead = readLedger && mandateId !== null
-    ? run('shop', ['status', `--mandate-id=${mandateId}`, '--backend-db', databasePath, '--backend-config', configPath,
-      ...operationIds.map((id) => `--operation=${id}`), '--json'])
+  // A read command still opens SQLite and validates the database and sidecars.
+  // Run one at a time so the dashboard's own children cannot race those checks.
+  const stores: CommandResult[] = [];
+  for (const catalog of catalogPaths) stores.push(await run('main', ['store', 'show', '--catalog', catalog, '--json']));
+  // Operations have their own independent reads below. A missing operation must
+  // not hide a successful mandate confirmation or the budget view.
+  const shop = mandateId !== null
+    ? await run('shop', ['status', `--mandate-id=${mandateId}`, '--backend-db', databasePath, '--backend-config', configPath, '--json'])
     : null;
-  const operationReads = operationIds.map((id) => Promise.all([
-    run('backend', [...backendRoot, 'status', '--id', id]),
-    run('backend', [...backendRoot, 'audit', '--id', id]),
-  ] as const));
-
-  const [stores, shop, operations] = await Promise.all([Promise.all(storeReads), shopRead, Promise.all(operationReads)]);
+  const operations: Array<readonly [CommandResult, CommandResult]> = [];
+  for (const id of operationIds) {
+    const status = await run('backend', [...backendRoot, 'status', '--id', id]);
+    const audit = await run('backend', [...backendRoot, 'audit', '--id', id]);
+    operations.push([status, audit]);
+  }
 
   for (const [index, result] of stores.entries()) {
     const parsed = parseJson(StoreShowSchema, result);
@@ -476,10 +484,21 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
 
   if (shop !== null) {
     const parsed = parseJson(ShopStatusSchema, shop);
-    if (parsed === null) state.problems.push(problemText('Ledger (shop status)', shop));
-    else {
+    if (parsed === null) {
+      // This is the exact trusted CLI refusal for mandate.get. Other failures,
+      // including storage/ACL refusal, do not establish a confirmation state.
+      if (shop.status === 1 && shop.stdout.trim() === ''
+        && shop.stderr.trim() === 'shop: Mandate has no confirmed active revision') {
+        confirmationStatus = 'unconfirmed';
+        state.notices.push('The backend has no confirmed active revision for this mandate. The shopper is refused until a person confirms it.');
+      } else state.problems.push(problemText('Ledger (shop status)', shop));
+    } else if (parsed.mandateId !== mandateId || (revision !== null && parsed.mandateVersion !== revision)) {
+      state.problems.push('Ledger (shop status): the confirmed mandate does not match the revision being reviewed.');
+    } else {
       state.ledger = { mandateId: parsed.mandateId, mandateVersion: parsed.mandateVersion, budget: parsed.budget, requirements: parsed.requirements };
       revision ??= parsed.mandateVersion;
+      confirmedAt = parsed.confirmedAt;
+      confirmationStatus = 'confirmed';
     }
   }
 
@@ -488,9 +507,11 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
     const review = await run('backend', [...backendRoot, 'mandate-review', '--id', mandateId, '--revision', String(revision)]);
     const parsed = parseJson(MandateReviewSchema, review);
     if (parsed === null) state.problems.push(problemText('Mandate', review));
-    else {
+    else if (parsed.mandateId !== mandateId || parsed.mandateVersion !== revision) {
+      state.problems.push('Mandate: the backend review did not match the requested revision.');
+    } else {
       state.mandate = {
-        id: parsed.mandateId, revision: parsed.mandateVersion, digest: parsed.digest, confirmedAt,
+        id: parsed.mandateId, revision: parsed.mandateVersion, digest: parsed.digest, confirmationStatus, confirmedAt,
         currency: parsed.draft.currency, budgetMinor: parsed.draft.budgetMinor, purchaseBy: parsed.draft.purchaseBy,
         readyBy: parsed.draft.readyBy, deliveryLocationId: parsed.draft.deliveryLocationId,
         allowedSuppliers: parsed.draft.allowedSuppliers, requirements: parsed.draft.requirements,
@@ -506,9 +527,15 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
       state.problems.push(problemText(`Operation ${id}`, statusResult));
       continue;
     }
-    const audit = parseJson(AuditOutputSchema, auditResult);
-    if (audit === null) state.problems.push(problemText(`Audit for ${id}`, auditResult));
     const { operation } = status;
+    if (operation.id !== id || operation.mandateId !== mandateId || revision === null || operation.mandateVersion !== revision) {
+      state.problems.push(`Operation ${id}: the backend result does not match the requested operation and mandate revision.`);
+      continue;
+    }
+    const audit = parseJson(AuditOutputSchema, auditResult);
+    const matchingAudit = audit?.operationId === id ? audit : null;
+    if (audit === null) state.problems.push(problemText(`Audit for ${id}`, auditResult));
+    else if (matchingAudit === null) state.problems.push(`Audit for ${id}: the backend result does not match the requested operation.`);
     state.operations.push({
       id: operation.id, supplierId: operation.supplierId, cartId: operation.cartId, totalMinor: operation.totalMinor,
       currency: operation.currency, status: operation.status, reservationStatus: operation.reservationStatus,
@@ -516,7 +543,7 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
       orderStatus: operation.orderStatus, refundStatus: operation.refundStatus, readinessStatus: operation.readinessStatus,
       createdAt: operation.createdAt, updatedAt: operation.updatedAt,
       providerIds: status.providerIds ?? {},
-      events: audit?.events ?? [],
+      events: matchingAudit?.events ?? [],
     });
   }
 

@@ -91,7 +91,13 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
       send(405, 'text/plain; charset=utf-8', 'The dashboard is read-only.\n', { Allow: 'GET, HEAD' });
       return;
     }
-    const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+    let path: string;
+    try {
+      path = new URL(request.url ?? '/', 'http://localhost').pathname;
+    } catch {
+      send(400, 'text/plain; charset=utf-8', 'The request URL could not be read.\n');
+      return;
+    }
     if (path === '/' || path === '/index.html') {
       send(200, 'text/html; charset=utf-8', options.assets.html);
     } else if (path === '/app.js') {

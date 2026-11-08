@@ -9,7 +9,6 @@
   const app = document.getElementById('app');
   const badges = document.getElementById('badges');
   const updated = document.getElementById('updated');
-  let lastBody = '';
 
   /** Builds an element. Props come from this file only; children become text. */
   function h(tag, props, ...children) {
@@ -44,10 +43,6 @@
 
   function time(iso) {
     return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  }
-
-  function hoursOld(iso) {
-    return Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / HOUR_MS));
   }
 
   function chip(text, tone, plain) {
@@ -197,9 +192,11 @@
     if (!mandate) {
       return card('Mandate', null, h('p', { class: 'placeholder' }, 'Appears once a drafted mandate is stored for confirmation.'));
     }
-    const confirmed = mandate.confirmedAt
-      ? chip(`Confirmed ${dateTime(mandate.confirmedAt)}`, 'good')
-      : state.demo ? chip('Not confirmed: the shopper is refused', 'warn') : null;
+    const confirmed = mandate.confirmationStatus === 'confirmed'
+      ? chip(mandate.confirmedAt ? `Confirmed ${dateTime(mandate.confirmedAt)}` : 'Confirmed by the ledger', 'good')
+      : mandate.confirmationStatus === 'unconfirmed'
+        ? chip('Not confirmed: the shopper is refused', 'warn')
+        : chip('Confirmation unknown: the ledger could not verify it', 'warn');
     const rows = mandate.requirements.map((item) => h('tr', null,
       h('td', null, item.role),
       h('td', { class: 'num' }, String(item.quantity)),
@@ -267,10 +264,16 @@
     const limit = state.mandate?.evidenceMaxAgeHours ?? null;
     const skus = [...new Set(stores.flatMap((store) => store.products.map((product) => product.sku)))].sort();
     const row = (label, cells) => h('tr', null, h('td', { class: 'row-label' }, label), cells);
+    const now = Date.now();
     const recordCells = stores.map((store) => {
-      const age = hoursOld(store.oldestRecordAt);
-      const stale = limit !== null && age > limit;
-      return h('td', { class: stale ? 'stale' : null }, `${age} h old${stale ? `, past the ${limit} h policy limit` : ''}`, h('br'), store.recordStatuses.join(' / '));
+      const ageMs = now - Date.parse(store.oldestRecordAt);
+      const future = ageMs < 0;
+      const stale = limit !== null && ageMs > limit * HOUR_MS;
+      const age = Math.floor(Math.max(0, ageMs) / HOUR_MS);
+      const description = future
+        ? 'Future-dated record: not valid evidence'
+        : `${age} h old${stale ? `, past the ${limit} h policy limit` : ''}`;
+      return h('td', { class: stale || future ? 'stale' : null }, description, h('br'), store.recordStatuses.join(' / '));
     });
     return h('div', { class: 'span-7' }, card('Stores', 'the control panel (synthetic)',
       h('div', { class: 'table-wrap' }, h('table', null,
@@ -329,13 +332,8 @@
     try {
       const response = await fetch('/api/state', { cache: 'no-store' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const body = await response.text();
-      if (body !== lastBody) {
-        lastBody = body;
-        render(JSON.parse(body));
-      } else {
-        updated.classList.remove('lost');
-      }
+      // Evidence can cross its age limit while the stored state stays unchanged.
+      render(JSON.parse(await response.text()));
     } catch {
       updated.textContent = 'Connection lost, retrying…';
       updated.classList.add('lost');

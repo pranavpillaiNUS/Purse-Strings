@@ -14,12 +14,12 @@ location on time, with spend reconciled and exceptions attributable to a human.
 transactional budget govern what can execute. Do not claim universal novelty or
 prompt-injection immunity.
 
-**Delivery constraint:** stage one uses CLI input/output exclusively. No web
-framework is built, the one page we serve is the stage-two read-only dashboard below, and
-purchasing behavior is browser-free; the one browser step anywhere is PayPal's own hosted buyer-consent
-page, which the operator (or demo operator) reaches only during the authorized
-sandbox hold commands or the sandbox spike, not a site we build. Build and test the
-purchasing implementation before adding any website. Later UI work calls the proven core.
+**Delivery constraint:** stage one purchasing uses CLI input/output exclusively. The
+agreed stage-two local read-only dashboard below displays those command results without
+adding purchasing actions. The only purchasing step that opens a browser is PayPal's
+hosted buyer-consent page, reached by the operator during authorized sandbox hold
+commands or the sandbox spike. Later UI actions require separate agreement and must
+call the proven core.
 
 ## Representative task
 
@@ -81,6 +81,10 @@ refund and readiness facts with its audit trail, and the stores. Every fact come
 existing read command (backend `mandate-review`, `status` and `audit`, `shop status`,
 `store show`); `demo:flow` adds only the scene, the IDs to read and its result lines. It
 serves one page on 127.0.0.1, needs no key, and adds no frontend dependency or build step.
+Confirmation is bound to the backend's active mandate revision, never the session file.
+Unavailable or mismatched confirmation reads remain unknown. Dashboard child reads run
+sequentially to avoid racing their SQLite validation, and evidence freshness uses exact
+elapsed time before rounding its display.
 Nothing in stage-one acceptance depends on it.
 
 Still deferred, each needing both people's agreement: any page that acts (mandate review and

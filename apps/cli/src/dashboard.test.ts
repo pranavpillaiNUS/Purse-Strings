@@ -229,6 +229,7 @@ const outputs: Record<string, unknown> = {
   },
   'shop status': {
     kind: 'shop-status', simulation: true, backend: 'simulation-backend', warning: null, mandateId: 'engineering-hires-demo', mandateVersion: 1,
+    confirmedAt: NOW,
     budget: { totalMinor: 800000, committedMinor: 751010, reservedMinor: 0, remainingMinor: 48990, allocatedMinor: 751010 },
     requirements: [{ requirementId: 'laptop', required: 5, committedUnits: 5, reservedUnits: 0, allocatedUnits: 5, remainingUnits: 0 }],
     operations: [operation], operationsHint: null,
@@ -281,14 +282,58 @@ test('a session file that is not exactly the recorded shape is reported, and non
   }
 });
 
-test('before confirmation only the stored revision is read; the ledger waits for a person', async (t) => {
-  const { run, calls } = fakeRunner();
+test('a backend refusal establishes that there is no confirmed active revision', async (t) => {
+  const { run, calls } = fakeRunner({
+    'shop status': { status: 1, stdout: '', stderr: 'shop: Mandate has no confirmed active revision\n' },
+  });
   const unconfirmed = session({ scene: 3, operationIds: [], mandate: { id: 'engineering-hires-demo', revision: 1, stored: true, confirmedAt: null } });
   const state = await buildDashboardState(demoDirectory(t, unconfirmed), run);
-  assert.deepEqual(calls.sort(), ['backend mandate-review', 'main store show']);
+  assert.deepEqual(calls.sort(), ['backend mandate-review', 'main store show', 'shop status']);
   assert.equal(state.ledger, null);
+  assert.equal(state.mandate?.confirmationStatus, 'unconfirmed');
   assert.equal(state.mandate?.confirmedAt, null);
-  assert.match(state.notices.join(' '), /not confirmed/);
+  assert.match(state.notices.join(' '), /backend has no confirmed active revision/);
+  assert.deepEqual(state.problems, []);
+});
+
+test('session confirmation claims cannot replace a backend read or suppress one', async (t) => {
+  for (const stored of [true, false]) {
+    const stale = session({ mandate: { id: 'engineering-hires-demo', revision: 1, stored, confirmedAt: null } });
+    const { run, calls } = fakeRunner();
+    const confirmed = await buildDashboardState(demoDirectory(t, stale), run);
+    assert.ok(calls.includes('shop status'), 'the orchestration file cannot suppress confirmation reads');
+    assert.equal(confirmed.mandate?.confirmationStatus, 'confirmed');
+    assert.equal(confirmed.mandate?.confirmedAt, NOW);
+  }
+
+  const { run } = fakeRunner({
+    'shop status': { status: 1, stdout: '', stderr: 'shop: Mandate has no confirmed active revision\n' },
+  });
+  const forged = await buildDashboardState(demoDirectory(t, session()), run);
+  assert.equal(forged.mandate?.confirmationStatus, 'unconfirmed');
+  assert.equal(forged.mandate?.confirmedAt, null, 'a session timestamp grants no authority');
+});
+
+test('a failed, malformed or mismatched confirmation read stays unknown despite session claims', async (t) => {
+  const successful = outputs['shop status'] as Record<string, unknown>;
+  const { confirmedAt: ignored, ...missingConfirmation } = successful;
+  void ignored;
+  const failures: CommandResult[] = [
+    { status: 1, stdout: '', stderr: 'shop: The application database could not be validated\n' },
+    { status: null, stdout: '', stderr: 'The command took too long' },
+    { status: 0, stdout: JSON.stringify(missingConfirmation), stderr: '' },
+    { status: 0, stdout: JSON.stringify({ ...successful, mandateId: 'another-mandate' }), stderr: '' },
+    { status: 0, stdout: JSON.stringify({ ...successful, mandateVersion: 2 }), stderr: '' },
+    { status: 0, stdout: JSON.stringify({ ...successful, backend: 'contract-mock' }), stderr: '' },
+  ];
+  for (const failure of failures) {
+    const { run } = fakeRunner({ 'shop status': failure });
+    const state = await buildDashboardState(demoDirectory(t, session()), run);
+    assert.equal(state.mandate?.confirmationStatus, 'unknown');
+    assert.equal(state.mandate?.confirmedAt, null);
+    assert.equal(state.ledger, null);
+    assert.ok(state.problems.some((problem) => problem.startsWith('Ledger (shop status)')));
+  }
 });
 
 test('every fact on the page comes from a read command, with payment, order and refund kept apart', async (t) => {
@@ -298,6 +343,8 @@ test('every fact on the page comes from a read command, with payment, order and 
   assert.deepEqual(state.problems, []);
   assert.deepEqual(state.ledger?.budget, { totalMinor: 800000, committedMinor: 751010, reservedMinor: 0, remainingMinor: 48990 });
   assert.equal(state.mandate?.evidenceMaxAgeHours, 72);
+  assert.equal(state.mandate?.confirmationStatus, 'confirmed');
+  assert.equal(state.mandate?.confirmedAt, NOW);
   assert.equal(state.mandate?.requirements[0]?.role, 'engineering laptop');
   const [op] = state.operations;
   assert.equal(op?.paymentProvider, 'paypal-sandbox');
@@ -339,7 +386,104 @@ test('a backend that is followed directly reads the revision the ledger confirms
   assert.deepEqual(calls.sort(), ['backend audit', 'backend mandate-review', 'backend status', 'shop status']);
   assert.equal(state.demo, null);
   assert.equal(state.mandate?.revision, 1);
+  assert.equal(state.mandate?.confirmationStatus, 'confirmed');
+  assert.equal(state.mandate?.confirmedAt, NOW, 'direct backend mode gets the confirmation from mandate.get');
   assert.equal(state.operations[0]?.id, 'op-1');
+});
+
+test('a missing operation cannot hide the confirmed mandate and ledger', async (t) => {
+  const { run: canned } = fakeRunner({
+    'backend status': { status: 1, stdout: '', stderr: 'backend: Operation was not found\n' },
+  });
+  const state = await buildDashboardState(demoDirectory(t, session()), async (entry, args) => {
+    if (entry === 'shop') assert.ok(!args.some((arg) => arg.startsWith('--operation')), 'confirmation is read independently of operation IDs');
+    return canned(entry, args);
+  });
+  assert.equal(state.mandate?.confirmationStatus, 'confirmed');
+  assert.ok(state.ledger);
+  assert.deepEqual(state.operations, []);
+  assert.ok(state.problems.some((problem) => problem.startsWith('Operation op-1')));
+});
+
+test('operation panels are bound to the requested operation, mandate and revision', async (t) => {
+  const original = outputs['backend status'] as Record<string, unknown>;
+  for (const mismatch of [{ id: 'another-operation' }, { mandateId: 'another-mandate' }, { mandateVersion: 2 }]) {
+    const { run } = fakeRunner({
+      'backend status': { status: 0, stdout: JSON.stringify({ ...original, operation: { ...operation, ...mismatch } }), stderr: '' },
+    });
+    const state = await buildDashboardState(demoDirectory(t, session()), run);
+    assert.equal(state.mandate?.confirmationStatus, 'confirmed');
+    assert.deepEqual(state.operations, []);
+    assert.ok(state.problems.some((problem) => /requested operation and mandate revision/.test(problem)));
+  }
+
+  const demo = demoDirectory(t, session());
+  assert.equal(demo.kind, 'demo');
+  if (demo.kind !== 'demo') assert.fail();
+  const { run } = fakeRunner({ 'shop status': { status: 1, stdout: '', stderr: 'shop: Backend RPC timed out\n' } });
+  const state = await buildDashboardState({
+    kind: 'backend', root, databasePath: join(demo.directory, 'app.db'), configPath: join(demo.directory, 'config.json'),
+    mandateId: 'engineering-hires-demo', operationIds: ['op-1'],
+  }, run);
+  assert.deepEqual(state.operations, [], 'an unavailable active revision cannot establish operation scope');
+  assert.ok(state.problems.some((problem) => /requested operation and mandate revision/.test(problem)));
+});
+
+test('an audit for another operation cannot supply events for this panel', async (t) => {
+  const { run } = fakeRunner({
+    'backend audit': { status: 0, stdout: JSON.stringify({ ...(outputs['backend audit'] as object), operationId: 'another-operation' }), stderr: '' },
+  });
+  const state = await buildDashboardState(demoDirectory(t, session()), run);
+  assert.equal(state.operations[0]?.id, 'op-1');
+  assert.deepEqual(state.operations[0]?.events, []);
+  assert.ok(state.problems.some((problem) => /Audit for op-1.*requested operation/.test(problem)));
+});
+
+test('real dashboard read children never overlap, and a persistent refusal stays visible', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-dashboard-children-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
+  const entries = join(directory, 'apps', 'cli', 'src');
+  mkdirSync(entries, { recursive: true });
+  const eventsPath = join(directory, 'events.jsonl');
+  const lockPath = join(directory, 'active-read');
+  // These are real CLI children. An exclusive file stands in for a resource that
+  // concurrent readers would disturb; overlap makes the read fail rather than
+  // merely recording the order in which promises were created.
+  const script = `
+    import { appendFileSync, closeSync, openSync, unlinkSync } from 'node:fs';
+    import { basename } from 'node:path';
+    const entry = basename(process.argv[1], '.ts');
+    const args = process.argv.slice(2);
+    const action = entry === 'backend' ? args.find((value) => ['mandate-review', 'status', 'audit'].includes(value))
+      : entry === 'main' ? args.slice(0, 2).join(' ') : args[0];
+    const key = entry + ' ' + action;
+    const log = (event) => appendFileSync(${JSON.stringify(eventsPath)}, JSON.stringify({ event, key }) + '\\n');
+    let lock;
+    try { lock = openSync(${JSON.stringify(lockPath)}, 'wx'); }
+    catch { console.error('Overlapping dashboard read'); process.exit(1); }
+    log('start');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    closeSync(lock);
+    unlinkSync(${JSON.stringify(lockPath)});
+    log('end');
+    if (key === 'backend audit') {
+      console.error('backend: The application database could not be validated');
+      process.exitCode = 1;
+    } else console.log(JSON.stringify((${JSON.stringify(outputs)})[key]));
+  `;
+  for (const entry of ['backend', 'shop', 'main']) writeFileSync(join(entries, `${entry}.ts`), script);
+  const source = demoDirectory(t, session());
+  const state = await buildDashboardState(source, createProcessRunner(directory));
+  assert.equal(state.mandate?.confirmationStatus, 'confirmed');
+  assert.ok(state.ledger);
+  assert.ok(state.problems.some((problem) => problem === 'Audit for op-1: The application database could not be validated'));
+  assert.ok(state.problems.every((problem) => !problem.includes('Overlapping')));
+  const events = readFileSync(eventsPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { event: string; key: string });
+  assert.equal(events.length, 10, 'five read commands each ran once; no silent retry or skipped refusal');
+  for (let index = 0; index < events.length; index += 2) {
+    assert.equal(events[index]?.event, 'start');
+    assert.deepEqual(events[index + 1], { event: 'end', key: events[index]!.key });
+  }
 });
 
 test('the reader rebuilds only when a watched file changes, and never runs two builds at once', async (t) => {
@@ -386,6 +530,8 @@ test('following a real demo:flow run: the session, the ledger and the stores all
     assert.equal(state.ledger?.budget.committedMinor, 751010);
     assert.equal(state.ledger?.budget.remainingMinor, 800000 - 751010);
     assert.equal(state.mandate?.id, recorded.mandate?.id);
+    assert.equal(state.mandate?.confirmationStatus, 'confirmed');
+    assert.ok(state.mandate?.confirmedAt);
     assert.ok((state.mandate?.evidenceMaxAgeHours ?? 0) > 0);
     const [op] = state.operations;
     assert.equal(op?.status, 'ordered');

@@ -226,8 +226,8 @@ skipped.
 
 ## Dashboard
 
-A read-only page that follows `demo:flow` scene by scene. It needs no key, network or extra
-install:
+A read-only page that follows `demo:flow` scene by scene. It needs no key, internet access
+or extra install:
 
 ```sh
 npm run dashboard                       # serves http://127.0.0.1:7070, follows .runtime/demo
@@ -247,7 +247,10 @@ npm run dashboard -- --backend-db PATH --backend-config PATH --mandate-id ID --o
 It is a view, not a second ledger. It starts only read commands (backend `mandate-review`,
 `status` and `audit`, `shop status` and `store show`), each in its own process with no model key
 or PayPal detail, and `demo:flow` adds only the scene and result lines through
-`session.json` in its working directory. The server listens on 127.0.0.1, answers only to
+`session.json` in its working directory. Confirmation comes from the backend's active
+mandate revision; session metadata cannot confirm it. An unavailable or mismatched read
+is shown as unknown. Child reads run one at a time, and store freshness is compared with
+the exact age limit before rounding for display. The server listens on 127.0.0.1, answers only to
 `127.0.0.1` or `localhost` host names, accepts only GET and HEAD, and the page loads nothing
 from elsewhere. Exit codes: 0 stopped normally, 2 a bad option or a busy port, 1 anything else.
 
@@ -281,9 +284,7 @@ contract coverage and code wiring from account feasibility.
 
 **Planned (still unimplemented):** stock assignment, at least one authorized
 interactive sandbox exercise recorded in `docs/paypal-spike.md` (buyer consent on
-PayPal's hosted page during the operator's own authorized steps), and the
-`packages/contracts` `paymentProvider` proposal
-through the ledger, real supplier
+PayPal's hosted page during the operator's own authorized steps), real supplier
 execution, exceptions and equipment-readiness tracking. All will be tested through the
 CLI. The only page we serve is the read-only [dashboard](#dashboard), which no stage-one
 acceptance depends on. The only other browser page involved is PayPal's own hosted
