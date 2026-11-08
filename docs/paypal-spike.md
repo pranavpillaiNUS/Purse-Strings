@@ -3,6 +3,36 @@
 `services/checker/scripts/paypal-spike.ts` tests the PayPal behaviour the whole design depends on,
 against the real sandbox with hardcoded carts: one S$8,000 hold, three partial captures, then release the rest.
 
+## Application path (exercised 2026-11-07, PR #17 tree + one live fix)
+
+The same evening, the wired application path ran end to end against the sandbox with the gateway
+behind `paymentProvider: "paypal-sandbox"`:
+
+1. `mandate-draft` → `mandate-review` → `mandate-confirm` (dig-bound OS-user confirmation).
+2. Cart submission over rpc for one LAP-14-AIR @ 1,099.00 + 9% GST → operation
+   `op-9e0c96e2-5c33-4a4d-956c-a2cc035c24ea` **reserved** at exactly **119,791 minor (S$1,197.91)**.
+3. `operation-authorize` minted sandbox order `84356576HC687815U` (invoice id = operation id,
+   request id = binding identity) and printed one JSON line with the approval link.
+4. The named buyer approved on PayPal's hosted page ("review order" after approval
+   is cosmetic; PayPal recorded the consent server-side — the backend replayed fine).
+5. `operation-complete-authorization` upgraded the binding to `authorization_held` under
+   authorization `0DY26454FF666080L`.
+6. `operation-run` captured S$1,197.91 as `70023069VM754651G` (`COMPLETED`) and consumed
+   the reservation; **status/audit show `paymentProvider: "paypal-sandbox"`, the real sandbox ids,
+   and the supplier order as a fake provider id (`fake-order-…`) — supplier ordering stayed
+   simulated, as designed.**
+7. The audit trail reads `operation_reserved → binding_created → binding_upgraded →
+   capture_succeeded → order_succeeded`.
+
+**Live fix found by this exercise:** the gateway minted buyer orders with
+`intent: "AUTHORIZATION"`; PayPal returns `400 INVALID_PARAMETER_VALUE` — Orders v2 documents
+`AUTHORIZE`. Fetch-mocked tests could not catch a request-grammar typo, so this class of fact now
+depends on the recorded sandbox evidence above. One diagnostic probe order (`79W2716935161023K`)
+was created while reproducing the error and was never approved; no hold exists on it.
+
+**Claude-clock note for the recorded demo:** the sandbox hold's honor period ends ~3 days after
+creation, so create the demo hold on demo day.
+
 ## One-time setup (about 15 minutes)
 
 1. Sign in at [developer.paypal.com](https://developer.paypal.com), then go to **Testing Tools → Sandbox Accounts → Create account**:
@@ -49,4 +79,23 @@ Fill this in after each run. It is evidence for the write-up and the demo.
 
 | Date | Currency | Captures OK | Idempotent | Concurrent | Hard ceiling | Void after partial | Final capture | Refund |
 |---|---|---|---|---|---|---|---|---|
-| | | | | | | | | |
+| 2026-11-07 (run `spike-20261107190313`, log in gitignored `spike-logs/`) | SGD | yes — 3 of 3 `COMPLETED`, re-read from PayPal with net amounts | yes — replay with the same `PayPal-Request-Id` returned the original capture `56E36975AL768471P` | yes — B and C captured at the same moment, no `PREVIOUS_REQUEST_IN_PROGRESS` | **WARN — no**: PayPal accepted an over-capture of S$507.35 when only S$495.35 remained | skipped — the over-capture consumed the remainder, so this row needs the `--finish=final` run | not yet run | not yet run |
+| 2026-11-08 (run `spike-20261108062830`, `--finish=final --refund`, log in gitignored `spike-logs/`) | SGD | yes — 3 of 3 `COMPLETED`, re-read from PayPal with net amounts (fees 122.69 / 81.77 / 52.20) | yes — replay with the same `PayPal-Request-Id` returned the original capture `3HR51156CD066832X` | yes — B and C captured in parallel, both `COMPLETED` | **WARN — no**, reproduced: PayPal accepted S$507.35 against a S$495.35 remainder | skipped — the over-capture probe used `final_capture=false` and consumed the remainder, leaving nothing to void | skipped — same cause; a dedicated final-capture pass is still owed | yes — partial refund `100.00` returned `COMPLETED` and the capture re-read as `PARTIALLY_REFUNDED` |
+
+Run 1 facts (authorization `48N27869UF418711G`, order `4KP481773U222774K`):
+
+- A single buyer approval held the full S$8,000 with no fee and no risk review (`PENDING`).
+- Hold timing: created 2026-11-07T19:06:13Z, honor period ends ~2026-11-10, full expiry 2026-12-06. **Demo consequence: sandbox holds go stale inside three days, so refresh the hold on demo day instead of pre-creating one.**
+- Captures settled with fees (S$122.69 / 81.77 / 52.20 gross→net visible on re-read), and the authorization moved to `PARTIALLY_CAPTURED` with exactly 3 captures on the order.
+- **Over-capture: the surprising result.** PayPal accepted S$507.35 against a S$495.35 remainder (`COMPLETED`) — the hold is **not** a hard ceiling on this account. The transactional ledger must enforce the approved total across commitments and active reservations. Gateway checks verify each capture's expected amount; they do not establish the cumulative budget ceiling. State the ledger's role honestly in the demo/write-up.
+- The earlier run `spike-20261107190056` ended with `buyer cancelled` at the approval page (login trouble before the dashboard credentials were recovered); order `9TK54416118491612` — no hold was exercised, no state to clean up.
+- Raw request/response excerpts for this run (with PayPal `debug_id`s) stay in `spike-logs/` (gitignored); they are not reproduced in this file.
+
+Run 2 facts (`--finish=final --refund`, run `spike-20261108062830`, authorization `4A446567Y9042202W`, order `0YL616644P7131011`):
+
+- Reproduces every run-1 result and adds the partial refund: refund `5MV8654727882740K` for `100.00` of capture `3HR51156CD066832X` came back `COMPLETED`, and a fresh capture read showed `PARTIALLY_REFUNDED`.
+- **Racing bug found and fixed.** Two earlier `--finish=final` attempts (`spike-20261108061154`, `spike-20261108061237`) died with `422 ORDER_NOT_APPROVED` on the authorize: the buyer's browser hits our local `/return` before PayPal's server-side approval state settles, so an immediate `authorizeOrder` can replay before the order is authorizable. The spike now retries `authorizeOrder` briefly on `ORDER_NOT_APPROVED` (up to 6 attempts with backoff); a genuinely unapproved order still fails after the window.
+- Over-capture warning held again: `507.35` accepted against a `495.35` remainder (`COMPLETED`). The transactional ledger enforces the approved total; per-capture verification checks the individual amount. The provider authorization is not a budget cap — state this in the demo and write-up.
+- The over-capture step and closing steps are one design gap: with the remainder consumed by the probe, neither void nor `final_capture=true` was exercised on this pass. Either cap the last probe to the true remainder (then void the rest) or drop the probe's amount to leave a remainder.
+- Hold timing: created 2026-11-08T06:34:08Z, honor period ends ~2026-11-11, full expiry 2026-12-07. The three-day staleness rule stands: create demo holds on demo day.
+

@@ -16,13 +16,21 @@ const WIDTH = 80;
 const SIMULATION_SENTENCE = 'Simulation. Reservations are not payment, orders, delivery or equipment readiness.';
 const BOLD_FREE_NEXT_STEP = 'Next step';
 
-/** Who performs execution today. The one place to change when real PayPal lands. */
+/** Wording for the fake adapter; each operation's backend fact selects its payment wording. */
 export const PROVIDER_WORDING = {
   payment: 'fake payment',
   order: 'fake order',
   refund: 'fake refund',
   disclaimer: 'Fake providers stand in for payment and the supplier. No real money moved and no real order exists.',
 } as const;
+
+function paymentWording(operation: Operation): { payment: string; refund: string; provider: string } {
+  if (operation.paymentProvider === 'fake') return { ...PROVIDER_WORDING, provider: 'fake' };
+  if (operation.paymentProvider === 'paypal-sandbox') {
+    return { payment: 'PayPal sandbox payment', refund: 'PayPal sandbox refund', provider: 'PayPal sandbox' };
+  }
+  return { payment: 'payment', refund: 'refund', provider: 'not recorded' };
+}
 
 const ASCII_FOLDS: ReadonlyArray<readonly [RegExp, string]> = [
   [/[\u2018\u2019\u201a\u2032]/g, "'"],
@@ -185,7 +193,10 @@ function decisionDetail(decision: StoreDecision): string[] {
   const codeTag = decision.code === null ? '' : ` [${decision.code}]`;
   switch (decision.decision) {
     case 'accepted':
-      if (decision.operation) details.push(`Operation ${decision.operation.id} | reservation ${decision.operation.reservationStatus}`);
+      if (decision.operation) {
+        details.push(`Operation ${decision.operation.id} | reservation ${decision.operation.reservationStatus}`);
+        details.push(`Payment provider: ${paymentWording(decision.operation).provider}. Supplier orders are simulated.`);
+      }
       details.push(cartLinesText(decision));
       break;
     case 'rejected':
@@ -280,11 +291,22 @@ function pathArgument(path: string): string {
 }
 
 /** One line, because pasting a wrapped command runs only its first line. */
-function operatorCommand(operationId: string, operator: OperatorPaths | null): string {
+function operatorCommand(operationId: string, operator: OperatorPaths | null, command = 'operation-run'): string {
   const flags = operator
     ? `--db ${pathArgument(operator.databasePath)} --config ${pathArgument(operator.configPath)}`
     : '--db PATH --config PATH';
-  return `  npm run backend -- operation-run --id ${safe(operationId)} ${flags}`;
+  return `  npm run backend -- ${command} --id ${safe(operationId)} ${flags}`;
+}
+
+function executionCommands(operation: Operation, operator: OperatorPaths | null): string[] {
+  const lines: string[] = [];
+  if (operation.paymentProvider === 'paypal-sandbox') {
+    lines.push(operatorCommand(operation.id, operator, 'operation-authorize'));
+    lines.push(...wrap('Approve the hold as the sandbox buyer using the returned approval link, then complete authorization:', '  '));
+    lines.push(operatorCommand(operation.id, operator, 'operation-complete-authorization'));
+  }
+  lines.push(operatorCommand(operation.id, operator));
+  return lines;
 }
 
 function nextStepLines(review: RunReview, paint: Paint, operator: OperatorPaths | null): string[] {
@@ -305,7 +327,10 @@ function nextStepLines(review: RunReview, paint: Paint, operator: OperatorPaths 
   }
   if (review.operationsToRun.length > 0) {
     say('The operator runs this, never the shopper:');
-    for (const id of review.operationsToRun) lines.push(operatorCommand(id, operator));
+    for (const id of review.operationsToRun) {
+      const operation = review.decisions.find((item) => item.operation?.id === id)?.operation;
+      lines.push(...(operation ? executionCommands(operation, operator) : [operatorCommand(id, operator)]));
+    }
     say('The shopper has no tool that can run it.');
     say(readOnlyView);
     if (review.requirements.some(({ remainingUnits }) => remainingUnits > 0)) {
@@ -339,13 +364,13 @@ export function renderResentCarts(resent: readonly ResentCart[], operator: Opera
     }
   }
   lines.push('', BOLD_FREE_NEXT_STEP);
-  const reserved = resent.flatMap((item) => (item.kind === 'accepted' ? [item.operation.id] : []));
+  const reserved = resent.flatMap((item) => (item.kind === 'accepted' ? [item.operation] : []));
   if (resent.some(({ kind }) => kind === 'unknown')) {
     lines.push(...wrap('Run the shopper again on this mandate. It resends what is still unknown first.', '  '));
   } else {
     if (reserved.length > 0) {
       lines.push(...wrap('The operator runs this, never the shopper:', '  '));
-      for (const id of reserved) lines.push(operatorCommand(id, operator));
+      for (const operation of reserved) lines.push(...executionCommands(operation, operator));
     }
     lines.push(...wrap('To shop for any units still needed, run the shopper again with a new run ID.', '  '));
   }
@@ -515,8 +540,8 @@ const STATUS_WORDING: Readonly<Record<Operation['status'], string>> = {
   reconciliation_required: 'a provider outcome is unknown; the operator must reconcile it',
   ordered: `the ${PROVIDER_WORDING.order} succeeded; this is not a real order`,
   failed: 'execution failed',
-  compensation_pending: `a ${PROVIDER_WORDING.refund} is pending`,
-  compensated: `the ${PROVIDER_WORDING.refund} finished; purchasing authority is not restored`,
+  compensation_pending: 'a refund is pending',
+  compensated: 'the refund finished; purchasing authority is not restored',
 };
 
 const RESERVATION_WORDING: Readonly<Record<Operation['reservationStatus'], string>> = {
@@ -540,14 +565,16 @@ const READINESS_WORDING: Readonly<Record<Operation['readinessStatus'], string>> 
 
 /** One line per fact, because payment, order, refund and readiness are separate facts. */
 function operationLines(operation: Operation, paint: Paint): string[] {
+  const wording = paymentWording(operation);
   const rows: Array<[string, string]> = [
     ['Store', `${operation.supplierId} | cart ${operation.cartId}`],
     ['Amount', `${formatSgd(operation.totalMinor)} (the checker's total)`],
     ['Status', `${operation.status}: ${STATUS_WORDING[operation.status]}`],
     ['Reservation', RESERVATION_WORDING[operation.reservationStatus]],
-    [capitalized(PROVIDER_WORDING.payment), EFFECT_WORDING[operation.paymentStatus]],
+    ['Payment provider', wording.provider],
+    [capitalized(wording.payment), EFFECT_WORDING[operation.paymentStatus]],
     [capitalized(PROVIDER_WORDING.order), EFFECT_WORDING[operation.orderStatus]],
-    [capitalized(PROVIDER_WORDING.refund), EFFECT_WORDING[operation.refundStatus]],
+    [capitalized(wording.refund), EFFECT_WORDING[operation.refundStatus]],
     ['Readiness', READINESS_WORDING[operation.readinessStatus]],
   ];
   const labelWidth = Math.max(...rows.map(([label]) => label.length));
@@ -584,7 +611,12 @@ export function renderStatus(view: StatusView, options: { color: boolean }): str
   lines.push('', paint(BOLD, 'Operations'));
   if (view.operationsHint) lines.push(...wrap(view.operationsHint, '  '));
   for (const operation of view.operations) lines.push(...operationLines(operation, paint));
-  if (view.operations.length > 0) lines.push('', ...wrap(PROVIDER_WORDING.disclaimer, ''));
+  if (view.operations.length > 0) {
+    const disclaimer = view.operations.every((operation) => operation.paymentProvider === 'fake')
+      ? PROVIDER_WORDING.disclaimer
+      : 'Payment and refund providers are shown per operation; a missing provider is not recorded. PayPal is sandbox only. Supplier orders are simulated. No real money moved and no real order exists.';
+    lines.push('', ...wrap(disclaimer, ''));
+  }
   lines.push('', SIMULATION_SENTENCE);
   return lines;
 }

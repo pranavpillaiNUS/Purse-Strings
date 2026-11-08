@@ -17,7 +17,8 @@ prompt-injection immunity.
 **Delivery constraint:** stage one uses CLI input/output exclusively. No custom
 website, frontend or web framework is built, and purchasing behavior is
 browser-free; the one browser step anywhere is PayPal's own hosted buyer-consent
-page during the optional sandbox spike, not a site we build. Build and test the
+page, which the operator (or demo operator) reaches only during the authorized
+sandbox hold commands or the sandbox spike, not a site we build. Build and test the
 purchasing implementation before adding any website. Later UI work calls the proven core.
 
 ## Representative task
@@ -148,14 +149,17 @@ A partial M4 slice adds the bounded shopper worker over the shared client, teste
 against the real checker core with scripted models. It has had eight live model runs: four
 against the contract mock, and four against the real backend in temporary Windows copies
 with the backend's mode check skipped. Its CLI approval and exception flows do not exist.
-`npm run demo:flow` runs the story end to end over fake providers. Unit 4 of the backend
-delivery adds a sandbox-only PayPal gateway contract
-(`services/checker/src/paypal/gateway.ts`, documented in
-`docs/backend-api.md`) with fetch-mocked capture/refund tests; it is not wired into
-the execution ledger, and PayPal feasibility on a real sandbox account remains
-unverified. No gate after M0 is recorded as passed,
+`npm run demo:flow` runs the story end to end over fake providers. Units 4 and 5 of the
+backend delivery add a sandbox-only PayPal gateway
+(`services/checker/src/paypal/gateway.ts`, wired into the execution ledger behind
+the backend config `paymentProvider` and documented in `docs/backend-api.md`) with
+fetch-mocked capture/refund/refund-read tests, operator hold commands and
+crash-recovery evidence through sandbox reads; no PayPal request has been sent by
+any of this and feasibility on a real sandbox account remains unverified. No gate after M0 is
+recorded as passed,
 and M3 and M5 are planned. See `docs/backend-delivery-review.md` for the distinction
 between simulated execution, mocked contract coverage and real feasibility. PayPal
 feasibility is unverified
-until `docs/paypal-spike.md` records observed results. The original hackathon schedule
+until `docs/paypal-spike.md` records observed results, and the one authorized
+interactive buyer-consent exercise is the next PayPal step. The original hackathon schedule
 is preserved in `docs/hackathon-plan.md`, not adopted as a current commitment.

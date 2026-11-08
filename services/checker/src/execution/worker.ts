@@ -20,6 +20,7 @@ import { evaluatePurchase } from '../rules/evaluate.ts';
 import {
   LeaseLost,
   assertLeaseHeld,
+  bindOperationPaymentProvider,
   canonicalize,
   claimLeaseRow,
   consumeReservationRow,
@@ -363,6 +364,7 @@ export function createExecutionWorker(config: ExecutionWorkerConfig): ExecutionW
       if (TERMINAL_STATUSES.has(row.status)) return { kind: 'already_terminal' as const };
       const claimRow = claimLeaseRow(database, operationId, ownerId, nowMs, leaseTtlMs);
       if (claimRow.kind === 'conflict') return { kind: 'busy' as const };
+      bindOperationPaymentProvider(database, row, config.provider.paymentProvider ?? 'fake', nowIso);
       if (row.status === 'reserved') {
         updateOperationStatusRow(database, operationId, 'running', nowIso);
       }

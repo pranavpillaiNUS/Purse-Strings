@@ -6,9 +6,18 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { createWindowsPrivateDirectory, evaluateDirectorySecurity, evaluateFileSecurity, readWindowsSecurity } from './windows-acl.ts';
+import type { Operation } from '../../../packages/contracts/src/backend.ts';
+import {
+  canonicalize, insertEffectIntentRow, openLedgerStore, runTransaction,
+  insertPayPalBindingRow,
+  upgradePayPalBindingRow,
+  setEffectStateRow, sha256Hex, updateOperationStatusRow,
+} from '../../../services/checker/src/ledger/store.ts';
 
 const isWindows = process.platform === 'win32';
 const windowsOnly = isWindows ? false : 'Windows access rules only';
+/** Windows has no chmod to refuse, so its message doesn't mention one. */
+const tooOpenRefusal = isWindows ? /too open; refusing to use or change it/ : /too open; refusing to chmod/;
 
 /** The real access boundary: mode bits on POSIX, the security descriptor on Windows. */
 function accessFingerprint(path: string): number | string {
@@ -40,10 +49,12 @@ function assertOwnerOnlyOnWindows(path: string): void {
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const entry = join(root, 'apps/cli/src/backend.ts');
 
-function runBackend(args: readonly string[], input?: string): {
+function runBackend(args: readonly string[], input?: string, options?: { env?: NodeJS.ProcessEnv; cwd?: string }): {
   status: number; stdout: string; stderr: string;
 } {
-  const result = spawnSync(process.execPath, [entry, ...args], { cwd: root, input, encoding: 'utf8' });
+  const result = spawnSync(process.execPath, [entry, ...args], {
+    cwd: options?.cwd ?? root, input, encoding: 'utf8', env: options?.env,
+  });
   return { status: result.status ?? -1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 }
 
@@ -370,7 +381,7 @@ test('an existing unsafe runtime directory is refused and never chmodded', () =>
     const result = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
     assert.equal(result.status, 2);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /refusing to chmod/);
+    assert.match(result.stderr, tooOpenRefusal);
     assert.equal(accessFingerprint(runtimeDir), before, 'the unsafe directory must remain untouched');
   } finally {
     fixture.close();
@@ -395,7 +406,7 @@ test('both runtime parents are pre-flighted before any creation: a refused app p
     const refused = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
     assert.equal(refused.status, 2);
     assert.equal(refused.stdout, '');
-    assert.match(refused.stderr, /refusing to chmod/);
+    assert.match(refused.stderr, tooOpenRefusal);
     assert.equal(accessFingerprint(appRuntime), before, 'the unsafe application parent must remain untouched');
     assert.throws(() => statSync(providerRuntime),
       'the refusal must not create the provider runtime parent despite its successful pre-flight');
@@ -669,6 +680,49 @@ test('two spellings of one future database are refused before either file exists
   }
 });
 
+test('Windows: a deny entry naming this user gets a refusal that says so, on a database or a folder', { skip: windowsOnly }, () => {
+  const fixture = buildFixture('win-deny-user');
+  const runtimeDir = join(fixture.directory, 'state');
+  const unusedDir = join(fixture.directory, 'unused');
+  makePrivateDirectory(runtimeDir);
+  makePrivateDirectory(unusedDir);
+  const { userSid } = readWindowsSecurity(runtimeDir);
+  const deny = (path: string, rights: string) => execFileSync('icacls', [path, '/deny', `*${userSid}:${rights}`], { stdio: 'ignore' });
+  try {
+    const drafted = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
+    assert.equal(drafted.status, 0, drafted.stderr);
+    deny(fixture.dbPath, '(W)');
+    const fileBefore = accessFingerprint(fixture.dbPath);
+    const refusedFile = runBackend([...rootArgs(fixture), 'mandate-review', '--id', 'cli-mandate', '--revision', '1']);
+    assert.equal(refusedFile.status, 2, refusedFile.stderr);
+    assert.equal(refusedFile.stdout, '');
+    assert.match(refusedFile.stderr, /has a deny entry for the user running this command/);
+    assert.equal(accessFingerprint(fixture.dbPath), fileBefore, 'the refusal must not change the file');
+
+    deny(unusedDir, '(OI)(CI)(W)');
+    const folderBefore = accessFingerprint(unusedDir);
+    const original = JSON.parse(readFileSync(fixture.configPath, 'utf8')) as Record<string, unknown>;
+    writeFileSync(fixture.configPath, JSON.stringify({ ...original, fakeProviderDb: join(unusedDir, 'providers.db') }));
+    const unusedDb = join(unusedDir, 'app.db');
+    const refusedFolder = runBackend(['--db', unusedDb, '--config', fixture.configPath, 'mandate-draft', '--file', fixture.draftPath]);
+    assert.equal(refusedFolder.status, 2, refusedFolder.stderr);
+    assert.equal(refusedFolder.stdout, '');
+    assert.match(refusedFolder.stderr, /has a deny entry for the user running this command/);
+    assert.equal(accessFingerprint(unusedDir), folderBefore, 'the refusal must not change the folder');
+    assert.throws(() => statSync(unusedDb), 'nothing may be created inside');
+  } finally {
+    // Deny entries first, or the temporary folder can't be deleted.
+    for (const path of [fixture.dbPath, unusedDir]) {
+      try {
+        execFileSync('icacls', [path, '/remove:d', `*${userSid}`], { stdio: 'ignore' });
+      } catch {
+        // The test may have ended before this path existed.
+      }
+    }
+    fixture.close();
+  }
+});
+
 test('Windows: when the security descriptor cannot be read, the backend refuses rather than proceeds', { skip: windowsOnly }, () => {
   const fixture = buildFixture('win-unverifiable');
   try {
@@ -703,4 +757,371 @@ test('operator identity can never be fabricated: the fallback branch is gone and
   assert.equal([...identitySource.matchAll(/\breturn\b/g)].length, 1,
     'the helper returns only the real username (a hypothetical env fallback must not appear)');
   assert.ok(!identitySource.includes('process.env'), 'the identity helper reads no environment variable');
+});
+
+// --- Unit 5: provider opt-in/config, sandbox hold commands, provider screen,
+// BOM tolerance and credential containment ---
+
+/** A fixture config pointing at the same snapshots but a paypal-sandbox selection. */
+function paypalConfigPath(fixture: BackendFixture): string {
+  const original = JSON.parse(readFileSync(fixture.configPath, 'utf8')) as Record<string, unknown>;
+  const path = join(fixture.directory, 'backend-config-paypal.json');
+  writeFileSync(path, JSON.stringify({ ...original, paymentProvider: 'paypal-sandbox' }));
+  return path;
+}
+
+function reserveForTest(fixture: BackendFixture, configPath = fixture.configPath): Operation {
+  const args = ['--db', fixture.dbPath, '--config', configPath];
+  const draft = runBackend([...args, 'mandate-draft', '--file', fixture.draftPath]);
+  assert.equal(draft.status, 0, draft.stderr);
+  const { digest } = singleJsonLine(draft.stdout, 'draft') as { digest: string };
+  const confirm = runBackend([...args, 'mandate-confirm', '--id', 'cli-mandate', '--revision', '1', '--digest', digest]);
+  assert.equal(confirm.status, 0, confirm.stderr);
+  const rpc = runBackend([...args, 'rpc'], JSON.stringify({
+    apiVersion: '1', requestId: 'provider-test', method: 'proposal.submit',
+    params: { idempotencyKey: 'provider-key', cart: {
+      id: 'provider-cart', mandateId: 'cli-mandate', mandateVersion: 1, supplierId: 'store-a',
+      lines: [{ requirementId: 'eng-laptops', sku: 'LAP-14-AIR', quantity: 1 }],
+    } },
+  }));
+  assert.equal(rpc.status, 0, rpc.stderr);
+  return (singleJsonLine(rpc.stdout, 'reserve') as { result: { operation: Operation } }).result.operation;
+}
+
+test('sandbox execution without a held authorization refuses before intent and displays the pending order id', () => {
+  const fixture = buildFixture('missing-held-authorization');
+  try {
+    const configPath = paypalConfigPath(fixture);
+    const operation = reserveForTest(fixture, configPath);
+    const args = ['--db', fixture.dbPath, '--config', configPath];
+    const invoke = () => runBackend([...args, 'operation-run', '--id', operation.id], undefined, {
+      cwd: fixture.directory, env: { ...process.env, PAYPAL_ENV: 'live' },
+    });
+    for (const withOrder of [false, true]) {
+      if (withOrder) {
+        const database = openLedgerStore(fixture.dbPath);
+        try {
+          runTransaction(database, () => insertPayPalBindingRow(database, {
+            operationId: operation.id, orderId: 'ORDER-PENDING', invoiceId: operation.id,
+            amountMinor: operation.totalMinor, createdAt: new Date().toISOString(),
+          }));
+        } finally { database.close(); }
+      }
+      const result = invoke();
+      assert.equal(result.status, 2);
+      assert.equal(result.stdout, '');
+      assert.match(result.stderr, /No held sandbox authorization exists/);
+      const database = openLedgerStore(fixture.dbPath);
+      try {
+        assert.equal(database.prepare('SELECT COUNT(*) AS n FROM effects WHERE operation_id = ?').get(operation.id)?.n, 0);
+        assert.equal(database.prepare('SELECT status FROM operations WHERE operation_id = ?').get(operation.id)?.status, 'reserved');
+      } finally { database.close(); }
+    }
+    for (const command of ['status', 'audit']) {
+      const result = runBackend([...args, command, '--id', operation.id]);
+      assert.equal(result.status, 0, result.stderr);
+      const output = singleJsonLine(result.stdout, command) as { providerIds: { orderId: string; authorizationId?: string } };
+      assert.deepEqual(output.providerIds, { orderId: 'ORDER-PENDING' });
+    }
+    const database = openLedgerStore(fixture.dbPath);
+    try {
+      const now = new Date().toISOString();
+      const requestJson = canonicalize({ operationId: operation.id, currency: 'SGD', amountMinor: operation.totalMinor });
+      runTransaction(database, () => {
+        upgradePayPalBindingRow(database, operation.id, 'AUTH-DECLINED', now);
+        insertEffectIntentRow(database, {
+          effectId: 'rejected-hold', operationId: operation.id, kind: 'capture', effectKey: `${operation.id}:capture`,
+          requestJson, requestDigest: sha256Hex(requestJson), createdAt: now,
+        });
+        setEffectStateRow(database, operation.id, 'capture', 'rejected', 'AUTH-DECLINED',
+          canonicalize({ authorizationId: 'AUTH-DECLINED', status: 'DENIED' }), now);
+      });
+    } finally { database.close(); }
+    const status = runBackend([...args, 'status', '--id', operation.id]);
+    assert.equal(status.status, 0, status.stderr);
+    assert.deepEqual((singleJsonLine(status.stdout, 'rejected hold') as { providerIds: unknown }).providerIds,
+      { orderId: 'ORDER-PENDING', authorizationId: 'AUTH-DECLINED' },
+      'an authorization rejection is not a capture and must not supply a capture ID');
+  } finally { fixture.close(); }
+});
+
+test('operation commands exit zero for completed failed or unresolved outcomes; JSON carries the business state', () => {
+  for (const unresolved of [false, true]) {
+    const fixture = buildFixture(unresolved ? 'exit-unresolved' : 'exit-failed');
+    try {
+      const operation = reserveForTest(fixture);
+      if (unresolved) {
+        // A lost response left an unknown capture, with no established provider
+        // outcome. Reconciliation must retain its reservation and report unknown.
+        const database = openLedgerStore(fixture.dbPath);
+        try {
+          const now = new Date().toISOString();
+          const requestJson = canonicalize({ operationId: operation.id, currency: 'SGD', amountMinor: operation.totalMinor });
+          runTransaction(database, () => {
+            insertEffectIntentRow(database, {
+              effectId: 'exit-unknown', operationId: operation.id, kind: 'capture',
+              effectKey: `${operation.id}:capture`, requestJson, requestDigest: sha256Hex(requestJson), createdAt: now,
+            });
+            setEffectStateRow(database, operation.id, 'capture', 'unknown', null, null, now);
+            updateOperationStatusRow(database, operation.id, 'reconciliation_required', now);
+          });
+        } finally { database.close(); }
+      }
+      // Changed terms fail a fresh capture, and also forbid retrying an old
+      // ambiguous capture whose outcome has not been established.
+      const config = JSON.parse(readFileSync(fixture.configPath, 'utf8')) as { catalogFiles: string[] };
+      const path = config.catalogFiles[0]!;
+      const catalog = JSON.parse(readFileSync(path, 'utf8')) as { shippingMinor: number };
+      writeFileSync(path, JSON.stringify({ ...catalog, shippingMinor: catalog.shippingMinor + 100 }));
+      for (const command of ['operation-run', 'operation-reconcile']) {
+        const result = runBackend([...rootArgs(fixture), command, '--id', operation.id]);
+        assert.equal(result.status, 0, result.stderr);
+        const output = singleJsonLine(result.stdout, command) as { operation: Operation };
+        assert.equal(output.operation.status, unresolved ? 'reconciliation_required' : 'failed');
+        assert.equal(output.operation.reservationStatus, unresolved ? 'active' : 'released');
+      }
+    } finally { fixture.close(); }
+  }
+});
+
+test('operator status, audit and shopper RPC keep the reserved provider after config changes', () => {
+  for (const provider of ['fake', 'paypal-sandbox'] as const) {
+    const fixture = buildFixture(`provider-history-${provider}`);
+    try {
+      const sandboxConfig = paypalConfigPath(fixture);
+      const operation = reserveForTest(fixture, provider === 'fake' ? fixture.configPath : sandboxConfig);
+      assert.equal(operation.paymentProvider, provider);
+      const changedArgs = ['--db', fixture.dbPath, '--config', provider === 'fake' ? sandboxConfig : fixture.configPath];
+      for (const command of ['status', 'audit']) {
+        const result = runBackend([...changedArgs, command, '--id', operation.id]);
+        assert.equal(result.status, 0, result.stderr);
+        const output = singleJsonLine(result.stdout, command) as { paymentProvider: string; operation?: Operation };
+        assert.equal(output.paymentProvider, provider);
+        if (output.operation) assert.equal(output.operation.paymentProvider, provider);
+      }
+      const rpc = runBackend([...changedArgs, 'rpc'], JSON.stringify({
+        apiVersion: '1', requestId: 'provider-read', method: 'operation.get',
+        params: { mandateId: operation.mandateId, mandateVersion: 1, operationId: operation.id },
+      }));
+      assert.equal(rpc.status, 0, rpc.stderr);
+      const output = singleJsonLine(rpc.stdout, 'rpc') as { result: { operation: Operation } };
+      assert.equal(output.result.operation.paymentProvider, provider);
+      if (provider === 'paypal-sandbox') {
+        const refused = runBackend([...changedArgs, 'operation-run', '--id', operation.id]);
+        assert.equal(refused.status, 2);
+        assert.equal(refused.stdout, '');
+        assert.match(refused.stderr, /configured payment provider differs/);
+      }
+    } finally { fixture.close(); }
+  }
+});
+
+test('the default config path stays fake and the screen carries the constant provider fact', () => {
+  const fixture = buildFixture('provider-screen');
+  try {
+    const draft = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
+    assert.equal(draft.status, 0, draft.stderr);
+    const digest = (singleJsonLine(draft.stdout, 'draft') as { digest: string }).digest;
+    const confirm = runBackend([...rootArgs(fixture), 'mandate-confirm', '--id', 'cli-mandate', '--revision', '1', '--digest', digest]);
+    assert.equal(confirm.status, 0, confirm.stderr);
+    const rpc = runBackend([...rootArgs(fixture), 'rpc'], JSON.stringify({
+      apiVersion: '1', requestId: 'screen-1', method: 'proposal.submit',
+      params: { idempotencyKey: 'screen-key', cart: {
+        id: 'screen-cart', mandateId: 'cli-mandate', mandateVersion: 1, supplierId: 'store-a',
+        lines: [{ requirementId: 'eng-laptops', sku: 'LAP-14-AIR', quantity: 1 }],
+      } },
+    }) + '\n');
+    assert.equal(rpc.status, 0, rpc.stderr);
+    const operationId = (singleJsonLine(rpc.stdout, 'rpc') as
+      { result: { operation: { id: string } } }).result.operation.id;
+
+    const run = runBackend([...rootArgs(fixture), 'operation-run', '--id', operationId]);
+    assert.equal(run.status, 0, run.stderr);
+    const runLine = singleJsonLine(run.stdout, 'run') as {
+      paymentProvider: string; providerIds?: unknown; operation: { status: string };
+    };
+    assert.equal(runLine.operation.status, 'ordered');
+    assert.equal(runLine.paymentProvider, 'fake');
+    assert.equal(runLine.providerIds, undefined, 'fake-provider facts expose no sandbox ids');
+
+    const status = runBackend([...rootArgs(fixture), 'status', '--id', operationId]);
+    assert.equal(status.status, 0, status.stderr);
+    const statusLine = singleJsonLine(status.stdout, 'status') as { paymentProvider: string; providerIds?: unknown };
+    assert.equal(statusLine.paymentProvider, 'fake');
+    assert.equal(statusLine.providerIds, undefined);
+
+    const audit = runBackend([...rootArgs(fixture), 'audit', '--id', operationId]);
+    assert.equal(audit.status, 0, audit.stderr);
+    const auditLine = singleJsonLine(audit.stdout, 'audit') as {
+      paymentProvider: string; events: Array<{ details: { paymentProvider: string } }>;
+    };
+    assert.equal(auditLine.paymentProvider, 'fake');
+    assert.ok(auditLine.events.length > 0);
+    assert.ok(auditLine.events.some((event) => event.details.paymentProvider === 'fake'),
+      'the reservation stores the provider; reading audit must preserve the original event details');
+  } finally {
+    fixture.close();
+  }
+});
+
+test('the authorize commands require the paypal-sandbox config selection and clean refusals', () => {
+  const fixture = buildFixture('authorize-gate');
+  try {
+    const authorize = runBackend([...rootArgs(fixture), 'operation-authorize', '--id', 'op-1']);
+    assert.equal(authorize.status, 2);
+    assert.equal(authorize.stdout, '');
+    assert.match(authorize.stderr, /operation-authorize requires paymentProvider "paypal-sandbox"/);
+
+    const complete = runBackend([...rootArgs(fixture), 'operation-complete-authorization', '--id', 'op-1']);
+    assert.equal(complete.status, 2);
+    assert.equal(complete.stdout, '');
+    assert.match(complete.stderr, /operation-complete-authorization requires paymentProvider "paypal-sandbox"/);
+
+    // An unknown provider VALUE is refused by the strict config schema.
+    const original = JSON.parse(readFileSync(fixture.configPath, 'utf8')) as Record<string, unknown>;
+    const badPath = join(fixture.directory, 'bad-provider-config.json');
+    writeFileSync(badPath, JSON.stringify({ ...original, paymentProvider: 'paypal-live' }));
+    const bad = runBackend(['--db', fixture.dbPath, '--config', badPath, 'status', '--id', 'op-1']);
+    assert.equal(bad.status, 2);
+    assert.equal(bad.stdout, '');
+    assert.notEqual(bad.stderr, '');
+    assert.doesNotMatch(bad.stderr, /node:|\.ts|Zod/i);
+  } finally {
+    fixture.close();
+  }
+});
+
+test('sandbox hold commands refuse closed and sanitized without credentials, and rpc never reads .env', () => {
+  const fixture = buildFixture('authorize-credentials');
+  try {
+    const configPath = paypalConfigPath(fixture);
+
+    // No PAYPAL values in the environment and no .env beside the process: the
+    // invocation cwd here is the repository root, so a machine that keeps real
+    // credentials in the repo .env would satisfy the loader and skip the
+    // refusal; run it from an empty directory instead.
+    const emptyDir = join(fixture.directory, 'empty-cwd');
+    mkdirSync(emptyDir, { recursive: true });
+    // The assertion expects the loader to find nothing, so the spawn must not
+    // inherit PAYPAL_* values from a shell that exports real credentials.
+    const cleanEnv = { ...process.env };
+    for (const key of Object.keys(cleanEnv)) {
+      if (/^paypal_/i.test(key)) delete cleanEnv[key];
+    }
+    const missing = runBackend(['--db', fixture.dbPath, '--config', configPath, 'operation-authorize', '--id', 'op-1'], undefined, { cwd: emptyDir, env: cleanEnv });
+    assert.equal(missing.status, 2);
+    assert.equal(missing.stdout, '');
+    assert.match(missing.stderr, /Sandbox credentials are not configured/);
+    // Values never surface; the reference to the CONFIGURED NAMES is the only leak.
+    assert.doesNotMatch(missing.stderr, /[A-Za-z0-9_-]{12,}=?$|Bearer|env-cid|cid-live|sec-live/i);
+
+    // A live environment value is refused, never configured further.
+    const live = runBackend(
+      ['--db', fixture.dbPath, '--config', configPath, 'operation-authorize', '--id', 'op-1'],
+      undefined,
+      { env: { ...process.env, PAYPAL_CLIENT_ID: 'cid-live', PAYPAL_CLIENT_SECRET: 'sec-live', PAYPAL_ENV: 'live' } },
+    );
+    assert.equal(live.status, 2);
+    assert.match(live.stderr, /Only the sandbox PayPal environment/);
+    assert.doesNotMatch(live.stderr, /cid-live|sec-live/);
+
+    // An .env beside the invocation directory is honored for the authorize
+    // path only in shape: still refused when the file lacks the secret names.
+    const dotenvDir = join(fixture.directory, 'dotenv-cwd');
+    mkdirSync(dotenvDir, { recursive: true });
+    writeFileSync(join(dotenvDir, '.env'), '# comment\nPAYPAL_CLIENT_ID="env-cid"\n');
+    const incomplete = runBackend(
+      ['--db', fixture.dbPath, '--config', configPath, 'operation-authorize', '--id', 'op-1'],
+      undefined,
+      { cwd: dotenvDir },
+    );
+    assert.equal(incomplete.status, 2);
+    assert.match(incomplete.stderr, /Sandbox credentials are not configured/);
+
+    // rpc NEVER triggers the loader: a malformed request body answered by the
+    // normal wire contract proves rpc ran without touching credentials, even
+    // though a complete-but-live set of names is present in the process env.
+    const rpc = runBackend([...rootArgs(fixture), 'rpc'], 'this is not JSON',
+      { cwd: dotenvDir, env: { ...process.env, PAYPAL_CLIENT_ID: 'cid', PAYPAL_CLIENT_SECRET: 'sec', PAYPAL_ENV: 'live' } });
+    assert.equal(rpc.status, 2);
+    const rpcLine = singleJsonLine(rpc.stdout, 'rpc') as { ok: boolean; error: { code: string; message: string } };
+    assert.equal(rpcLine.ok, false);
+    assert.equal(rpcLine.error.code, 'INVALID_REQUEST');
+    assert.doesNotMatch(rpc.stderr, /sandbox credentials|PAYPAL/i);
+    assert.doesNotMatch(rpcLine.error.message, /sandbox credentials|env-cid|cid|sec/i);
+  } finally {
+    fixture.close();
+  }
+});
+
+test('a valid sentinel credential set reaches a post-load failure without any value leaking', () => {
+  const fixture = buildFixture('sentinel-containment');
+  try {
+    const configPath = paypalConfigPath(fixture);
+    // This path exercises a failure AFTER loadSandboxCredentials: the config
+    // selects paypal-sandbox and the command is routable (operation-authorize),
+    // but the id names no operation, so credentials load first and the refusal
+    // comes from the command core, dragging whatever the loader saw along it.
+    const dotenvDir = join(fixture.directory, 'sentinel-cwd');
+    mkdirSync(dotenvDir, { recursive: true });
+    writeFileSync(join(dotenvDir, '.env'),
+      'PAYPAL_CLIENT_ID="SENTINELID123"\nPAYPAL_CLIENT_SECRET="SENTINELSECRET456"\nPAYPAL_ENV=sandbox\n');
+
+    const cleanEnv = { ...process.env };
+    delete cleanEnv.PAYPAL_CLIENT_ID;
+    delete cleanEnv.PAYPAL_CLIENT_SECRET;
+    delete cleanEnv.PAYPAL_ENV;
+    const output = runBackend(
+      ['--db', fixture.dbPath, '--config', configPath, 'operation-authorize', '--id', 'op-no-such-operation'],
+      undefined,
+      { cwd: dotenvDir, env: cleanEnv },
+    );
+    // The loader must have succeeded and the failure must be the operation's.
+    assert.equal(output.status, 2);
+    assert.equal(output.stdout, '');
+    assert.match(output.stderr, /Operation was not found/);
+    assert.doesNotMatch(output.stderr, /Sandbox credentials are not configured/);
+    const combined = `${output.stderr}\n${output.stdout}`;
+    assert.doesNotMatch(combined, /SENTINELID123|SENTINELSECRET456/);
+    assert.doesNotMatch(combined, /PAYPAL_(CLIENT_ID|CLIENT_SECRET|ENV)[=\s]*SENTINEL|[A-Za-z0-9_-]{12,}=?$/m);
+    assert.doesNotMatch(combined, /cid-live|sec-live/i);
+  } finally {
+    fixture.close();
+  }
+});
+
+test('a leading UTF-8 BOM is stripped from backend file inputs while invalid JSON still fails', () => {
+  const fixture = buildFixture('bom');
+  try {
+    // BOM'd config file.
+    writeFileSync(fixture.configPath, `\uFEFF${readFileSync(fixture.configPath, 'utf8')}`);
+    // BOM'd draft file.
+    writeFileSync(fixture.draftPath, `\uFEFF${readFileSync(fixture.draftPath, 'utf8')}`);
+    const draft = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
+    assert.equal(draft.status, 0, draft.stderr);
+    const draftLine = singleJsonLine(draft.stdout, 'bom draft') as { mandateId: string };
+    assert.equal(draftLine.mandateId, 'cli-mandate');
+
+    // Content that remains invalid JSON still fails exactly as before.
+    writeFileSync(fixture.draftPath, `\uFEFF${'&&& not json'}`);
+    const invalid = runBackend([...rootArgs(fixture), 'mandate-draft', '--file', fixture.draftPath]);
+    assert.equal(invalid.status, 2);
+    assert.equal(invalid.stdout, '');
+    assert.match(invalid.stderr, /could not be read as one JSON document/);
+  } finally {
+    fixture.close();
+  }
+});
+
+test('the help text documents the sandbox commands, config-only provider selection and exit-code agreement', () => {
+  const help = runBackend(['--help']);
+  assert.equal(help.status, 0);
+  for (const fragment of [
+    'operation-authorize',
+    'operation-complete-authorization',
+    'paymentProvider',
+    '0 means the command ran',
+  ]) {
+    assert.ok(help.stdout.includes(fragment), `help must mention ${fragment}: ${help.stdout}`);
+  }
 });

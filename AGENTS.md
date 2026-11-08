@@ -29,21 +29,30 @@ Everything runnable is a simulation: no real money, suppliers or orders.
 | Command | What exists |
 | --- | --- |
 | `npm run cli` | Offline eligibility (`check`, `demo`), fixture-store controls (`store`), deterministic mandate planning (`mandate draft/review`) |
-| `npm run backend` | SQLite ledger with atomic budget and quantity reservations, local operator confirmation, and durable execution with crash recovery over **fake** payment and supplier providers |
+| `npm run backend` | SQLite ledger with atomic budget and quantity reservations, local operator confirmation, and durable execution with crash recovery over **fake** payment and supplier providers; the backend config may additionally select `paymentProvider: "paypal-sandbox"` to route capture/refund effects through the sandbox gateway while the supplier order stays fake |
 | `npm run shop` | The bounded shopper (`run`): a model or a scripted stand-in proposes price-free carts to that backend through the shared client, and the run closes with a plain-language review. Mandate drafting (`draft`): a model turns a plain-English request into a policy-checked draft. A read-only view (`status`) of ledger numbers and named operations, with no model or key |
-| `npm run demo:flow` | The whole story in one command, with dates generated from today: control panel, plain-English request, confirmation, hostile listing, store change, rejection and recovery, and execution over **fake** providers. `--live` uses Claude. See `docs/demo-script.md` |
+| `npm run demo:flow` | The whole story in one command, with dates generated from today: control panel, plain-English request, confirmation, hostile listing, store change, rejection and recovery, and execution over **fake** providers. `--live` uses Claude. `--sandbox-paypal` connects scene 6's payment capture to the PayPal sandbox (operator-only; needs sandbox credentials, aborts cleanly without them; the supplier order stays simulated). See `docs/demo-script.md` |
 | `npm run spike:paypal` | A separate, interactive PayPal sandbox spike connected to none of the above. `docs/paypal-spike.md` records no results yet |
 
-**Not built:** PayPal in the purchase path, real suppliers, stock attestation and assignment, CLI approvals and exceptions, delivery and readiness tracking,
-production authentication. Never describe these as implemented. Fake-provider results such
-as `ordered` are not real orders, and a reservation is not payment. No gate after M0 is
-recorded as passed; see `docs/project-scope.md`.
+**Not built (for real):** real money at a real supplier, real suppliers, stock attestation
+and assignment, CLI approvals and exceptions, delivery and readiness tracking,
+production authentication. PayPal sandbox purchase-path wiring exists in code: capture and
+refund are sandbox-verified-pending behind config opt-in (`paymentProvider`), with no live
+request and no sandbox-account behavior verified, so a sandbox `capture` is a mocked-contract
+plus crash-test fact, not a validated payment. Never describe these as implemented beyond that
+wiring. Fake-provider results such as `ordered` are not real orders, and a reservation is not
+payment. No gate after M0 is recorded as passed; see `docs/project-scope.md`.
 
-A unit-4 PayPal gateway contract exists at `services/checker/src/paypal/gateway.ts`
-(sandbox-only, fetch-mocked capture/refund tests, documented in
-`docs/backend-api.md`), separate from execution and not wired into the purchase
-path; nothing about it is verified against a real PayPal account. Reproduction
-commands and proof-class distinctions live in `docs/backend-delivery-review.md`.
+The PayPal sandbox gateway (`services/checker/src/paypal/gateway.ts`, documented in
+`docs/backend-api.md`) is now wired into the execution provider behind the backend config
+(`paymentProvider: "paypal-sandbox"` only; never a CLI flag or shopper input). Operator-only
+commands (`operation-authorize`, `operation-complete-authorization`) place a sandbox hold on a
+reserved operation before `operation-run`; the durable worker resolves crashes through
+sandbox reads; sandbox credentials are read in-process only by the commands that call PayPal
+from the invocation directory `.env`/environment. Everything in that path is proven by
+fetch-mocked tests and fake-fetch child-process crash evidence; nothing is verified against a
+real PayPal account. A unit-4 four-method capture/refund/refund-read contract remains intact.
+Reproduction commands and proof-class distinctions live in `docs/backend-delivery-review.md`.
 
 **Runtime folders:** the backend refuses a runtime folder other accounts can reach. On Windows it
 reads the real owner and access list (`apps/cli/src/windows-acl.ts`) and refuses what it can't

@@ -30,12 +30,22 @@ import {
 import {
   LedgerIdentityConflict,
   loadEffectRows,
+  loadEffectRowByKind,
   loadOperationStorageRow,
+  loadReservationRow,
   openLedgerStore,
   canonicalize,
+  loadPayPalBindingRow,
+  type EffectStorageRow,
   type OperationStorageRow,
 } from '../../../services/checker/src/ledger/store.ts';
 import { createFakeProviderGateway } from '../../../services/checker/src/execution/fake.ts';
+import {
+  authorizeOperationHold,
+  completeAuthorizationHold,
+  createExecutionProvider,
+} from '../../../services/checker/src/execution/paypal-provider.ts';
+import { createPayPalGateway, type PayPalGateway } from '../../../services/checker/src/paypal/gateway.ts';
 import {
   createExecutionWorker,
   type ExecutionSupplier,
@@ -46,8 +56,13 @@ import { createWindowsPrivateDirectory, inspectWindowsPaths, type PathVerdict } 
 // Separate backend operator/RPC CLI. This entrypoint never reuses the offline
 // eligibility demo logic; it is the durable execution surface: operators store,
 // review and confirm mandates, the shopper RPC submits price-free carts, and
-// execution runs against the labelled fake providers. No HTTP, no network, no
-// real suppliers, and no operator-supplied clocks or scenarios.
+// execution runs against the labelled fake providers by default. Only the
+// operator's config file may additionally select the optimized-in PayPal
+// sandbox for capture/refund effects (`paymentProvider: "paypal-sandbox"`),
+// and only the commands that call PayPal read sandbox credentials, from the
+// invocation directory's .env or process environment, inside this process —
+// the shopper's `rpc` child never triggers that path. Supplier orders stay
+// fake in every configuration. No operator-supplied clocks or scenarios.
 
 const SIMULATION = true;
 const MAX_RPC_BYTES = 1_048_576;
@@ -63,7 +78,16 @@ Commands:
   mandate-review --id ID --revision N   review the exact stored revision
   mandate-confirm --id ID --revision N --digest DIGEST
                                         confirm with OS-derived operator identity
-  operation-run --id ID                 execute against fake providers
+  operation-authorize --id ID           create the sandbox PayPal hold for a
+                                        reserved operation (config must select
+                                        paymentProvider "paypal-sandbox")
+  operation-complete-authorization --id ID
+                                        finalize the hold after the sandbox buyer
+                                        approves it on PayPal's hosted page
+  operation-run --id ID                 execute a reserved operation against the
+                                        configured providers (fake by default;
+                                        paypal-sandbox captures need an
+                                        authorization_held binding)
   operation-reconcile --id ID           resolve ambiguous provider outcomes only
   status --id ID                        print the current operation
   audit --id ID                         print the operation audit events
@@ -71,9 +95,13 @@ Commands:
                                         exactly one JSON response on stdout
 
 Root options select the application database and the config file; all paths are
-trusted operator launch options, never shopper input. No clock, scenario,
-credential, provider selector or approval metadata may be supplied on the
-command line. Exit codes: 0 success, 2 usage/validation/business, 1 internal.
+trusted operator launch options, never shopper input. Payment provider selection
+lives ONLY in the backend config file: no command-line or shopper input ever
+chooses a provider. Exit-code agreement: 0 means the command ran; an operation's
+terminal business state lives in its status/audit output (a failed or
+reconciliation_required operation may still exit 0 from operation-run), 2 covers
+usage/validation/business refusals, 1 internal. Machine-readable stdout stays one
+JSON line per command; diagnostics go to stderr.
 `;
 
 class CliError extends Error {
@@ -89,6 +117,8 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'mandate-draft': ['file'],
   'mandate-review': ['id', 'revision'],
   'mandate-confirm': ['id', 'revision', 'digest'],
+  'operation-authorize': ['id'],
+  'operation-complete-authorization': ['id'],
   'operation-run': ['id'],
   'operation-reconcile': ['id'],
   status: ['id'],
@@ -102,12 +132,16 @@ const ConfigSchema = z.object({
   policyFiles: z.array(z.string().min(1).max(MAX_PATH_CHARS)).min(1).max(100),
   catalogFiles: z.array(z.string().min(1).max(MAX_PATH_CHARS)).min(1).max(100),
   fakeProviderDb: z.string().min(1).max(MAX_PATH_CHARS),
+  /** Unit 5: operator-selected payment provider. Absent means 'fake'; the
+   * value can only come from this config file, never a command flag or shopper input. */
+  paymentProvider: z.enum(['fake', 'paypal-sandbox']).optional(),
 }).strict();
 
 interface LoadedConfig {
   policies: Policy[];
   catalogs: Catalog[];
   providerPath: string;
+  paymentProvider: 'fake' | 'paypal-sandbox';
 }
 
 interface Command {
@@ -193,7 +227,11 @@ function readFileBounded(path: string, label: string): unknown {
     const stats = statSync(path);
     if (!stats.isFile()) throw new Error('not a regular file');
     if (stats.size > MAX_FILE_BYTES) throw new Error('oversized');
-    raw = JSON.parse(readFileSync(path, 'utf8'));
+    let text = readFileSync(path, 'utf8');
+    // One leading UTF-8 byte-order mark (as written by PowerShell 5.1 and some
+    // Windows editors) is ignored; the CONTENT still has to be valid JSON.
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    raw = JSON.parse(text);
   } catch {
     throw new CliError(`${label} could not be read as one JSON document within the size limit`);
   }
@@ -289,10 +327,13 @@ function assertPrivateWindowsDirectory(directory: string, label: string, fresh =
     throw new CliError(`${label} is not owned by the operating-system user running this command`);
   }
   if (verdict === 'too_open') {
-    throw new CliError(`${label} permissions are too open; refusing to chmod an existing unsafe directory`);
+    throw new CliError(`${label} permissions are too open; refusing to use or change it`);
   }
   if (verdict === 'no_file_inheritance') {
     throw new CliError(`${label} does not pass its private access on to new files; refusing to use it`);
+  }
+  if (verdict === 'denies_user') {
+    throw new CliError(`${label} has a deny entry for the user running this command; fix its access or use another location`);
   }
   if (verdict !== 'ok') {
     throw new CliError(`${label} could not be validated as a runtime directory`);
@@ -319,6 +360,9 @@ function assertPrivateWindowsDatabase(database: string, label: string): void {
     }
     if (verdict === 'too_open') {
       throw new CliError(`${label} permissions are too open; refusing to use or change it`);
+    }
+    if (verdict === 'denies_user') {
+      throw new CliError(`${label} has a deny entry for the user running this command; fix its access or use another location`);
     }
     if (verdict !== 'ok') {
       throw new CliError(`${label} could not be validated`);
@@ -401,6 +445,95 @@ function trustedClock(): string {
   return new Date().toISOString();
 }
 
+/**
+ * Unit 5 (.env containment): reads the invocation directory's `.env` and merges
+ * it under process env precedence for the three supported sandbox names. This
+ * runs ONLY when the backend config selects `paypal-sandbox` AND the command is
+ * one of operation-authorize/operation-complete-authorization/operation-run/
+ * operation-reconcile; the `rpc` child never triggers it. Values are returned
+ * to the gateway call path only: never logged, never echoed, never printed.
+ * `explicitPath` exists for tests; production always reads `<cwd>/.env`.
+ */
+function readEnvFile(path: string): Map<string, string> {
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return new Map(); // no .env file: file values are simply absent
+  }
+  const values = new Map<string, string>();
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith('#')) continue;
+    const equals = line.indexOf('=');
+    if (equals <= 0) continue; // tolerant: stray lines are ignored, never fatal
+    const key = line.slice(0, equals).trim();
+    let value = line.slice(equals + 1).trim();
+    if (value.length >= 2
+      && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
+      value = value.slice(1, -1);
+    }
+    if (key.length > 0) values.set(key, value);
+  }
+  return values;
+}
+
+function loadSandboxCredentials(explicitPath?: string): { clientId: string; clientSecret: string } {
+  const path = explicitPath ?? join(process.cwd(), '.env');
+  if (path.length > MAX_PATH_CHARS) throw new CliError('The sandbox credential file path is too long');
+  const fileValues = readEnvFile(path);
+  const value = (name: string): string | undefined => {
+    const fromProcess = process.env[name];
+    if (fromProcess !== undefined && fromProcess.trim() !== '') return fromProcess;
+    const fromFile = fileValues.get(name);
+    return fromFile !== undefined && fromFile.trim() !== '' ? fromFile : undefined;
+  };
+  const paypalEnv = value('PAYPAL_ENV');
+  if (paypalEnv !== undefined && paypalEnv !== 'sandbox') {
+    throw new CliError('Only the sandbox PayPal environment is supported in this stage; PAYPAL_ENV was not "sandbox"');
+  }
+  const clientId = value('PAYPAL_CLIENT_ID');
+  const clientSecret = value('PAYPAL_CLIENT_SECRET');
+  if (clientId === undefined || clientSecret === undefined) {
+    throw new CliError('Sandbox credentials are not configured: PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET must come from the process environment or the invocation directory .env');
+  }
+  return { clientId, clientSecret };
+}
+
+/** The JSON-line output carrying provider facts is always this constant shape. */
+type ProviderIds = { orderId?: string; authorizationId?: string; captureId?: string; refundId?: string };
+
+function providerIdFilter(value: string | null): string | undefined {
+  if (value === null || value.length === 0) return undefined;
+  // Only bounded identifier-shaped provider ids are ever surfaced.
+  return /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : undefined;
+}
+
+/** Sandbox identifiers a demo viewer can match in the sandbox Activity page. */
+function providerFacts(database: DatabaseSync, operationId: string, paymentProvider: string | undefined): ProviderIds {
+  const facts: ProviderIds = {};
+  if (paymentProvider !== 'paypal-sandbox') {
+    // The fake provider's ids are simulation labels, never shown as sandbox ids.
+    return facts;
+  }
+  const binding = loadPayPalBindingRow(database, operationId);
+  if (binding !== null) {
+    const orderId = providerIdFilter(binding.orderId);
+    if (orderId !== undefined) facts.orderId = orderId;
+    const authorizationId = providerIdFilter(binding.authorizationId);
+    if (authorizationId !== undefined) facts.authorizationId = authorizationId;
+  }
+  const effects: EffectStorageRow[] = loadEffectRows(database, operationId);
+  const byKind = new Map(effects.map((effect) => [effect.kind, effect] as const));
+  const capture = byKind.get('capture');
+  const captureId = providerIdFilter(capture?.state === 'succeeded' ? capture.providerId : null);
+  if (captureId !== undefined) facts.captureId = captureId;
+  const refund = byKind.get('refund');
+  const refundId = providerIdFilter(refund?.state === 'succeeded' ? refund.providerId : null);
+  if (refundId !== undefined) facts.refundId = refundId;
+  return facts;
+}
+
 function loadSnapshotSet<T>(
   files: readonly string[],
   label: string,
@@ -456,6 +589,7 @@ function loadConfig(configPath: string): LoadedConfig {
       'catalog', snapshotParser(CatalogSchema, 'catalog'), (catalog) => catalog.supplierId,
     ),
     providerPath: resolve(configDir, parsed.data.fakeProviderDb),
+    paymentProvider: parsed.data.paymentProvider ?? 'fake',
   };
 }
 
@@ -546,6 +680,7 @@ async function runRpc(applicationPath: string, config: LoadedConfig): Promise<nu
   }));
   const backend = createApplicationBackend({
     databasePath: applicationPath,
+    paymentProvider: config.paymentProvider,
     suppliers,
     clock: trustedClock,
   });
@@ -567,12 +702,37 @@ async function runOperationCommand(
   config: LoadedConfig,
   operationId: string,
 ): Promise<number> {
+  // Missing consent is an operator refusal, not an unknown provider effect.
+  // Check before loading credentials or letting the worker persist an intent.
+  if (config.paymentProvider === 'paypal-sandbox' && name === 'operation-run') {
+    const database = openLedgerStore(applicationPath);
+    try {
+      operationRow(database, operationId);
+      const reservation = loadReservationRow(database, operationId);
+      const capture = loadEffectRowByKind(database, operationId, 'capture');
+      const binding = loadPayPalBindingRow(database, operationId);
+      if (reservation?.state === 'active' && (capture === null || capture.state === 'intent')
+        && binding?.providerState !== 'authorization_held') {
+        throw new CliError('No held sandbox authorization exists; run operation-authorize, approve as the sandbox buyer, then operation-complete-authorization before operation-run');
+      }
+    } finally { database.close(); }
+  }
   const suppliers: ExecutionSupplier[] = buildSuppliers(config).map((supplier) => ({
     supplierId: supplier.supplierId,
     catalog: supplier.catalog,
     adapter: supplier.adapter,
   }));
-  const provider = createFakeProviderGateway(providerPath);
+  // Unit 5: capture/refund consultation of PayPal is config-driven only. The
+  // sandbox gateway needs credentials in this same process (env loader contract);
+  // the ORDER kind stays on the fake provider store in every configuration.
+  const paypalGateway: PayPalGateway | undefined = config.paymentProvider === 'paypal-sandbox'
+    ? createPayPalGateway(loadSandboxCredentials())
+    : undefined;
+  const provider = createExecutionProvider({
+    selection: config.paymentProvider,
+    fake: createFakeProviderGateway(providerPath),
+    ...(paypalGateway !== undefined ? { paypal: paypalGateway, ledgerPath: applicationPath } : {}),
+  });
   const worker = createExecutionWorker({
     databasePath: applicationPath,
     suppliers,
@@ -586,7 +746,18 @@ async function runOperationCommand(
     if (outcome.kind === 'busy' || outcome.kind === 'not_found') {
       throw new CliError(outcome.message);
     }
-    emit({ simulation: SIMULATION, operation: outcome.operation });
+    const database = openLedgerStore(applicationPath);
+    try {
+      const providerIds = providerFacts(database, operationId, outcome.operation.paymentProvider);
+      emit({
+        simulation: SIMULATION,
+        paymentProvider: outcome.operation.paymentProvider ?? null,
+        operation: outcome.operation,
+        ...(Object.keys(providerIds).length > 0 ? { providerIds } : {}),
+      });
+    } finally {
+      database.close();
+    }
     return 0;
   } finally {
     worker.close();
@@ -685,7 +856,13 @@ async function handleCommand(command: Command): Promise<number> {
       const database = openLedgerStore(dbPath);
       try {
         const operation = wireOperation(database, operationRow(database, operationId));
-        emit({ simulation: SIMULATION, operation });
+        const providerIds = providerFacts(database, operationId, operation.paymentProvider);
+        emit({
+          simulation: SIMULATION,
+          paymentProvider: operation.paymentProvider ?? null,
+          operation,
+          ...(Object.keys(providerIds).length > 0 ? { providerIds } : {}),
+        });
         return 0;
       } finally {
         database.close();
@@ -695,13 +872,17 @@ async function handleCommand(command: Command): Promise<number> {
       const operationId = requireFlag(command, 'id');
       const database = openLedgerStore(dbPath);
       try {
-        operationRow(database, operationId);
+        const operation = wireOperation(database, operationRow(database, operationId));
         const events = (database.prepare(
           'SELECT event_id, kind, event_json, created_at FROM audit_events WHERE operation_id = ? ORDER BY event_id',
         ).all(operationId) as Array<Record<string, unknown>>).map((row) => {
-          let details: unknown;
+          let details: Record<string, unknown>;
           try {
-            details = JSON.parse(row.event_json as string);
+            const parsed = JSON.parse(row.event_json as string) as unknown;
+            if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+              throw new Error('not an object');
+            }
+            details = parsed as Record<string, unknown>;
           } catch {
             throw new Error('Stored audit event is unreadable');
           }
@@ -712,7 +893,68 @@ async function handleCommand(command: Command): Promise<number> {
             details,
           };
         });
-        emit({ simulation: SIMULATION, operationId, events });
+        const providerIds = providerFacts(database, operationId, operation.paymentProvider);
+        emit({
+          simulation: SIMULATION,
+          paymentProvider: operation.paymentProvider ?? null,
+          operationId,
+          events,
+          ...(Object.keys(providerIds).length > 0 ? { providerIds } : {}),
+        });
+        return 0;
+      } finally {
+        database.close();
+      }
+    }
+    case 'operation-authorize': {
+      if (config.paymentProvider !== 'paypal-sandbox') {
+        throw new CliError('operation-authorize requires paymentProvider "paypal-sandbox" in the backend config');
+      }
+      // Credential load happens only here (command + provider gate passed).
+      const gateway = createPayPalGateway(loadSandboxCredentials());
+      const database = openLedgerStore(dbPath);
+      try {
+        const result = await authorizeOperationHold({
+          database, gateway, operationId: requireFlag(command, 'id'), now: trustedClock(),
+        });
+        if (result.kind === 'refused') throw new CliError(result.message);
+        emit({
+          simulation: SIMULATION,
+          paymentProvider: 'paypal-sandbox',
+          operationId: requireFlag(command, 'id'),
+          providerState: result.providerState,
+          currency: result.currency,
+          amountMinor: result.amountMinor,
+          orderId: result.orderId,
+          ...(result.kind === 'created' || result.kind === 'replayed' ? { approvalUrl: result.approvalUrl } : {}),
+          ...(result.kind === 'held' ? { authorizationId: result.authorizationId } : {}),
+        });
+        return 0;
+      } finally {
+        database.close();
+      }
+    }
+    case 'operation-complete-authorization': {
+      if (config.paymentProvider !== 'paypal-sandbox') {
+        throw new CliError('operation-complete-authorization requires paymentProvider "paypal-sandbox" in the backend config');
+      }
+      const gateway = createPayPalGateway(loadSandboxCredentials());
+      const database = openLedgerStore(dbPath);
+      try {
+        const result = await completeAuthorizationHold({
+          database, gateway, operationId: requireFlag(command, 'id'), now: trustedClock(),
+        });
+        if (result.kind === 'refused') throw new CliError(result.message);
+        emit({
+          simulation: SIMULATION,
+          paymentProvider: 'paypal-sandbox',
+          operationId: requireFlag(command, 'id'),
+          providerState: 'authorization_held',
+          currency: result.currency,
+          amountMinor: result.amountMinor,
+          orderId: result.orderId,
+          authorizationId: result.authorizationId,
+        });
         return 0;
       } finally {
         database.close();

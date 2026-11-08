@@ -204,9 +204,20 @@ within budget. This walkthrough uses dated fixtures, which stop working after No
 
 `npm run demo:flow` runs the whole story with every date generated from today: the control
 panel, a plain-English request, confirmation, a hostile listing, a store change that gets a
-cart rejected followed by recovery, and execution over fake providers. It needs no key or
-network. Add `--live` for Claude, which spends API credit, and `--pause` for recording. The
+cart rejected followed by recovery, and execution over fake providers. Add `--live` for Claude, which spends API credit, and `--pause` for recording. The
 scene-by-scene recording plan is in [the demo script](docs/demo-script.md).
+
+`--sandbox-paypal` connects scene 6's payment capture to the PayPal sandbox: the
+generated backend config gains `paymentProvider: "paypal-sandbox"`, the flow needs
+sandbox credentials in `.env` (it stops before any reservation without them) and
+pauses while a sandbox buyer approves the hold in a browser. The supplier order stays
+simulated in both variants, and the default flow still needs no key or network.
+
+Sandbox demo directories are retained for recovery and cannot be reset by a later
+demo command, including a default fake-only run. Use a fresh `--dir` for each sandbox
+take, for example `--dir .runtime/demo-sandbox-take-1`. For an interrupted take, use
+its original config/database with backend `status`, `audit` and
+`operation-reconcile`; keep its ledger until the provider outcome is established.
 
 The scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and on macOS with
 Node 26. Live Claude has run it only in temporary Windows copies with the backend's folder check
@@ -226,16 +237,25 @@ eight live Claude runs so far: four against the contract mock and four against t
 in temporary copies with its Windows check skipped. Mandates can also be drafted from plain
 English (`npm run shop -- draft`), which has had four live Claude runs. `npm run demo:flow`
 runs the whole story. The original sandbox PayPal client, money helpers and spike remain
-intact. Unit 4 adds a separate PayPal gateway
-([docs/backend-api.md](docs/backend-api.md#unit-4-paypal-gateway-contract-only--not-wired-into-execution))
+intact. Unit 4 added a separate PayPal gateway, since wired into execution
+([docs/backend-api.md](docs/backend-api.md#paypal-gateway-unit-4-contract--unit-5-sandbox-additions))
 with capture/refund read-and-write contracts — sandbox host only, injected fetch,
 finite timeouts, `SGD`/minor-unit money at the edge — proven by fetch-mocked tests
-only. It is not wired into execution, and nothing has been verified against a real
-PayPal account; [delivery evidence](docs/backend-delivery-review.md) separates
-simulated execution and contract coverage from account feasibility.
+only. Unit 5 wires that gateway into the execution ledger behind the backend
+config (`paymentProvider: "paypal-sandbox"`): operator-only hold commands
+(`operation-authorize`, `operation-complete-authorization`) place a sandbox hold
+on a reserved operation before `operation-run`, and the durable worker recovers
+crashes through sandbox reads. Nothing here has been verified against a real
+PayPal account, the supplier order stays fake in every configuration, and no
+live or unscripted PayPal request has ever been sent; [delivery
+evidence](docs/backend-delivery-review.md) separates simulated execution,
+contract coverage and code wiring from account feasibility.
 
-**Planned:** stock assignment, PayPal in the purchase path
-through the ledger (the gateway contract above is not connected to it), real supplier
+**Planned (still unimplemented):** stock assignment, at least one authorized
+interactive sandbox exercise recorded in `docs/paypal-spike.md` (buyer consent on
+PayPal's hosted page during the operator's own authorized steps), and the
+`packages/contracts` `paymentProvider` proposal
+through the ledger, real supplier
 execution, exceptions and equipment-readiness tracking. All will be tested through the
 CLI. No custom website is in the scaffold or stage-one acceptance; the only browser
 page involved anywhere is PayPal's own hosted buyer-consent screen during the

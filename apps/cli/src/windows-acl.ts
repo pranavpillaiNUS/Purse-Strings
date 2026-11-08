@@ -29,11 +29,13 @@ const FILE_MARK = 'F';
 /** Windows does not allow this in a file name, so it can separate paths safely. */
 const PATH_SEPARATOR = '|';
 
-export type DirectoryVerdict = 'ok' | 'foreign_owner' | 'too_open' | 'no_file_inheritance' | 'unverifiable';
+export type DirectoryVerdict = 'ok' | 'foreign_owner' | 'too_open' | 'no_file_inheritance' | 'denies_user' | 'unverifiable';
 export type PathVerdict = DirectoryVerdict | 'missing';
 
 const DESCRIPTOR = /^O:([A-Za-z0-9-]+)(?:G:[A-Za-z0-9-]+)?D:(?:P|AR|AI)*((?:\([^()]*\))+)$/;
 const USER_SID = /^S-1-\d+(?:-\d+)+$/;
+/** Windows writes entry flags as two capital letters each. */
+const ACE_FLAGS = /^(?:[A-Z]{2})*$/;
 
 /** Pure decision on a file's descriptor. Null DACLs and conditional ACEs do not parse, so they fail closed. */
 export function evaluateFileSecurity(sddl: string, userSid: string): DirectoryVerdict {
@@ -43,18 +45,25 @@ export function evaluateFileSecurity(sddl: string, userSid: string): DirectoryVe
   const trusted = new Set([userSid, SYSTEM_SID, ADMINISTRATORS_SID]);
   const resolve = (sid: string): string => SDDL_ALIASES[sid] ?? sid;
   if (!trusted.has(resolve(match[1]!))) return 'foreign_owner';
+  let deniesUser = false;
   for (const ace of match[2]!.slice(1, -1).split(')(')) {
     const fields = ace.split(';');
     if (fields.length !== 6) return 'unverifiable';
-    const [type, , , , , sid] = fields;
-    if (type === 'D') continue;
+    const [type, flags, , , , sid] = fields;
+    if (!ACE_FLAGS.test(flags!)) return 'unverifiable';
+    if (type === 'D') {
+      // Not unsafe, but this user can't work here, so say that rather than fail later.
+      // Windows writes the built-in Administrator's own entry as LA.
+      if (resolve(sid!) === userSid || (sid === 'LA' && userSid.endsWith('-500'))) deniesUser = true;
+      continue;
+    }
     if (type !== 'A') return 'unverifiable';
     if (!trusted.has(resolve(sid!))) return 'too_open';
   }
-  return 'ok';
+  return deniesUser ? 'denies_user' : 'ok';
 }
 
-/** The same rules, plus an allow entry that new files will inherit. Flags are two letters each. */
+/** The same rules, plus an allow entry that new files will inherit. */
 export function evaluateDirectorySecurity(sddl: string, userSid: string): DirectoryVerdict {
   const verdict = evaluateFileSecurity(sddl, userSid);
   if (verdict !== 'ok') return verdict;

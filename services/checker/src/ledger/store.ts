@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 export type { DatabaseSync };
 import { applyMigrations } from './schema.ts';
 import type { CartSubmission } from '../../../../packages/contracts/src/index.ts';
+import { PaymentProviderSchema, type PaymentProvider } from '../../../../packages/contracts/src/backend.ts';
 
 export interface MandateRow {
   mandateId: string;
@@ -111,24 +112,40 @@ function readNumber(row: RawRow, column: string): number {
   return value;
 }
 
+// Matches the busy_timeout below: how long one opener waits for another
+// before a contended open surfaces as SQLITE_BUSY.
+const OPEN_BUSY_BUDGET_MS = 5000;
+const sleepCell = new Int32Array(new SharedArrayBuffer(4));
+
+// Opening stays synchronous for every caller, so the pause blocks this thread.
+function sleepSync(milliseconds: number): void {
+  Atomics.wait(sleepCell, 0, 0, milliseconds);
+}
+
 export function openLedgerStore(databasePath: string): DatabaseSync {
   const database = new DatabaseSync(databasePath);
   try {
     // busy_timeout must be set before journal_mode and the rest of open: SQLite
     // does not honor the busy handler for the WAL switch itself, so only the
     // waiting-read retry below rescues a contended opener.
-    database.exec('PRAGMA busy_timeout = 5000');
+    database.exec(`PRAGMA busy_timeout = ${OPEN_BUSY_BUDGET_MS}`);
     // The WAL switch fails immediately on SQLITE_BUSY under concurrent openers
     // instead of honoring busy_timeout. A waiting read does honor it, and the
     // winner's committed switch makes the file permanently WAL, so on BUSY wait
     // through one read and retry the now no-op switch instead of surfacing it.
-    for (let attempt = 1; ; attempt += 1) {
+    // The read does not wait while the other opener holds only a shared lock,
+    // so a fixed count of back-to-back retries can all collide (CI saw five
+    // fail inside 200 ms). Retry within the busy_timeout budget instead, with
+    // a short random pause so two openers stop meeting in lockstep.
+    const walDeadline = Date.now() + OPEN_BUSY_BUDGET_MS;
+    for (;;) {
       try {
         database.exec('PRAGMA journal_mode = WAL');
         break;
       } catch (error) {
-        if (!isSqliteBusy(error) || attempt >= 5) throw error;
+        if (!isSqliteBusy(error) || Date.now() >= walDeadline) throw error;
         database.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
+        sleepSync(5 + Math.floor(Math.random() * 20));
       }
     }
     database.exec('PRAGMA synchronous = FULL');
@@ -521,6 +538,50 @@ export function recordAuditEvent(
   ).run(mandateId, operationId, kind, canonicalize(details), createdAt);
 }
 
+/** Provider facts belong to the operation, never the config used to read it.
+ * Older operations can establish their route from a sandbox binding or a durable
+ * fake capture ID. Otherwise the route remains unknown until the operator runs it. */
+export function loadOperationPaymentProvider(database: DatabaseSync, operationId: string): PaymentProvider | null {
+  const facts = database.prepare(
+    `SELECT json_extract(event_json, '$.paymentProvider') AS provider FROM audit_events
+     WHERE operation_id = ? AND kind IN ('operation_reserved', 'payment_provider_selected')
+       AND json_type(event_json, '$.paymentProvider') IS NOT NULL ORDER BY event_id`,
+  ).all(operationId);
+  let provider: PaymentProvider | null = null;
+  const accept = (value: unknown): void => {
+    const parsed = PaymentProviderSchema.safeParse(value);
+    if (!parsed.success || (provider !== null && provider !== parsed.data)) {
+      throw new LedgerIdentityConflict('Stored payment provider facts conflict');
+    }
+    provider = parsed.data;
+  };
+  for (const fact of facts) accept(fact.provider);
+  if (loadPayPalBindingRow(database, operationId) !== null) accept('paypal-sandbox');
+  const capture = loadEffectRowByKind(database, operationId, 'capture');
+  if (capture?.providerId?.startsWith('fake-capture-')) accept('fake');
+  // Before provider pinning existed, PayPal could not dispatch without the
+  // durable binding above. An unbound legacy capture must resume on fake.
+  else if (provider === null && capture !== null) accept('fake');
+  return provider;
+}
+
+/** Caller holds a short write transaction. Pin before any external effect;
+ * subsequent execution or authorization cannot switch providers on retry. */
+export function bindOperationPaymentProvider(
+  database: DatabaseSync, operation: OperationStorageRow, provider: PaymentProvider, now: string,
+): void {
+  const existing = loadOperationPaymentProvider(database, operation.operationId);
+  if (existing !== null) {
+    if (existing !== provider) {
+      throw new LedgerIdentityConflict('The configured payment provider differs from the operation payment provider');
+    }
+    return;
+  }
+  recordAuditEvent(database, operation.mandateId, operation.operationId, 'payment_provider_selected', {
+    paymentProvider: provider,
+  }, now);
+}
+
 export interface MandateTotals {
   committedMinor: number;
   reservedMinor: number;
@@ -847,4 +908,145 @@ export function releaseReservationRow(database: DatabaseSync, operationId: strin
   database.prepare(
     "UPDATE reservations SET state = 'released' WHERE operation_id = ? AND state = 'active'",
   ).run(operationId);
+}
+
+// --- PayPal authorization bindings (unit 5) ---
+// Rows exist ONLY for the paypal-sandbox payment provider and are written only
+// by the operator's `operation-authorize` / `operation-complete-authorization`
+// commands inside short synchronous transactions. The execution provider reads
+// them; nothing in the worker or in shopper reach can write one.
+
+export type PayPalBindingProviderState = 'order_created' | 'authorization_held';
+
+export interface PayPalBindingRow {
+  operationId: string;
+  orderId: string | null;
+  authorizationId: string | null;
+  invoiceId: string;
+  currency: 'SGD';
+  amountMinor: number;
+  providerState: PayPalBindingProviderState;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const BINDING_STATE_PATTERN = /^(order_created|authorization_held)$/;
+
+function readBindingRow(row: RawRow): PayPalBindingRow {
+  const providerState = readString(row, 'provider_state');
+  if (!BINDING_STATE_PATTERN.test(providerState)) {
+    throw new Error('Ledger paypal binding provider_state is invalid');
+  }
+  return {
+    operationId: readString(row, 'operation_id'),
+    orderId: readStringOrNull(row, 'order_id'),
+    authorizationId: readStringOrNull(row, 'authorization_id'),
+    invoiceId: readString(row, 'invoice_id'),
+    currency: 'SGD',
+    amountMinor: readNumber(row, 'amount_minor'),
+    providerState: providerState as PayPalBindingProviderState,
+    createdAt: readString(row, 'created_at'),
+    updatedAt: readString(row, 'updated_at'),
+  };
+}
+
+export function loadPayPalBindingRow(database: DatabaseSync, operationId: string): PayPalBindingRow | null {
+  const row = database.prepare(
+    `SELECT operation_id, order_id, authorization_id, invoice_id, amount_minor,
+       provider_state, created_at, updated_at
+     FROM operation_paypal_bindings WHERE operation_id = ?`,
+  ).get(operationId) as RawRow | undefined;
+  return row ? readBindingRow(row) : null;
+}
+
+/**
+ * Creates the order_created binding inside the caller's transaction. A matching
+ * existing row replays; an existing row for a different operation or a same-row
+ * re-create is refused loudly (the caller decides conflict/replay semantics).
+ */
+export function insertPayPalBindingRow(
+  database: DatabaseSync,
+  binding: { operationId: string; orderId: string; invoiceId: string; amountMinor: number; createdAt: string },
+): 'created' | 'replayed' {
+  const existing = loadPayPalBindingRow(database, binding.operationId);
+  if (existing) {
+    if (existing.orderId !== binding.orderId
+      || existing.invoiceId !== binding.invoiceId
+      || existing.currency !== 'SGD'
+      || existing.amountMinor !== binding.amountMinor
+      || existing.providerState !== 'order_created') {
+      throw new LedgerIdentityConflict('A different paypal binding already exists for this operation');
+    }
+    return 'replayed';
+  }
+  database.prepare(
+    `INSERT INTO operation_paypal_bindings
+      (operation_id, order_id, invoice_id, currency, amount_minor, provider_state, created_at, updated_at)
+     VALUES (?, ?, ?, 'SGD', ?, 'order_created', ?, ?)`,
+  ).run(
+    binding.operationId,
+    binding.orderId,
+    binding.invoiceId,
+    binding.amountMinor,
+    binding.createdAt,
+    binding.createdAt,
+  );
+  return 'created';
+}
+
+/** Upgrades order_created → authorization_held with the PayPal authorization id. */
+export function upgradePayPalBindingRow(
+  database: DatabaseSync,
+  operationId: string,
+  authorizationId: string,
+  updatedAt: string,
+): 'upgraded' | 'replayed' {
+  const existing = loadPayPalBindingRow(database, operationId);
+  if (existing === null) {
+    throw new LedgerIdentityConflict('No paypal binding exists for this operation');
+  }
+  if (existing.providerState === 'authorization_held') {
+    if (existing.authorizationId !== authorizationId) {
+      throw new LedgerIdentityConflict('A different paypal authorization id is already held for this operation');
+    }
+    return 'replayed';
+  }
+  database.prepare(
+    `UPDATE operation_paypal_bindings
+     SET authorization_id = ?, provider_state = 'authorization_held', updated_at = ?
+     WHERE operation_id = ?`,
+  ).run(authorizationId, updatedAt, operationId);
+  return 'upgraded';
+}
+
+/** Reads one effect row by its stable effect key (provider reconciliation support). */
+export function loadEffectRowByKey(database: DatabaseSync, effectKey: string): EffectStorageRow | null {
+  const row = database.prepare(
+    `SELECT effect_id, operation_id, kind, effect_key, request_digest, request_json,
+       state, provider_id, response_json, created_at, updated_at
+     FROM effects WHERE effect_key = ?`,
+  ).get(effectKey) as RawRow | undefined;
+  if (!row) return null;
+  const state = readString(row, 'state');
+  if (state !== 'intent' && state !== 'in_flight' && state !== 'unknown'
+    && state !== 'succeeded' && state !== 'rejected') {
+    throw new Error('Ledger effect state is invalid');
+  }
+  const storedKind = readString(row, 'kind');
+  if (storedKind !== 'capture' && storedKind !== 'order' && storedKind !== 'refund') {
+    throw new Error('Ledger effect kind is invalid');
+  }
+  return {
+    effectId: readString(row, 'effect_id'),
+    operationId: readString(row, 'operation_id'),
+    kind: storedKind,
+    effectKey: readString(row, 'effect_key'),
+    requestDigest: readString(row, 'request_digest'),
+    requestJson: readString(row, 'request_json'),
+    state,
+    providerId: readStringOrNull(row, 'provider_id'),
+    responseJson: readStringOrNull(row, 'response_json'),
+    createdAt: readString(row, 'created_at'),
+    updatedAt: readString(row, 'updated_at'),
+  };
 }

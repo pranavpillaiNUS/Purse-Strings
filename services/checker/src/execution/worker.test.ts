@@ -25,6 +25,7 @@ import type { ExecutionProvider } from './gateway.ts';
 import { createExecutionWorker, type ExecutionResult, type ExecutionSupplier } from './worker.ts';
 import type { SupplierAdapter } from '../../../suppliers/src/adapter.ts';
 import type { Quote } from '../../../../packages/contracts/src/index.ts';
+import type { PaymentProvider } from '../../../../packages/contracts/src/backend.ts';
 import { createFixtureSupplier } from '../../../suppliers/src/fixture.ts';
 import {
   TEST_CART,
@@ -101,9 +102,10 @@ function suppliersFor(catalogObject: object): ExecutionSupplier[] {
 }
 
 /** Creates a reserved operation through the real application backend. */
-async function submitOperation(harness: Harness, cart: object, key: string): Promise<{ operationId: string; totalMinor: number }> {
+async function submitOperation(harness: Harness, cart: object, key: string, paymentProvider: PaymentProvider = 'fake'): Promise<{ operationId: string; totalMinor: number }> {
   const backend = createApplicationBackend({
     databasePath: harness.databasePath,
+    paymentProvider,
     // Submissions always quote the ORIGINAL configured catalog. Execution-side
     // changed catalogs are a separate scenario and must not leak into setup.
     suppliers: suppliersFor(TEST_CATALOG) as unknown as ConfiguredSupplier[],
@@ -122,6 +124,36 @@ async function submitOperation(harness: Harness, cart: object, key: string): Pro
     backend.close();
   }
 }
+
+test('a provider change is refused before dispatch or lookup and preserves the reservation and lease', async () => {
+  for (const original of ['fake', 'paypal-sandbox'] as const) {
+    const harness = await createHarness({ prefix: `provider-change-${original}` });
+    const { operationId, totalMinor } = await submitOperation(harness, TEST_CART, 'provider-change', original);
+    let calls = 0;
+    const provider: ExecutionProvider = {
+      paymentProvider: original === 'fake' ? 'paypal-sandbox' : 'fake',
+      async applyEffect() { calls++; return { outcome: 'unknown' }; },
+      async lookupEffect() { calls++; return { outcome: 'unknown' }; },
+    };
+    const worker = createExecutionWorker({
+      databasePath: harness.databasePath, suppliers: suppliersFor(TEST_CATALOG), provider, clock: () => TEST_CLOCK,
+    });
+    try {
+      await assert.rejects(worker.run(operationId), /configured payment provider differs/);
+      await assert.rejects(worker.reconcile(operationId), /configured payment provider differs/);
+      assert.equal(calls, 0);
+      const database = openLedgerStore(harness.databasePath);
+      try {
+        assert.equal(loadMandateTotals(database, TEST_CART.mandateId).reservedMinor, totalMinor);
+        assert.equal(database.prepare('SELECT status FROM operations WHERE operation_id = ?').get(operationId)?.status, 'reserved');
+        assert.equal(database.prepare('SELECT COUNT(*) AS n FROM worker_leases WHERE operation_id = ?').get(operationId)?.n, 0);
+      } finally { database.close(); }
+    } finally {
+      worker.close();
+      harness.close();
+    }
+  }
+});
 
 function childConfig(
   harness: Harness,

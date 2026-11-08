@@ -147,6 +147,43 @@ test('shared client scenario: discovery, submission and owned reads through the 
   }
 });
 
+test('payment provider survives restart, config changes and idempotent shared-client replay', async () => {
+  const dir = makeTempDir('app-payment-provider');
+  const harness = setup(dir);
+  let sandbox: ReturnType<typeof createApplicationBackend> | undefined;
+  let reopened: ReturnType<typeof createApplicationBackend> | undefined;
+  try {
+    sandbox = createApplicationBackend({
+      databasePath: `${dir}/ledger.db`, paymentProvider: 'paypal-sandbox',
+      suppliers: [{ supplierId: 'store-a', catalog: TEST_CATALOG, adapter: fixtureAdapter() }],
+      clock: () => TEST_CLOCK,
+    });
+    const result = await submit(sandbox, 'provider-key', TEST_CART);
+    assert.ok(result.ok && result.method === 'proposal.submit');
+    assert.equal(result.result.operation.paymentProvider, 'paypal-sandbox');
+    sandbox.close();
+    sandbox = undefined;
+    reopened = createApplicationBackend({
+      databasePath: `${dir}/ledger.db`, paymentProvider: 'fake', suppliers: [], clock: () => TEST_CLOCK,
+    });
+    const client = createBackendClient((request) => reopened!.handle(request));
+    const read = await client.request({
+      apiVersion: '1', requestId: 'provider-read', method: 'operation.get',
+      params: { mandateId: TEST_CART.mandateId, mandateVersion: TEST_CART.mandateVersion, operationId: result.result.operation.id },
+    });
+    assert.ok(read.ok && read.method === 'operation.get');
+    assert.equal(read.result.operation.paymentProvider, 'paypal-sandbox');
+    const replay = await submit(reopened, 'provider-key', TEST_CART);
+    assert.ok(replay.ok && replay.method === 'proposal.submit');
+    assert.deepEqual(replay.result.operation, result.result.operation);
+  } finally {
+    sandbox?.close();
+    reopened?.close();
+    harness.close();
+    removeTempDir(dir);
+  }
+});
+
 test('duplicate and conflict semantics match the shared mock contract', async () => {
   const dir = makeTempDir('app-idempotency');
   let harness: Harness | null = null;

@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import { createMandateDraft } from '../../../services/agent/src/mandate.ts';
 import {
-  checkSummary, childEnvironment, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor, revisionSummary, scriptedDraftCalls,
-  STALE_HOURS, storeTable, summarizeTrace, wrapCommand, wrapLine, type StoreView,
+  awaitEnter, checkSummary, childEnvironment, demoBackendConfig, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor,
+  revisionSummary, runSandboxPayment, sandboxCredentialRefusal, scriptedDraftCalls, SANDBOX_CREDENTIAL_PROBE_ID, STALE_HOURS,
+  storeTable, summarizeTrace, wrapCommand, wrapLine, type SandboxPaymentBackend, type StoreView,
 } from './demo-flow.ts';
 import { formatSgd } from './format.ts';
 import { PROVIDER_WORDING } from './review-output.ts';
@@ -246,6 +248,97 @@ test('a mistyped --dir is never cleared', (t) => {
   assert.equal(readFileSync(precious, 'utf8'), 'keep me');
 });
 
+test('a previous sandbox demo keeps its ledger and intents on flagged and unflagged reruns', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-keep-sandbox-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  for (const savedBy of ['config', 'marker'] as const) {
+    const work = join(directory, savedBy);
+    mkdirSync(join(work, 'runtime'), { recursive: true });
+    writeFileSync(join(work, '.splittap-demo'), '');
+    // Older releases wrote only config. New releases also keep a marker, so
+    // losing or editing config cannot erase the evidence that this was sandbox.
+    const config = savedBy === 'config' ? '{"version":1,"paymentProvider":"paypal-sandbox"}' : '{"version":1}';
+    writeFileSync(join(work, 'config.json'), config);
+    if (savedBy === 'marker') writeFileSync(join(work, '.splittap-demo-paypal'), '');
+    const files = [
+      ['runtime/app.db', 'ledger with unresolved capture'],
+      ['runtime/app.db-wal', 'capture intent not checkpointed'],
+      ['runtime/providers.db', 'supplier order facts'],
+      ['recovery.jsonl', 'operation id and original cart'],
+    ] as const;
+    for (const [path, value] of files) writeFileSync(join(work, path), value);
+    for (const flags of [[], ['--sandbox-paypal']]) {
+      const result = spawnSync(process.execPath, [entry, ...flags, '--dir', work], {
+        cwd: root, encoding: 'utf8', input: '',
+      });
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(result.stdout, '', 'refuse before any scene or backend command');
+      assert.match(result.stderr, /PayPal sandbox recovery state/);
+      assert.match(result.stderr, /backend status and operation-reconcile/);
+      assert.match(result.stderr, /fresh --dir/);
+      assert.equal(readFileSync(join(work, 'config.json'), 'utf8'), config);
+      for (const [path, value] of files) assert.equal(readFileSync(join(work, path), 'utf8'), value);
+    }
+  }
+});
+
+test('a markerless legacy sandbox ledger survives reruns after config changes to fake', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-keep-legacy-sandbox-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  for (const evidence of ['binding', 'operation_reserved', 'payment_provider_selected'] as const) {
+    const work = join(directory, evidence);
+    mkdirSync(join(work, 'runtime'), { recursive: true });
+    writeFileSync(join(work, '.splittap-demo'), '');
+    const config = '{"version":1,"paymentProvider":"fake"}';
+    writeFileSync(join(work, 'config.json'), config);
+    const ledger = join(work, 'runtime', 'app.db');
+    const database = new DatabaseSync(ledger);
+    try {
+      // The storage inspected by the operator script, with the same table and
+      // column names as a legacy ledger. No account or external call is involved.
+      database.exec(`
+        CREATE TABLE operation_paypal_bindings (operation_id TEXT PRIMARY KEY);
+        CREATE TABLE audit_events (kind TEXT, event_json TEXT);
+        CREATE TABLE effects (kind TEXT, provider_id TEXT);
+      `);
+      if (evidence === 'binding') {
+        database.prepare('INSERT INTO operation_paypal_bindings VALUES (?)').run('unsettled-sandbox-operation');
+      } else {
+        database.prepare('INSERT INTO audit_events VALUES (?, ?)').run(evidence, '{"paymentProvider":"paypal-sandbox"}');
+      }
+    } finally { database.close(); }
+    const original = readFileSync(ledger);
+    for (const flags of [[], ['--sandbox-paypal']]) {
+      const result = spawnSync(process.execPath, [entry, ...flags, '--dir', work], { cwd: root, encoding: 'utf8', input: '' });
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(result.stdout, '', 'refuse before any scene or backend command');
+      assert.match(result.stderr, /PayPal sandbox recovery state/);
+      assert.match(result.stderr, /fresh --dir/);
+      assert.deepEqual(readFileSync(ledger), original, 'the read-only inspection must leave recovery facts unchanged');
+      assert.equal(readFileSync(join(work, 'config.json'), 'utf8'), config);
+    }
+  }
+});
+
+test('unverifiable prior runtime state is preserved when config or ledger cannot be classified', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-keep-unclassified-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  for (const [index, savedConfig] of [undefined, 'not JSON', '{"version":1,"paymentProvider":"unknown"}', '{"version":1,"paymentProvider":"fake"}'].entries()) {
+    const work = join(directory, String(index));
+    mkdirSync(join(work, 'runtime'), { recursive: true });
+    writeFileSync(join(work, '.splittap-demo'), '');
+    if (savedConfig !== undefined) writeFileSync(join(work, 'config.json'), savedConfig);
+    const ledger = join(work, 'runtime', 'app.db');
+    writeFileSync(ledger, 'keep existing recovery state');
+    const result = spawnSync(process.execPath, [entry, '--dir', work], { cwd: root, encoding: 'utf8', input: '' });
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /PayPal sandbox recovery state/);
+    assert.equal(readFileSync(ledger, 'utf8'), 'keep existing recovery state');
+    if (savedConfig !== undefined) assert.equal(readFileSync(join(work, 'config.json'), 'utf8'), savedConfig);
+  }
+});
+
 test('closed input stops the flow at the first prompt, so nothing is confirmed', (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-eof-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -269,6 +362,42 @@ test('input that closes at the confirmation prompt stops the flow before anythin
   assert.match(result.stdout, /You are the operator\. Press Enter to confirm this exact digest/);
   assert.match(result.stderr, /Input closed before Enter was pressed/);
   assert.doesNotMatch(result.stdout, /Confirmed by OS user/);
+});
+
+test('input that closes at the last prompt still shows the result, because nothing is left to confirm', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-eof-last-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  // Enter for scenes 2 to 6 and the operator's prompt, then nothing for the last prompt.
+  const result = spawnSync(process.execPath, [entry, '--pause', '--dir', join(directory, 'work')], {
+    cwd: root, encoding: 'utf8', input: '\n'.repeat(6),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Press Enter for the result/);
+  assert.match(result.stdout, /Operation: ordered/);
+  assert.match(result.stdout, /=== Result ===/);
+  assert.doesNotMatch(result.stderr, /Input closed/);
+});
+
+test('input not ready yet gets a rest between reads, and only a real Enter or a closed input ends the wait', () => {
+  const notReady = Object.assign(new Error('not ready'), { code: 'EAGAIN' });
+  const reader = (steps: Array<Error | string | null>) => (buffer: Buffer): number => {
+    const step = steps.shift();
+    if (step === undefined) throw new Error('Read past the end of the script');
+    if (step instanceof Error) throw step;
+    if (step === null) return 0;
+    buffer.write(step);
+    return 1;
+  };
+  let rests = 0;
+  const rest = () => { rests += 1; };
+  assert.equal(awaitEnter(reader([notReady, notReady, 'x', notReady, '\n']), rest), true);
+  assert.equal(rests, 3, 'every read that found nothing is followed by a rest');
+  assert.equal(awaitEnter(reader(['x', null]), rest), false);
+  assert.equal(awaitEnter(reader([Object.assign(new Error('gone'), { code: 'EOF' })]), rest), false);
+  assert.equal(rests, 3, 'closed input does not rest');
+  const started = Date.now();
+  assert.equal(awaitEnter(reader([notReady, '\n'])), true);
+  assert.ok(Date.now() - started >= 25, 'the real rest takes time');
 });
 
 test('the whole flow runs with no key or network, twice in the same directory', (t) => {
@@ -302,6 +431,11 @@ test('the whole flow runs with no key or network, twice in the same directory', 
     assert.match(stdout, /Readiness +not assessed/);
     assert.match(stdout, /this is not PayPal and not a real order/);
     assert.match(stdout, /PayPal is not in this path yet/);
+    // Default mode: byte-for-byte the pre-sandbox flow. No provider flag on the config,
+    // no hold command, nothing of the sandbox purchase path on screen.
+    assert.doesNotMatch(stdout, /operation-authorize|paypal-sandbox/i);
+    const generatedConfig = JSON.parse(readFileSync(join(work, 'config.json'), 'utf8')) as Record<string, unknown>;
+    assert.equal('paymentProvider' in generatedConfig, false);
 
     // The count on screen is the trace's, so it cannot drift from what the run recorded.
     const { refused, accepted } = summarizeTrace(readFileSync(join(work, 'compromised.jsonl'), 'utf8'));
@@ -317,5 +451,151 @@ test('the whole flow runs with no key or network, twice in the same directory', 
     assert.ok(!stdout.includes(directory), 'The work directory path must not reach the screen');
     assert.ok(!stdout.includes(root.replace(/[\\/]$/, '')), 'The repository path must not reach the screen');
     for (const line of stdout.split(/\r?\n/)) assert.ok(line.length <= 100, `${line.length} columns: ${line}`);
+  }
+});
+
+const baseConfig = { policyFile: 'p.json', catalogFiles: ['a.json', 'b.json'], fakeProviderDb: 'providers.db' };
+
+test('the generated backend config gains the sandbox provider only when the flag asks for it', () => {
+  assert.deepEqual(demoBackendConfig(baseConfig), {
+    version: 1, policyFiles: ['p.json'], catalogFiles: ['a.json', 'b.json'], fakeProviderDb: 'providers.db',
+  });
+  assert.deepEqual(demoBackendConfig({ ...baseConfig, paymentProvider: 'paypal-sandbox' }), {
+    version: 1, policyFiles: ['p.json'], catalogFiles: ['a.json', 'b.json'], fakeProviderDb: 'providers.db',
+    paymentProvider: 'paypal-sandbox',
+  });
+});
+
+test('the sandbox credential probe id satisfies the binding identity limits; no PayPal request is sent', () => {
+  assert.ok(SANDBOX_CREDENTIAL_PROBE_ID.length > 0 && SANDBOX_CREDENTIAL_PROBE_ID.length <= 100);
+  assert.match(SANDBOX_CREDENTIAL_PROBE_ID, /^[A-Za-z0-9_-]+$/);
+});
+
+test('the loader\'s credential refusals map to operator guidance, other stderr does not', () => {
+  assert.match(sandboxCredentialRefusal('backend: Sandbox credentials are not configured: PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET must come from the process environment or the invocation directory .env') ?? '', /^Add the sandbox PayPal keys/);
+  assert.match(sandboxCredentialRefusal('backend: Only the sandbox PayPal environment is supported in this stage; PAYPAL_ENV was not "sandbox"') ?? '', /not the PayPal sandbox/);
+  assert.equal(sandboxCredentialRefusal('backend: Operation was not found'), null);
+  // No value ever rides through, only names.
+  assert.doesNotMatch(sandboxCredentialRefusal('backend: Sandbox credentials are not configured: PAYPAL_CLIENT_ID values stay out') ?? '', /SECRET=.|secret./);
+});
+
+// An offline fake runner stands in for the spawned backend: no network anywhere. The
+// whole-flow sandbox run needs a browser and real sandbox credentials, so the wiring is
+// proven here instead; the spawn tests cover flag-default equality and the early abort.
+function fakeBackend(
+  authorize: SandboxPaymentBackend['authorize'],
+  complete: SandboxPaymentBackend['complete'],
+  execute: SandboxPaymentBackend['execute'],
+): SandboxPaymentBackend {
+  return { authorize, complete, execute };
+}
+
+test('(offline fake runner) the sandbox scene runs hold, buyer wait, completion, execution, in that order', async () => {
+  const order: string[] = [];
+  const output: string[] = [];
+  const step = (name: string, data: Record<string, unknown>) => async () => {
+    order.push(name);
+    return { ok: true as const, data };
+  };
+  const result = await runSandboxPayment({
+    backend: fakeBackend(
+      step('authorize', { approvalUrl: 'https://www.sandbox.paypal.com/mock/approve' }),
+      step('complete', { authorizationId: 'AUTHDEMO1' }),
+      step('execute', { paymentProvider: 'paypal-sandbox', operation: { status: 'ordered' }, providerIds: { authorizationId: 'AUTHDEMO1', captureId: 'CAPDEMO1' } }),
+    ),
+    operationId: 'op-demo-1',
+    waitForBuyer: () => { order.push('buyer'); },
+    print: (line) => output.push(line),
+  });
+  assert.deepEqual(order, ['authorize', 'buyer', 'complete', 'execute']);
+  assert.equal(result.status, 'ordered');
+  assert.deepEqual([result.authorizationId, result.captureId], ['AUTHDEMO1', 'CAPDEMO1']);
+  const screen = output.join('\n');
+  assert.match(screen, /https:\/\/www\.sandbox\.paypal\.com\/mock\/approve/);
+  assert.match(screen, /Payment provider: paypal-sandbox/);
+  assert.match(screen, /authorizationId=AUTHDEMO1 captureId=CAPDEMO1/);
+  assert.match(screen, /supplier order stayed simulated \(fake\)/);
+  assert.match(screen, /never real money/);
+});
+
+test('(offline fake runner) an unapproved buyer prints the backend message as-is and nothing executes', async () => {
+  const order: string[] = [];
+  const output: string[] = [];
+  const refused = {
+    ok: false as const,
+    stderr: 'backend: The sandbox buyer has not approved this hold yet',
+  };
+  let conclusion: unknown;
+  try {
+    await runSandboxPayment({
+      backend: fakeBackend(
+        async () => { order.push('authorize'); return { ok: true as const, data: { approvalUrl: 'https://www.sandbox.paypal.com/mock/approve' } }; },
+        async () => { order.push('complete'); return refused; },
+        async () => { order.push('execute'); return { ok: true as const, data: {} }; },
+      ),
+      operationId: 'op-demo-2',
+      waitForBuyer: () => { order.push('buyer'); },
+      print: (line) => output.push(line),
+    });
+  } catch (error) { conclusion = error; }
+  assert.ok(conclusion instanceof Error);
+  assert.ok((conclusion as Error).message.includes('The sandbox buyer has not approved this hold yet'),
+    (conclusion as Error).message);
+  assert.deepEqual(order, ['authorize', 'buyer', 'complete']);
+  assert.match(output.join('\n'), /The sandbox buyer has not approved this hold yet/);
+});
+
+test('(offline fake runner) the flow stops loudly when the operation does not end ordered', async () => {
+  await assert.rejects(
+    runSandboxPayment({
+      backend: fakeBackend(
+        async () => ({ ok: true as const, data: { approvalUrl: 'https://www.sandbox.paypal.com/mock/approve' } }),
+        async () => ({ ok: true as const, data: { authorizationId: 'AUTHDEMO1' } }),
+        async () => ({ ok: true as const, data: { paymentProvider: 'paypal-sandbox', operation: { status: 'reconciliation_required' } } }),
+      ),
+      operationId: 'op-demo-3',
+      waitForBuyer: () => {},
+      print: () => {},
+    }),
+    /ended as "reconciliation_required"/,
+  );
+});
+
+test('the sandbox flag aborts before anything is reserved when the credentials are absent', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-sandbox-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  // PAYPAL_ENV=live makes the backend's credential loader refuse deterministically,
+  // even on a machine whose .env carries real sandbox keys, and it refuses before the
+  // probe would ever reach the network: the spawn stays offline.
+  const env: NodeJS.ProcessEnv = { ...process.env, PAYPAL_ENV: 'live' };
+  delete env.ANTHROPIC_API_KEY;
+  const work = join(directory, 'work');
+  const result = spawnSync(process.execPath, [entry, '--sandbox-paypal', '--dir', work], {
+    cwd: root, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.equal(result.status, 1, result.stderr);
+  const combined = result.stdout + result.stderr;
+  assert.match(combined, /Sandbox mode stopped after store setup and before any reservation/);
+  assert.match(combined, /not the PayPal sandbox/);
+  // The generated config did ask for the sandbox provider, and nothing was reserved.
+  const generatedConfig = JSON.parse(readFileSync(join(work, 'config.json'), 'utf8')) as Record<string, unknown>;
+  assert.equal(generatedConfig.paymentProvider, 'paypal-sandbox');
+  assert.equal(readFileSync(join(work, '.splittap-demo-paypal'), 'utf8'), '',
+    'sandbox recovery protection exists even when the credential probe stops before reservation');
+  assert.ok(!/Recovery: |Operation: ordered|Attempted/.test(result.stdout), result.stdout);
+});
+
+test('the sandbox scene never describes a fake or unlabelled execution as a sandbox capture', async () => {
+  for (const paymentProvider of ['fake', undefined]) {
+    const output: string[] = [];
+    await assert.rejects(runSandboxPayment({
+      backend: fakeBackend(
+        async () => ({ ok: true as const, data: { approvalUrl: 'https://www.sandbox.paypal.com/mock/approve' } }),
+        async () => ({ ok: true as const, data: { authorizationId: 'AUTHDEMO1' } }),
+        async () => ({ ok: true as const, data: { paymentProvider, operation: { status: 'ordered' } } }),
+      ),
+      operationId: 'op-mismatched-provider', waitForBuyer: () => {}, print: (line) => output.push(line),
+    }), /did not report paypal-sandbox/);
+    assert.doesNotMatch(output.join('\n'), /real PayPal SANDBOX capture/);
   }
 });

@@ -211,8 +211,11 @@ what exists; nothing here relaxes the specification's claims.
   preserving every existing export and spike behavior. All evidence comes from fake
   `fetch` implementations with global fetch denied; **no sandbox or live request was
   made and nothing has been verified against a real PayPal account** — this is
-  contract coverage, not account feasibility. The gateway is not imported by the
-  execution worker or CLI and is not wired into any execution path.
+  contract coverage, not account feasibility. Unit-5 addendum: this changed —
+  the gateway is now wired into durable execution behind the backend config
+  opt-in `paymentProvider: "paypal-sandbox"` (`execution/paypal-provider.ts`,
+  hold lifecycle through migration 3's `operation_paypal_bindings`), still
+  sandbox-verified-pending, no live request made.
 - **Not built (unchanged from the specification's exclusions):** live payments, real
   supplier calls, PayPal wiring into execution, delivery/readiness, production
   authentication, and the website/shopper-worker milestones. No gate after M0 is

@@ -12,16 +12,18 @@ flowchart LR
   Checker -->|Approved catalogs, over rpc| Agent
   Checker -->|Trusted quotes / order status| Suppliers
   Checker --> Ledger[(Transactional SQLite ledger)]
-  Checker --> PayPal[PayPal sandbox: separate spike; unit-4 gateway<br/>exists unwired and unverified against real PayPal]
+  Checker --> PayPal[PayPal sandbox: wired behind config opt-in; <br/>fetch-mocked + crash-tested, unverified against real PayPal]
 ```
 
 M0 calls the pure checker and fixture supplier in-process. The separate backend CLI
-runs durable execution against fake providers only. The shopper is its own CLI entry
+runs durable execution against fake providers by default; the backend config may
+select `paymentProvider: "paypal-sandbox"` to route capture/refund effects through
+the sandbox gateway (the supplier order stays fake). The shopper is its own CLI entry
 point: it reaches the backend through the shared client, over one `rpc` child process
-per request. There is no executing payment service, identity system or deployed
-process isolation. Stage one builds no custom website; the only browser interaction
-anywhere in this scaffold is PayPal's own hosted buyer-consent page during the
-optional sandbox spike.
+per request, and never holds PayPal credentials. There is no executing payment service,
+identity system or deployed process isolation. Stage one builds no custom website; the only
+browser interaction anywhere in this scaffold is PayPal's own hosted buyer-consent page,
+reached during the operator's authorized sandbox hold steps or the sandbox spike.
 
 ## Repository map
 
@@ -34,7 +36,7 @@ optional sandbox spike.
 | `services/checker/src/rules/` | Pure eligibility functions | Implemented |
 | `services/checker/src/ledger/` | Mandate authority, atomic reservations and durable operations | Implemented |
 | `services/checker/src/execution/` | Durable effect worker and fake providers | Simulation only |
-| `services/checker/src/paypal/` | Trusted provider adapter | Existing sandbox client (spike); unit-4 gateway with mocked-fetch contract tests, not wired into execution |
+| `services/checker/src/paypal/` | Trusted provider adapter | Existing sandbox client (spike); unit-4 gateway with mocked-fetch contract tests, unit-5 sandbox additions wired into execution behind config opt-in; unverified against real PayPal |
 | `services/suppliers/src/` | Supplier interface, fixture quotes and local catalog controls | Offline simulation implemented |
 | `services/suppliers/fixtures/` | Synthetic catalog and evidence | Demo data |
 | `services/agent/` | Mandate draft/review, written by hand or by a model from plain English; bounded shopper worker over the shared client | Implemented; eight live shopper runs, four against the contract mock and four against the real backend in temporary Windows copies, and four live drafting runs |
@@ -131,6 +133,7 @@ recovery. M3: sandbox payment/order failures and reconciliation. M4: bounded too
 exact approval authority. M5: delivery, assignment and partial-return scenarios.
 
 All stage-one purchasing behavior remains exercisable without a browser. The sandbox
-spike's buyer approval is the one exception, and its consent page is PayPal's, not our
+spike and the operator's `operation-complete-authorization` step are the exceptions,
+and their consent page is PayPal's, not our
 website. A future website must
 reuse these contracts and application operations rather than duplicate business rules.

@@ -258,14 +258,20 @@ before anything prints, so a failure leaves stdout empty. Exit codes: 0 shown; 1
 or backend failure, including an operation that is not found. An older mandate revision's
 operation is not found either, because reads use the active revision. Against the contract mock
 it says the mock checks nothing, its numbers are placeholder zeros, and it holds no operations
-between commands. "Fake payment" and "fake order" come from `PROVIDER_WORDING` in
-`apps/cli/src/review-output.ts`. Readiness always reads `not_assessed`, because readiness
+between commands. The backend-owned `Operation.paymentProvider` selects fake or
+PayPal sandbox wording for payment and refund; supplier orders always remain fake.
+An older response without the field says the provider is not recorded. The run review
+also shows each accepted operation's provider, and a sandbox reservation prints
+`operation-authorize`, the buyer approval step, `operation-complete-authorization`
+and `operation-run` in order. Reading these facts loads no payment credentials.
+Readiness always reads `not_assessed`, because readiness
 tracking is not built.
 
 Here and in the run review, "allocated" means reserved or committed, not delivered.
 A reservation sets budget aside; it is not a PayPal authorization hold or payment.
 Status JSON names these totals `budget.allocatedMinor` and
-`requirements[].allocatedUnits`; backend and contract fields are unchanged.
+`requirements[].allocatedUnits`. The shared operation additionally carries the
+optional backend-owned `paymentProvider` field; it is never accepted in a cart.
 
 ### Live runs
 

@@ -2,10 +2,14 @@
 
 This documents the backend that is actually in the tree: the operator CLI
 (`npm run backend`), the four shared RPC methods, the labelled contract mock, and the
-unit-4 PayPal gateway. Everything written here runs offline without API keys or
-network. This is a **simulated backend**: no money moves, no supplier is contacted
-and no PayPal request is ever sent by the commands below. `simulation: true` on every
-response is a label, not decoration.
+PayPal sandbox gateway. Everything written here runs offline without API keys or
+network by default: no money moves and no supplier is contacted, and no PayPal
+request is sent unless the operator's backend config explicitly selects
+`paymentProvider: "paypal-sandbox"` AND the invocation is one of the commands that
+call PayPal (`operation-authorize`, `operation-complete-authorization`,
+`operation-run`, `operation-reconcile`) with sandbox credentials available. Even
+then, no PayPal behavior has been verified against a real sandbox account.
+`simulation: true` on every response is a label, not decoration.
 
 - Design background: [backend-delivery-design.md](backend-delivery-design.md)
 - Acceptance evidence and limits: [backend-delivery-review.md](backend-delivery-review.md)
@@ -26,10 +30,12 @@ npm run backend -- --db .runtime/backend/app.db --config services/agent/fixtures
 | `mandate-draft --file PATH` | store an immutable mandate revision draft | `{simulation,mandateId,mandateVersion,digest}` | 0 ok, 2 operator/input, 1 internal |
 | `mandate-review --id ID --revision N` | review the exact stored revision | `{simulation,mandateId,mandateVersion,digest,draft,policy}` | 0 ok |
 | `mandate-confirm --id ID --revision N --digest DIGEST` | confirm digest against the stored revision; records the OS user and trusted time as metadata, which is local consent, not authentication | `{simulation,mandate,digest}` | 0 ok, 2 digest/authority conflict |
-| `operation-run --id ID` | execute a reserved operation against the **fake** providers | `{simulation,operation}` | 0 command ran; the business outcome lives in `operation.status` |
-| `operation-reconcile --id ID` | resolve ambiguous provider outcomes only | `{simulation,operation}` | 0 |
-| `status --id ID` | print the current operation | `{simulation,operation}` | 0 |
-| `audit --id ID` | print the operation's audit events | `{simulation,operationId,events:[{eventId,kind,createdAt,details}]}` | 0 |
+| `operation-authorize --id ID` | operator-only: create the sandbox PayPal hold for a reserved operation (requires config `paymentProvider:"paypal-sandbox"`) | `{simulation,paymentProvider,operationId,providerState:"order_created",currency,amountMinor,orderId,approvalUrl}` | 0 ok, 2 refusal/conflict, 1 internal |
+| `operation-complete-authorization --id ID` | operator-only: finalize the hold after the sandbox buyer approves it on PayPal's hosted page | `{simulation,paymentProvider,operationId,providerState:"authorization_held",currency,amountMinor,orderId,authorizationId}` | 0 ok, 2 refusal (incl. buyer-not-approved), 1 internal |
+| `operation-run --id ID` | execute a reserved operation against the configured providers (fake by default; sandbox capture needs an `authorization_held` binding) | `{simulation,paymentProvider,operation,providerIds?}` | 0 command ran; the business outcome lives in `operation.status` |
+| `operation-reconcile --id ID` | resolve ambiguous provider outcomes only | `{simulation,paymentProvider,operation,providerIds?}` | 0 |
+| `status --id ID` | print the current operation | `{simulation,paymentProvider,operation,providerIds?}` | 0 |
+| `audit --id ID` | print the operation's audit events | `{simulation,paymentProvider,operationId,events:[{eventId,kind,createdAt,details}],providerIds?}` | 0 |
 | `rpc` | one JSON request (≤1 MiB) on stdin → exactly one JSON response line | share-client envelope | 0 ok, 2 validation/business, 1 internal |
 
 Errors print one sanitized JSON error envelope and exit `2`; `1` means an
@@ -38,6 +44,51 @@ uncategorized internal failure. Operator flag misuse (unknown flags, duplicates,
 whose permissions are too open are refused, never chmoded; created runtime
 directories are `0700` and database files `0600`. Windows has its own rules, in
 [Private runtime folders](#private-runtime-folders).
+
+Exit-code agreement (issue #14 decision, documented instead of changed):
+`0` means **the command ran** — an operation's terminal business state lives in
+its `operation.status` and `audit` output, so `operation-run` may exit `0` even
+when the operation ends `failed` or `reconciliation_required`. `2` covers usage,
+validation and business refusals; `1` is internal. Scripts that need the
+operation's outcome must read `status`/`audit`, not the exit code.
+
+Backend JSON file inputs (config, policy, catalog and mandate draft) accept one
+leading UTF-8 BOM, including files saved by Windows PowerShell 5.1. Invalid JSON
+and oversized files still fail with exit 2. The stdin RPC envelope remains strict JSON.
+
+## Provider selection and credentials (unit 5)
+
+Payment provider selection comes only from backend config: `"fake"` (default; absent
+means fake) or `"paypal-sandbox"`. No command accepts a provider flag, and
+shopper input can never select a provider. With `paypal-sandbox`, capture and
+refund effects go through the sandbox gateway and the supplier order stays on
+the fake provider store. New reservations bind this choice in their immutable
+`operation_reserved` audit event, in the same transaction as budget and units.
+Reads and idempotent replays retain that provider even if config changes.
+Execution and hold commands refuse a different provider before any external
+effect; use the original config to resume that operation. Config changes select
+the provider for new operations only.
+
+Sandbox credentials flow (containment rules):
+
+| Rule | Behavior |
+| --- | --- |
+| Loader trigger | Only inside the same backend process, only when the config selects `paypal-sandbox` AND the command is `operation-authorize`, `operation-complete-authorization`, `operation-run` or `operation-reconcile` |
+| Sources | `<invocation directory>/.env` first-class (tolerant `KEY=VALUE` parse: quotes stripped, `#` comments and blank lines ignored), overlaid by process env which takes precedence; process env values are never overwritten by the file |
+| Names | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, optional `PAYPAL_ENV` (must be `"sandbox"`, or absent; a live value refuses the command) |
+| Absent/unusable | Sanitized closed refusal: "Sandbox credentials are not configured…" — exit 2, empty stdout, no fetch |
+| Visibility | Passed only into the gateway call path in the same process; never logged, echoed or included in any output or error message |
+| `rpc` | NEVER loads `.env` or touches credentials — the shopper's child process path stays credential-free |
+| Shape | The gateway is constructed sandbox-only regardless; production hosts cannot be reached |
+
+Recommended `.env` (gitignored; `.env.example` lists the same names, plus the
+shopper's and spike's names):
+
+```sh
+PAYPAL_CLIENT_ID=...      # from a sandbox REST app at developer.paypal.com
+PAYPAL_CLIENT_SECRET=...
+PAYPAL_ENV=sandbox        # optional; any live value refuses the command
+```
 
 ## Config and private runtime state
 
@@ -49,7 +100,8 @@ config file's directory, each file ≤ 1 MiB:
   "version": 1,
   "policyFiles": ["../../../config/policies/hardware.example.json"],
   "catalogFiles": ["../../suppliers/state/store-a.json", "../../suppliers/state/store-b.json"],
-  "fakeProviderDb": "../../../.runtime/backend/providers.db"
+  "fakeProviderDb": "../../../.runtime/backend/providers.db",
+  "paymentProvider": "fake"            // optional; "paypal-sandbox" is the opt-in
 }
 ```
 
@@ -85,10 +137,13 @@ it uses the PowerShell that ships with Windows, which adds about half a second p
 
 - **Owner:** the current user, SYSTEM or Administrators, including the built-in Administrator account.
 - **Access:** allow entries for those accounts only, whether set directly or inherited from a
-  parent. Deny entries are fine, because they only take access away.
+  parent. Deny entries don't count as too open, because they only take access away.
 - **Refused:** any other allow entry, even read-only, and anything the backend can't read or parse.
   That includes a machine where PowerShell can't run or is locked to Constrained Language Mode,
   a drive with no access lists, and accounts Windows writes in a short form, such as Guest.
+- **Deny entries naming the current user** are refused with their own message, because the backend
+  couldn't work there. A deny through a group, such as Everyone, isn't detected: the command can
+  still fail with "the command failed unexpectedly" (exit 1).
 - **New files:** a folder must also have an allow entry that new files inherit. With none, Windows
   gives a new database the creating process's default access, which can reach further.
 - **Links:** a junction or link is judged by the folder it reaches.
@@ -103,8 +158,8 @@ parent folders, and nothing stops access changing after the check. Administrator
 always reach the files. This is not production authentication or multi-user isolation.
 
 **How it was checked:** `apps/cli/src/backend.test.ts` uses real Windows permissions for inherited
-and direct access, folders that don't pass access on, open database files, junctions and an
-unreadable descriptor. A folder owned by another account is
+and direct access, folders that don't pass access on, deny entries naming the user, open database
+files, junctions and an unreadable descriptor. A folder owned by another account is
 covered only by a logic test in `apps/cli/src/windows-acl.test.ts`, because creating a real one needs
 admin rights.
 
@@ -137,7 +192,73 @@ Closed error codes: `INVALID_REQUEST`, `UNSUPPORTED_VERSION`, `NOT_FOUND`,
 compensated), currency:"SGD", totalMinor, createdAt, updatedAt, reservationStatus
 (active|consumed|released), paymentStatus, orderStatus, refundStatus
 (not_started|intent|in_flight|unknown|succeeded|rejected), readinessStatus
-("not_assessed")`. There are no public provider IDs, effect keys or leases.
+("not_assessed"), paymentProvider?: ("fake"|"paypal-sandbox")`. There are no
+public provider IDs, effect keys or leases in the shared operation.
+
+`paymentProvider` is a backend-owned fact returned through both shared methods
+that carry an operation: `proposal.submit` and `operation.get`. It names the
+bound execution route, not proof that a payment happened; `paymentStatus` stays
+separate. Shopper inputs cannot set it. The run review and `shop status` use it
+to distinguish fake payment/refund from PayPal sandbox payment/refund, while
+supplier orders remain fake. Sandbox reservations print the authorize, buyer
+approval, complete-authorization and run steps in order.
+
+For older operations, a stored PayPal binding establishes the sandbox provider;
+an unbound legacy capture effect can only have dispatched to the fake provider.
+Otherwise the field is absent until execution/authorization pins the route in a
+`payment_provider_selected` audit event. Absence means **not recorded**, never
+implicitly fake. Older wire responses and contract mocks may also omit it. No
+database migration is needed; the existing append-only audit ledger holds the fact.
+
+Operator `operation-run`, `operation-reconcile`, `status` and `audit` also carry
+the same provider at top level (`null` when unrecorded). Audit returns original
+stored event details without adding the current config's provider to history.
+When sandbox identifiers exist in ledger facts, these outputs add sanitized
+`providerIds: {orderId?, authorizationId?, captureId?, refundId?}`. The shopper receives
+the provider name only; payment identifiers and credentials stay backend-side.
+
+### The sandbox-authorization lifecycle (unit 5)
+
+The hold belongs **after the cart is reserved and before `operation-run`**
+(issue #16 answer): the hold amount must equal the operation's reserved all-in
+total, and the capture gate revalidates against that reserved operation at
+execution. Flow: `rpc proposal.submit` (reserved) → operator `operation-authorize`
+→ the sandbox buyer approves on PayPal's hosted page → operator
+`operation-complete-authorization` (binding becomes `authorization_held`) →
+`operation-run`.
+
+- `operation-authorize` requires an active reservation, uses
+  `amountMinor = operation total` and `invoice_id = operationId`, and derives the
+  stable `PayPal-Request-Id` from the binding identity (`<operationId>:hold`),
+  so a replay cannot create a second order. It prints one sanitized JSON line
+  with `approvalUrl` and nothing is ever a second candidate. A stored binding
+  replays the existing order through the same request id and refuses a provider
+  answer naming a different order.
+- `operation-complete-authorization` requires an active reservation before it
+  can mint a hold, and calls `authorizeOrder` with request id
+  `<operationId>:authorize`; PayPal's documented `ORDER_NOT_APPROVED` failure
+  maps to the closed message "The sandbox buyer has not approved this hold yet"
+  (exit 2, never a raw payload). Success upgrades the binding row to
+  `authorization_held` with the sandbox `authorizationId` and appends a
+  `binding_upgraded` audit event.
+- Binding facts live in the ledger's migration-3 `operation_paypal_bindings`
+  table (STRICT, foreign key to the operation, immutable
+  order/authorization/invoice/currency/amount columns, `provider_state`
+  `order_created` → `authorization_held` are the only controlled changes); every
+  write also appends `binding_created`/`binding_upgraded` audit events.
+- `operation-run` refuses a new capture without an `authorization_held` binding
+  before loading credentials or writing an intent. The operator gets exit 2 and
+  the original reservation stays untouched. Ambiguous effects already dispatched
+  remain subject to reconciliation; they are never silently reset.
+
+Known sandbox lifecycle limits: a failed execution gate can release the local
+reservation while the unused PayPal authorization remains held. The executor does
+not automatically void that hold; local budget release is not provider hold
+release. Review the original authorization in the sandbox and retain its ledger
+until it is voided or expires. A lost refund response without a persisted refund
+ID also remains unresolved. Retry after an early `ORDER_NOT_APPROVED` response
+uses the original request ID and still needs a sandbox-account exercise; account
+replay behavior is not proven by mocks. These limits do not mark M3 complete.
 
 ### Replay, cart identity and idempotency aliases
 
@@ -164,15 +285,17 @@ checker decision, and a mock-run outcome never equals a backend-run outcome. For
 meaningful result, rerun the same shopper commands against `npm run backend` (which
 uses the real checker core and SQLite ledger) as the shopper README describes.
 
-## Unit-4 PayPal gateway (contract only — not wired into execution)
+## PayPal gateway (unit-4 contract + unit-5 sandbox additions)
 
 `services/checker/src/paypal/gateway.ts` is a sandbox-only adapter over the PayPal
 REST client. It is separate from the execution provider seam
-(`services/checker/src/execution/gateway.ts`), is imported by no CLI and no worker,
-cannot resolve an authorization/capture from an operation ID, and has no
-lookup-by-request-id path. In the current tree **nothing calls it** except its own
-tests; wiring it into the execution ledger is a later authorized step, and no real
-sandbox or live request has been made to verify it.
+(`services/checker/src/execution/gateway.ts`) — its effect methods are unchanged;
+the adapter now also declares its payment provider identity — and
+is reachable only through `execution/paypal-provider.ts` when the backend config
+selects it. It cannot resolve an authorization from an operation ID except
+through the ledger binding the operator commands wrote, and it has no
+lookup-by-request-id path. In the current tree **no behavior has been verified
+against a real PayPal sandbox account** — every claim below is fetch-mocked.
 
 ```ts
 const gateway = createPayPalGateway({ clientId, clientSecret, fetchFn?, timeoutMs?, onExchange? });
@@ -186,6 +309,9 @@ Caller inputs (validated locally, rejected before any fetch — `GatewayInputErr
 | `getCapture` | `{captureId, authorizationId, invoiceId, expected}` |
 | `refundCapture` | `{captureId, requestId, expected}` |
 | `getRefund` | `{refundId, captureId, expected}` |
+| `createAuthorizationOrder` *(unit 5)* | `{requestId, invoiceId, expected}` |
+| `authorizeOrder` *(unit 5)* | `{orderId, requestId, expected}` |
+| `getAuthorization` *(unit 5)* | `{authorizationId, expected}` |
 
 - `expected` is `{currency:'SGD', amountMinor}` with `1 ≤ amountMinor ≤ 1,000,000,000`
   (integer). Minor-unit ⇄ decimal conversion happens only here at the PayPal edge;
@@ -230,3 +356,58 @@ treated as unrecognized, not as contradictory evidence. Statuses other than
 These outcomes come from fetch-mocked contract tests only
 (`services/checker/src/paypal/gateway.test.ts`, `client.test.ts`); they are not
 sandbox-account evidence.
+
+Unit-5 method semantics (same evidence discipline; new outcome shapes are
+documented in the source), consuming the client's Orders v2 create/authorize and
+the authorization read:
+
+- `createAuthorizationOrder` posts `{intent:'AUTHORIZE', purchase_units:[
+  {amount, invoice_id}]}` with the caller's request id. Success requires an
+  order that parsed with status `CREATED`, an echoed `purchase_units[0]`
+  matching the submitted amount (currency + value) and `invoice_id`, and
+  exactly one extractable approval link: parseable `https`, on a sandbox
+  buyer-consent host (`www.sandbox.paypal.com` or `*.sandbox.paypal.com`
+  exactly) — links are never followed, and a production `paypal.com` checkout
+  URL is refused. Returns `{orderId, approvalUrl}`; non-`CREATED` orders are
+  `unconfirmed_status`; a malformed echo, a missing/non-sandbox approve link,
+  or multiple validated approve links (PayPal documents one) are
+  `invalid_response`.
+- `authorizeOrder` posts to `/v2/checkout/orders/{orderId}/authorize` with the
+  request id unchanged. Success requires the read-back to carry exactly one
+  validated authorization whose amount matches `expected`, whose embedded
+  status is in the documented authorization vocabulary (an unmapped or missing
+  status is `invalid_response`), and whose status is the fresh mint `CREATED`:
+  `DENIED|VOIDED|EXPIRED|PENDING` (and any other recognized state) refuse as
+  `unconfirmed_status` — they never mint `authorization_held`
+  (`binding_unverified`/`invalid_response` otherwise, order status gates
+  apply). PayPal's documented `ORDER_NOT_APPROVED` failure is surfaced
+  distinctly as `{state:'buyer_not_approved'}` because the receiver's next
+  action (wait for the buyer) differs from every unknown reason — it is never
+  treated as evidence about the money.
+- `getAuthorization` GETs the authorization and succeeds when the read is
+  verified: read-back id equals the requested id and the amount matches
+  `expected`. `succeeded` here is a verified RESOURCE read, not a capture
+  verdict: the resource carries its durable `status`
+  (`CREATED|CAPTURED|DENIED|EXPIRED|PARTIALLY_CAPTURED|PENDING|VOIDED`). Its
+  `rel:'capture'` link is a POST action, not a capture resource identifier.
+- `getOrderCapture` reads the binding's persisted order ID with Orders v2 GET,
+  validates the order ID, `AUTHORIZE` intent, purchase-unit invoice and all-in
+  amount, and requires one completed capture candidate of the exact amount.
+  Optional authorization history must agree with the stored authorization.
+  It then calls `getCapture` to verify that candidate's amount, invoice and
+  authorization parent independently. Missing, ambiguous or inconsistent history
+  remains unknown; it never authorizes a retry, release or refund by absence.
+  Sources: [PayPal authorization read](https://developer.paypal.com/api/payments/v2/authorizations-get),
+  [Orders read](https://developer.paypal.com/api/orders/v2/orders-get) and its
+  [payment-history schema](https://developer.paypal.com/api/orders/v2/schema.json).
+
+The execution provider (`execution/paypal-provider.ts`) classifies those reads
+for the durable worker: `CAPTURED` + verified order history and `getCapture` → capture succeeded;
+`DENIED|VOIDED|EXPIRED` → durable non-application evidence the worker may safely
+release on; `CREATED|PENDING` → `not_applied` (our capture never completed, so
+the worker's existing same-key/revalidation retry discipline applies);
+`PARTIALLY_CAPTURED` or any unverified read → unknown. Missing binding or
+`order_created` → `not_applied` for lookup and conservative `unknown` (authority
+retained) for apply-effect. A refund lookup verifies a persisted refund id via
+`getRefund` and, by design, does NO refund discovery without one — a lost refund
+response stays in reconciliation's compensation state.

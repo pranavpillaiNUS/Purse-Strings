@@ -953,6 +953,7 @@ test('full process walk: draft, operator confirmation, shopping over rpc, then s
   assert.equal(pasted.status, 0, `${printedCommand}\n${pasted.stderr}`);
   const executed = JSON.parse(pasted.stdout.split(/\r?\n/).filter((line) => line.startsWith('{')).at(-1) ?? '{}');
   assert.equal(executed.operation.status, 'ordered');
+  assert.equal(executed.operation.paymentProvider, 'fake');
   assert.equal(executed.operation.readinessStatus, 'not_assessed');
   const audit = backend(['audit', '--id', operation.id]);
   assert.ok(audit.events.some(({ kind }: { kind: string }) => kind === 'operation_reserved'));
@@ -960,7 +961,8 @@ test('full process walk: draft, operator confirmation, shopping over rpc, then s
   const after = runShop(statusArgs);
   assert.equal(after.status, 0, after.stderr);
   assert.match(after.stdout, /Committed +S\$7,248\.50/);
-  assert.match(after.stdout, /Status +ordered: the fake order succeeded; this is not a real order/);
+  assert.match(after.stdout.replace(/\s+/g, ' '), /Status +ordered: the fake order succeeded; this is not a real order/);
+  assert.match(after.stdout, /Payment provider +fake/);
   assert.match(after.stdout, /Fake payment +succeeded/);
   assert.match(after.stdout, /Readiness +not assessed/);
   const missing = runShop(['status', '--mandate-id', mandateId, '--backend-db', dbPath, '--backend-config', configPath, '--operation', 'op-absent']);
