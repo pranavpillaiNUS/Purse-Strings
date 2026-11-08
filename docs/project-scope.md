@@ -169,12 +169,13 @@ backend delivery add a sandbox-only PayPal gateway
 (`services/checker/src/paypal/gateway.ts`, wired into the execution ledger behind
 the backend config `paymentProvider` and documented in `docs/backend-api.md`) with
 fetch-mocked capture/refund/refund-read tests, operator hold commands and
-crash-recovery evidence through sandbox reads; no PayPal request has been sent by
-any of this and feasibility on a real sandbox account remains unverified. No gate after M0 is
-recorded as passed,
-and M3 and M5 are planned. See `docs/backend-delivery-review.md` for the distinction
-between simulated execution, mocked contract coverage and real feasibility. PayPal
-feasibility is unverified
-until `docs/paypal-spike.md` records observed results, and the one authorized
-interactive buyer-consent exercise is the next PayPal step. The original hackathon schedule
+crash-recovery evidence through sandbox reads. `docs/paypal-spike.md` records limited
+historical manual observations: a Nov 7 application capture on the earlier PR #17 tree plus the AUTHORIZE fix,
+and separate Nov 7–8 spike captures and a refund. They do not establish response-loss
+recovery on the current tree or unused-hold closure. This checkpoint ran offline.
+No gate after M0 is recorded as passed; M3 remains incomplete and M5 is planned.
+See `docs/backend-delivery-review.md` for the distinction between simulated execution,
+mocked contract coverage and manual account observations. The next PayPal evidence
+requires authorized account exercises for current-path recovery and hold closure.
+The original hackathon schedule
 is preserved in `docs/hackathon-plan.md`, not adopted as a current commitment.

@@ -1,7 +1,10 @@
 # Submission pack
 
-**Status: working draft. This cannot be submitted until PayPal sandbox is in the purchase
-path, which is Danny's remaining work.**
+**Status: working draft. PayPal sandbox is wired into the purchase path, with limited
+historical manual observations recorded in `docs/paypal-spike.md`. Submission still needs
+a final recorded sandbox demo, agreed judge access, and completion of the checklist below.**
+PayPal placeholders below reserve the final recording narrative and team review; they do
+not mean the gateway is unwired. Historical reports do not validate current-path recovery.
 
 Everything in **[BRACKETS]** must be resolved or removed before it reaches Devpost or the
 README. Statuses are as of Nov 7, 2026.
@@ -47,15 +50,15 @@ The rules do not require a separate AI tools list. We keep one below as accurate
 | Repo made public | Both. Pranav changes the setting | Not done. The repo is private. A scan of its history on Nov 7 found no real secrets. It did find personal details you should both see first. The report is outside the repo. Scan again before the change, because commits are still landing |
 | License visible | Both | In place. `LICENSE` is MIT and GitHub detects it. The copyright line names only `pranavpillaiNUS`, so Danny should confirm that is fine. The public can see it only once the repo is public |
 | Complete setup and run instructions | Pranav | Partly done. `README.md` has run commands. `docs/new-device-setup.md` is a team guide and still says the repo is private. The opening below is not pasted in yet |
-| Working demo instructions | Both | Not ready. `npm run demo:flow` is documented. The scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and on macOS with Node 26, once PR #15 merges. Live Claude has run it only in temporary Windows copies with the backend's folder check skipped. It runs on fake providers |
+| Working demo instructions | Both | Scripted flow documented and passing CI on Linux and Windows with Node 24.15 and 26, and on macOS with Node 26. Default execution uses fake providers; `--sandbox-paypal` opts into sandbox payment with a simulated supplier. The final sandbox recording still needs to be made. Earlier live Claude runs used temporary Windows copies with the backend's folder check skipped |
 | Judge access until judging ends on Dec 15, with any credentials they need | Both | Not done. The repo must stay public and the instructions must keep working. The scripted flow needs no key. `--live` needs an Anthropic key. **[PAYPAL, Danny and Pranav: decide how judges run the PayPal path, using sandbox details only and committing no secret to the repo. See the proposal below.]** |
-| Name the platform it runs on | Both | Not decided. The rules require consistent running on the intended platform. The tests and the scripted flow pass in CI on Linux, Windows and macOS, once PR #15 merges. Name only platforms where the PayPal path has also run, because the rules hold us to what we name |
-| Video under 3 minutes, public on YouTube | Pranav, with Danny for scene 6 | Not done. `docs/demo-script.md` is the recording plan and targets 2:45. No video exists. Scene 6 has to be recorded after PayPal is in the purchase path |
+| Name the platform it runs on | Both | Not decided. The rules require consistent running on the intended platform. The tests and the scripted flow pass in CI on Linux, Windows and macOS. Name only platforms where the PayPal path has also run, because the rules hold us to what we name |
+| Video under 3 minutes, public on YouTube | Pranav, with Danny for scene 6 | Not done. `docs/demo-script.md` is the recording plan and targets 2:45. Scene 6 needs a final-tree sandbox recording with buyer consent; wiring alone does not supply that recording |
 | No copyrighted music or third-party trademarks | Pranav | Cannot be checked until a video exists. A search on Nov 7 found no common hardware brand names in the fixtures, examples, policy files or demo flow. SKUs are synthetic, such as `LAP-14-AIR`. The narration and screen name Claude, a third-party mark, and PayPal, the sponsor. Section 11 says to ask in writing if a term is ambiguous, so consider asking Devpost whether naming the AI tool you used is fine |
 | Devpost text | Both. Pranav drafts, Danny writes the PayPal parts | Draft below, with PayPal placeholders open. Nothing is entered on Devpost |
 | AI tools list | Both | Draft below, with items for each of you to confirm. Codex's summary says the rules do not explicitly require it. Keep it anyway, as accurate disclosure |
-| PayPal in the purchase path | Danny | **Not done. This is the blocker.** The purchase path runs on fake providers. `services/checker/src/paypal/gateway.ts` is a sandbox-only contract with fetch-mocked tests. Only its own tests call it, and it has not been verified against a real PayPal account |
-| Sandbox spike results recorded | Danny | Not done. The spike code exists (`npm run spike:paypal`). The results table in `docs/paypal-spike.md` is empty |
+| PayPal in the purchase path | Danny | Wired behind backend config `paymentProvider: "paypal-sandbox"`. `docs/paypal-spike.md` reports a Nov 7 application capture on the PR #17 tree plus the AUTHORIZE fix. Current-path recovery remains backed by injected-fetch crash tests; the final sandbox demo and account recovery evidence remain outstanding |
+| Sandbox spike results recorded | Danny | Nov 7–8 manual runs are recorded in `docs/paypal-spike.md`, including captures, replay, concurrency, over-capture warnings and a partial refund. Unused-hold void and final-capture closure were not exercised |
 
 ## Judge access: proposal
 
@@ -164,9 +167,11 @@ for each purchase. Use only observed results.]**
 behaved, and whether the pitch can extend to "PayPal holds the money." If they do not support it,
 leave this out.]**
 
-Until that work lands, this is the accurate statement, and it is why we cannot submit yet: PayPal is
-not in the purchase path. The repo has a separate sandbox spike with no recorded results, and a
-sandbox-only gateway contract with mocked tests that nothing else calls.
+The gateway is wired into execution behind backend config, with operator-only sandbox hold
+commands. `docs/paypal-spike.md` records earlier manual application/spike observations; this
+checkpoint did not reproduce them. Final submission wording must match the recorded demo and
+must not turn mocked recovery tests into account-verified recovery or a simulated supplier order
+into a real order.
 
 These boundaries exist today, whichever payment provider sits behind them:
 
@@ -212,7 +217,7 @@ These are design choices. We do not claim to be the first or the only project to
 
 These are planned and not built:
 
-- **[PAYPAL: remove this line once it is done.]** Put sandbox PayPal in the purchase path.
+- **[PAYPAL: evidence still needed.]** Record the final sandbox demo and exercise current-path recovery and unused-hold closure with operator/buyer authorization.
 - Reuse of existing stock before buying.
 - Command-line approvals, and one-time exceptions bound to an exact cart and amount.
 - Delivery and readiness tracking, so a request stays open until the equipment has arrived.

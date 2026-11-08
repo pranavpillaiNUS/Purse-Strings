@@ -276,15 +276,16 @@ only. Unit 5 wires that gateway into the execution ledger behind the backend
 config (`paymentProvider: "paypal-sandbox"`): operator-only hold commands
 (`operation-authorize`, `operation-complete-authorization`) place a sandbox hold
 on a reserved operation before `operation-run`, and the durable worker recovers
-crashes through sandbox reads. Nothing here has been verified against a real
-PayPal account, the supplier order stays fake in every configuration, and no
-live or unscripted PayPal request has ever been sent; [delivery
-evidence](docs/backend-delivery-review.md) separates simulated execution,
-contract coverage and code wiring from account feasibility.
+crashes through sandbox reads. [Manual sandbox notes](docs/paypal-spike.md) record
+a Nov 7 application capture on the earlier PR #17 tree plus the AUTHORIZE fix, and separate Nov 7–8 spike
+runs. These limited historical observations do not validate the current recovery
+path, unused-hold release or real supplier ordering. This checkpoint ran offline;
+the supplier order stays fake in every configuration. [Delivery
+evidence](docs/backend-delivery-review.md) distinguishes the automated evidence
+from those manual observations and remaining account exercises.
 
-**Planned (still unimplemented):** stock assignment, at least one authorized
-interactive sandbox exercise recorded in `docs/paypal-spike.md` (buyer consent on
-PayPal's hosted page during the operator's own authorized steps), real supplier
+**Remaining:** stock assignment, authorized account exercises for current-path
+response-loss recovery and unused-hold closure (see `docs/paypal-spike.md`), real supplier
 execution, exceptions and equipment-readiness tracking. All will be tested through the
 CLI. The only page we serve is the read-only [dashboard](#dashboard), which no stage-one
 acceptance depends on. The only other browser page involved is PayPal's own hosted

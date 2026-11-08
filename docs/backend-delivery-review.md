@@ -28,14 +28,15 @@ Four levels appear below and must not be confused:
    provider commit and acknowledgement. PayPal-backed variants run the same crash
    evidence against a scripted fake fetch inside the child. This is the strongest
    offline evidence class but still says nothing about real suppliers or a real PayPal account.
-4. **Wiring in code is not account feasibility** — unit 5 connects the gateway,
-   the binding ledger table, the operator hold commands and credential containment.
-   The purchase path now EXISTS for `paymentProvider:"paypal-sandbox"`, but no
-   sandbox account was contacted: the binding lifecycle, PayPal's response shapes
-   (overcapture, pending reasons, request-id replay across endpoints) and buyer
-   consent behavior remain unverified until one authorized interactive sandbox
-   exercise is recorded in `docs/paypal-spike.md` and the demo. A "sandbox-verified"
-   claim is not possible from this branch alone, and no live capture has occurred.
+4. **Recorded manual sandbox observations** — unit 5 wires the gateway, binding
+   ledger, operator hold commands and credential containment; that wiring alone
+   is not account evidence. `docs/paypal-spike.md` separately records a Nov 7
+   application capture on the earlier PR #17 tree plus the AUTHORIZE fix, and Nov 7–8 spike runs covering
+   captures, replay, concurrency and a partial refund. These are historical manual
+   reports, not the automated reproduction commands below. The November 8 cleanup
+   and dashboard checkpoint contacted no account. Current-path response-loss
+   recovery, early-approval retry and unused-hold closure remain unverified on an
+   account; the recorded runs do not establish full M3 acceptance.
 
 ## Acceptance evidence trail (offline, all reproducible below)
 
@@ -68,7 +69,7 @@ transaction); and a dual-open migration race that was root-caused and fixed with
 regression test (see `unit3-result.md`, LEDGER-R5-001 repair section). No gate is
 claimed beyond what those tests exercise.
 
-### M3 — simulated recovery + mocked contract coverage ONLY (real feasibility unverified)
+### M3 — simulated recovery, mocked contracts and limited manual observations (incomplete)
 
 - Execution: durable worker over fake providers with real crash-restart recovery:
   lease claim/renew/fencing across processes, SIGKILL after a successful capture or
@@ -157,12 +158,12 @@ node --test services/checker/src/paypal/client.test.ts services/checker/src/payp
 
 ## Remaining work (no unit-5 property depends on it)
 
-- One authorized interactive sandbox exercise (operator + buyer consent) to
-  record real behavior — hold creation, hosted buyer consent, capture, grant
-  response shapes, request-id replay — in `docs/paypal-spike.md` and the demo.
-  Nothing here replaces that exercise, and nothing in this branch performed one.
-- Agree the `OperationSchema` upgrade (`paymentProvider`) in `packages/contracts`
-  with both owners, then surface the fact through the shared schema too.
+- Authorized account exercises (operator + buyer consent) for response-loss
+  recovery on the current tree, early-approval retry and unused-hold closure.
+  Record new observations in `docs/paypal-spike.md`; earlier capture/spike reports
+  do not replace these missing proofs. This checkpoint ran no account exercise.
+- The agreed `Operation.paymentProvider` upgrade was delivered in #20 and is
+  surfaced through the shared schema and shopper views; it is not remaining work.
 - Real supplier adapters with the same contract treatment as the PayPal gateway.
 - Approval/exception CLI flows; delivery/return/readiness attestations (M5).
 - Per-run verification of hosted buyer consent inside any demo path.

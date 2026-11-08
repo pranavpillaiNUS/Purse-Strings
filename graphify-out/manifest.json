@@ -138,15 +138,15 @@
     "semantic_hash": ""
   },
   "AGENTS.md": {
-    "mtime": 1794145926.0693002,
-    "seen": 1794146221.8478425,
-    "ast_hash": "1e21a467d859d85ab36f44a39b70c5bd",
+    "mtime": 1794146581.7579336,
+    "seen": 1794146599.4209342,
+    "ast_hash": "f7a085a082443b1e3e7b6cbee95dec1d",
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1794145926.0693002,
-    "seen": 1794146221.8478425,
-    "ast_hash": "e7a2311b2ef7158e1dab3cb0efbe94d9",
+    "mtime": 1794146581.7636173,
+    "seen": 1794146599.4209342,
+    "ast_hash": "4213b143116b11a2bb49748166250f18",
     "semantic_hash": ""
   },
   "docs/architecture.md": {
@@ -168,9 +168,9 @@
     "semantic_hash": ""
   },
   "docs/project-scope.md": {
-    "mtime": 1794146060.7688549,
-    "seen": 1794146221.8478425,
-    "ast_hash": "a20fa3104517042670712625b958b595",
+    "mtime": 1794146581.7656257,
+    "seen": 1794146599.4209342,
+    "ast_hash": "d84af133b2518496e788641e61475383",
     "semantic_hash": ""
   },
   "services/agent/README.md": {
@@ -684,15 +684,15 @@
     "semantic_hash": ""
   },
   "docs/backend-delivery-design.md": {
-    "mtime": 1794129200.0384214,
-    "seen": 1794129984.5213614,
-    "ast_hash": "32be817ad876c42a59e9034c831a67ae",
+    "mtime": 1794146581.7676332,
+    "seen": 1794146599.4209342,
+    "ast_hash": "341208aec3da30ddbbe8886dc39a53a0",
     "semantic_hash": ""
   },
   "docs/backend-delivery-review.md": {
-    "mtime": 1794129200.0384214,
-    "seen": 1794129984.5213614,
-    "ast_hash": "89fd0d4e819f304db6fe72fead57498a",
+    "mtime": 1794146581.7656257,
+    "seen": 1794146599.4209342,
+    "ast_hash": "549bfa899e9e1488ac3d78bef62cc3b9",
     "semantic_hash": ""
   },
   "services/checker/src/execution/paypal-provider.test.ts": {
@@ -810,9 +810,9 @@
     "semantic_hash": ""
   },
   "docs/submission.md": {
-    "mtime": 1794129944.4212146,
-    "seen": 1794129984.5213614,
-    "ast_hash": "109c0dc37ae0947d64e08a6417b62ffe",
+    "mtime": 1794146581.7706509,
+    "seen": 1794146599.4209342,
+    "ast_hash": "9f9cc11a9dd285cb5cb1ddb05b943ada",
     "semantic_hash": ""
   },
   "apps/cli/src/dashboard-state.ts": {

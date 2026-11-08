@@ -187,6 +187,12 @@ Fetch injection and finite timeout apply to OAuth and resource requests. Sandbox
 
 ## Implementation status (addendum, accurate as of unit 4, 2026-11-06)
 
+This dated addendum preserves the unit-delivery evidence. For the current wiring,
+the separately reported Nov 7–8 manual sandbox observations and the still-unverified
+current recovery path, use [backend-delivery-review.md](backend-delivery-review.md)
+and [paypal-spike.md](paypal-spike.md). The historical exclusions below are not the
+current implementation checklist.
+
 The specification text above is the accepted design, unchanged. This addendum records
 what exists; nothing here relaxes the specification's claims.
 
