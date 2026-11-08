@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Splittap dashboard</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"></span>
+        <div>
+          <div class="brand-name">Splittap</div>
+          <div class="brand-sub">Operator dashboard · read-only</div>
+        </div>
+      </div>
+      <div class="badges" id="badges"></div>
+      <div class="updated" id="updated" aria-live="polite">Connecting…</div>
+    </div>
+  </header>
+  <main class="wrap" id="app">
+    <section class="empty-state">
+      <h1>Loading…</h1>
+    </section>
+  </main>
+  <footer class="wrap foot">
+    <p>
+      A read-only view. Ledger numbers come from the backend's own read commands, and the
+      operator confirms, authorizes and runs everything in the terminal. Simulation: no real
+      money, suppliers or orders. PayPal, when shown, is the sandbox, and supplier orders are
+      always simulated.
+    </p>
+  </footer>
+</body>
+</html>
