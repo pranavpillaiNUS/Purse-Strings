@@ -288,9 +288,9 @@
     "semantic_hash": ""
   },
   "services/checker/src/ledger/store.ts": {
-    "mtime": 1794118128.4256861,
-    "seen": 1794119018.0696917,
-    "ast_hash": "246e528d81d1646296d82894708fffdf",
+    "mtime": 1794126390.3989532,
+    "seen": 1794126717.0244906,
+    "ast_hash": "bd6ac637528ef7937491313e405f07ac",
     "semantic_hash": ""
   },
   "services/checker/src/ledger/tests/application.test.ts": {
@@ -771,12 +771,6 @@
     "mtime": 1794119538.2625055,
     "seen": 1794119635.5922856,
     "ast_hash": "af3b7323f4051f5f71aaca6f11cb1b45",
-    "semantic_hash": ""
-  },
-  "opencode.json": {
-    "mtime": 1794118128.4048474,
-    "seen": 1794119018.0696917,
-    "ast_hash": "c9edecf4a06a979a1415ca7d35eb2026",
     "semantic_hash": ""
   },
   "services/agent/fixtures/recovery-shopping-calls.json": {
