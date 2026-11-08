@@ -1,22 +1,22 @@
 # Graph Report - Splittap-pay  (2026-11-08)
 
 ## Corpus Check
-- 139 files · ~190,386 words
+- 145 files · ~197,705 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 7 file(s) not represented in the graph (top: (none) 4, .tsv 1, .example 1)
 
 ## Summary
-- 1682 nodes · 4146 edges · 90 communities (83 shown, 7 thin omitted)
-- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 144 edges (avg confidence: 0.93)
+- 1746 nodes · 4343 edges · 87 communities (79 shown, 8 thin omitted)
+- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 146 edges (avg confidence: 0.92)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `65a08e1b`
+- Built from commit: `8e457287`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
-- application.test.ts
+- contracts/src/backend.test.ts
 - paypal-spike.ts
 - gateway.test.ts
 - package.json
@@ -36,7 +36,7 @@
 - Backend delivery run
 - Delivery findings
 - Unit 1 result
-- authority.ts
+- ledger/store.ts
 - src/worker.ts
 - cli/src/backend.ts
 - execution/worker.test.ts
@@ -46,13 +46,13 @@
 - index.ts
 - paypal-provider.ts
 - app.js
-- fixtures.ts
+- Backend wire API (simulation) and the PayPal gateway contract
 - review-output.ts
 - shop.test.ts
 - Splittap — CLI-first equipment purchasing
 - shop.ts
 - Splittap purchasing agent
-- cli/src/mandate.ts
+- BackendResponse
 - dashboard.test.ts
 - CLI-first architecture
 - createExecutionWorker
@@ -61,46 +61,43 @@
 - dashboard.ts
 - worker-paypal.test.ts
 - demo-flow.test.ts
-- ledger/store.ts
+- canonicalize
 - Backend delivery design (accepted specification with implementation status)
 - execution/worker.ts
-- cli/src/backend.test.ts
 - shopper.test.ts
 - Unit 2 result: trusted authority and SQLite atomic reservations
 - shopper.ts
 - agent/package.json
 - Acceptance evidence trail (offline, all reproducible below)
 - review-output.test.ts
-- Backend wire API (simulation) and the PayPal gateway contract
+- saved-review-cli.test.ts
 - Devpost description draft
 - mock.ts
 - Unit 4 result: sandbox PayPal gateway contracts and accurate delivery documentation
 - Confirmation and stock: integration status
-- createSession
 - ci.yml
 - review.ts
 - ref_node_child_process
 - Detailed implementation decisions
-- Demo script
+- saved-review.ts
 - Delivered
 - Setting up a new device
 - evaluatePurchase
 - backend-session.ts
 - client.mock.test.ts
-- CliError
-- dashboard-http-ui.test.ts
-- execution/test-worker.ts
+- ClientNode
 - client.test.ts
-- paypal-provider.test.ts
 - paypal/client.ts
-- Mandate planning and the bounded shopper
+- saved-review.test.ts
 - ref_node_fs
-- Delivered
-- providerFacts
+- paypal-provider.test.ts
 - ExecutionWorker
-- money.ts
-- Mandate
+- createPayPalGateway
 - application.ts
+- cli/src/mandate.test.ts
+- application.ts
+- createMockBackend
+- agent/README.md
 
 ## God Nodes (most connected - your core abstractions)
 1. `createExecutionWorker()` - 45 edges
@@ -109,47 +106,47 @@
 4. `handleCommand()` - 32 edges
 5. `canonicalize()` - 29 edges
 6. `confirmMandateRevision()` - 28 edges
-7. `createFixtureSupplier()` - 27 edges
-8. `runTransaction()` - 25 edges
-9. `draftMandateRevision()` - 24 edges
-10. `CatalogSchema` - 24 edges
+7. `main()` - 27 edges
+8. `createFixtureSupplier()` - 27 edges
+9. `renderRunReview()` - 25 edges
+10. `runTransaction()` - 25 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `M0 — delivered by the scaffold` --references--> `BudgetSnapshot`  [INFERRED]
-  docs/backend-delivery-review.md → packages/contracts/src/index.ts
-- `Milestones M4/M5` --references--> `createBackendClient()`  [INFERRED]
-  docs/backend-delivery-review.md → packages/contracts/src/client.ts
 - `PayPal gateway (unit-4 contract + unit-5 sandbox additions)` --references--> `GatewayInputError`  [INFERRED]
   docs/backend-api.md → services/checker/src/paypal/gateway.ts
 - `Delivered` --references--> `GatewayUnknown`  [INFERRED]
   .audit/backend-delivery/unit5-result.md → services/checker/src/paypal/gateway.ts
 - `Authority and evidence` --references--> `BudgetSnapshot`  [INFERRED]
   docs/architecture.md → packages/contracts/src/index.ts
+- `M0 — delivered by the scaffold` --references--> `BudgetSnapshot`  [INFERRED]
+  docs/backend-delivery-review.md → packages/contracts/src/index.ts
+- `Observations (records, no code)` --references--> `authorizeOperationHold()`  [INFERRED]
+  .audit/backend-delivery/unit5-result.md → services/checker/src/execution/paypal-provider.ts
 
 ## Import Cycles
 - None detected.
 
-## Communities (90 total, 7 thin omitted)
+## Communities (87 total, 8 thin omitted)
 
-### Community 0 - "application.test.ts"
-Cohesion: 0.12
-Nodes (30): ledger(), ConfiguredSupplier, confirmMandateRevision(), definePolicySnapshot(), draftMandateRevision(), loadPolicySnapshot(), reviewMandateRevision(), createHarness() (+22 more)
+### Community 0 - "contracts/src/backend.test.ts"
+Cohesion: 0.17
+Nodes (10): BackendErrorResponseSchema, CatalogListResultSchema, MandateGetResultSchema, OperationGetResultSchema, OperationSchema, cart, catalog, mandate (+2 more)
 
 ### Community 1 - "paypal-spike.ts"
 Cohesion: 0.11
 Nodes (26): BUDGET, capture(), captureCart(), Cart, CART_A, CART_B, CART_C, checkCapture() (+18 more)
 
 ### Community 2 - "gateway.test.ts"
-Cohesion: 0.07
-Nodes (38): CaptureAuthorizationInput, GetCaptureInput, RefundCaptureInput, approveLink(), authorizationBody(), authorizationReadRoute(), authorizedOrderBody(), authorizeInput (+30 more)
+Cohesion: 0.08
+Nodes (35): approveLink(), authorizationBody(), authorizationReadRoute(), authorizedOrderBody(), authorizeInput, authorizeRoute(), capBodySGD5541(), capBodyUSD() (+27 more)
 
 ### Community 3 - "package.json"
 Cohesion: 0.09
 Nodes (23): description, devDependencies, @types/node@^26.6.6, typescript@^7.0.2, engines, node, license, name (+15 more)
 
 ### Community 4 - "contracts/src/backend.ts"
-Cohesion: 0.08
-Nodes (27): BackendErrorResponseSchema, BackendRequest, BackendRequestSchema, BackendResponseSchema, BackendSuccessResponseSchema, CatalogListRequestSchema, CatalogListResultSchema, EffectStatusSchema (+19 more)
+Cohesion: 0.15
+Nodes (12): BackendSuccessResponseSchema, CatalogListRequestSchema, EffectStatusSchema, MandateGetRequestSchema, mandateVersion, OperationGetRequestSchema, OperationStatusSchema, PaymentProviderSchema (+4 more)
 
 ### Community 5 - "Hackathon project: an AI purchasing agent that can't overspend"
 Cohesion: 0.11
@@ -173,7 +170,7 @@ Nodes (4): description, name, private, type
 
 ### Community 10 - "mandate-drafter.test.ts"
 Cohesion: 0.07
-Nodes (36): compileProposal(), contentDigest(), createMandateDraft(), digest, distinct(), DraftAssumptionSchema, DRAFT_TOOL_NAME, draftMandateWithModel() (+28 more)
+Nodes (38): compileProposal(), contentDigest(), createMandateDraft(), digest, distinct(), DraftAssumptionSchema, DRAFT_TOOL_NAME, draftMandateWithModel() (+30 more)
 
 ### Community 11 - "checker/package.json"
 Cohesion: 0.40
@@ -183,9 +180,13 @@ Nodes (4): description, name, private, type
 Cohesion: 0.40
 Nodes (4): description, name, private, type
 
+### Community 13 - "README.md"
+Cohesion: 0.16
+Nodes (8): Before you record, Demo script, Sandbox variant for scene 6 (`--sandbox-paypal`, opt-in), The script, What not to say, With the dashboard beside the terminal, Historical hackathon plan (superseded), Durable ledger (M2 slice — authority + reservations)
+
 ### Community 14 - "The shopper"
-Cohesion: 0.29
-Nodes (7): BackendClient, Live runs, Read-only status, Run it, Submission outcomes, The shopper, Tools
+Cohesion: 0.25
+Nodes (8): BackendClient, Live runs, Read-only status, Run it, Save and replay a review, Submission outcomes, The shopper, Tools
 
 ### Community 15 - "CLI backend delivery specification"
 Cohesion: 0.10
@@ -204,136 +205,128 @@ Cohesion: 0.50
 Nodes (3): Delivery findings, design-critic-r1-1, design-critic-r1-2
 
 ### Community 23 - "Unit 1 result"
-Cohesion: 0.33
-Nodes (5): Delivered, Files and scope notes, Limitations, Unit 1 result, Verification
+Cohesion: 0.25
+Nodes (7): Delivered, Files and scope notes, Limitations, Unit 1 result, Unit 1 review follow-up, Verification, projectedTotal()
 
-### Community 24 - "authority.ts"
-Cohesion: 0.17
-Nodes (14): ValidatedMandateRead, AuthorityFailureCode, checkPolicyNarrowing(), DraftRevisionResult, MandateAuthority, MandateDraft, MandateDraftSchema, PolicyIdentitySchema (+6 more)
+### Community 24 - "ledger/store.ts"
+Cohesion: 0.08
+Nodes (52): resolveIdentities(), ValidatedMandateRead, AuthorityFailureCode, checkPolicyNarrowing(), confirmMandateRevision(), DraftRevisionResult, loadMandateAuthority(), loadPolicySnapshot() (+44 more)
 
 ### Community 25 - "src/worker.ts"
 Cohesion: 0.07
-Nodes (30): AnthropicModelOptions, createAnthropicModel(), DEFAULT_SHOPPER_MODEL, describe(), prompt, DRAFT_MODEL_TOOLS, MANDATE_DRAFTER_SYSTEM_PROMPT, ModelCallError (+22 more)
+Nodes (32): AnthropicModelOptions, createAnthropicModel(), DEFAULT_SHOPPER_MODEL, describe(), prompt, DRAFT_MODEL_TOOLS, MANDATE_DRAFTER_SYSTEM_PROMPT, ModelCallError (+24 more)
 
 ### Community 26 - "cli/src/backend.ts"
-Cohesion: 0.13
-Nodes (29): assertDistinctDatabases(), assertPrivateWindowsDatabase(), buildSuppliers(), Command, COMMAND_FLAGS, ConfigSchema, DATABASE_FILE_SUFFIXES, emit() (+21 more)
+Cohesion: 0.06
+Nodes (66): assertDistinctDatabases(), assertPrivateWindowsDatabase(), assertPrivateWindowsDirectory(), buildSuppliers(), checkPrivateRuntimeDirectory(), CliError, Command, COMMAND_FLAGS (+58 more)
 
 ### Community 27 - "execution/worker.test.ts"
-Cohesion: 0.07
-Nodes (24): Change (exact), Checks, LEDGER-R5-001 repair (2026-11-05): REPAIRED, not carried forward, Residuals disclosed, Root cause, with runtime evidence, bindingState(), effectRow(), operationAndReservation() (+16 more)
+Cohesion: 0.10
+Nodes (10): Quote, ChildOperation, ChildResult, EXEC_WORKER_PATH, Harness, submitOperation(), suppliersFor(), TEST_CLOCK_MS (+2 more)
 
 ### Community 28 - "backend-transport.test.ts"
 Cohesion: 0.29
-Nodes (7): allowedChildEnv(), BackendCliTransportOptions, CHILD_ENV_ALLOWLIST, createBackendCliTransport(), request, transport(), BackendTransport
+Nodes (6): allowedChildEnv(), BackendCliTransportOptions, CHILD_ENV_ALLOWLIST, createBackendCliTransport(), request, transport()
 
 ### Community 29 - "dashboard-state.ts"
 Cohesion: 0.08
 Nodes (30): AuditOutputSchema, BackendConfigSchema, buildDashboardState(), CommandIdSchema, DashboardOperation, DashboardReader, DashboardStore, DEMO_SESSION_FILE (+22 more)
 
 ### Community 30 - "ref_node_path"
-Cohesion: 0.19
-Nodes (19): integerOption(), runStore(), Catalog, EvidenceSchema, applyFixtureChanges(), controlSource(), FIXTURE_SEEDS, fixtureDirectory (+11 more)
+Cohesion: 0.16
+Nodes (21): ConfiguredCatalog, integerOption(), runStore(), Catalog, EvidenceSchema, ExecutionSupplier, applyFixtureChanges(), controlSource() (+13 more)
 
 ### Community 32 - "index.ts"
-Cohesion: 0.10
-Nodes (31): DEMO_NOW, InputOptions, loadInput(), readJson(), main(), printResult(), amount, BudgetSnapshotSchema (+23 more)
+Cohesion: 0.09
+Nodes (34): DEMO_NOW, InputOptions, loadInput(), readJson(), main(), printResult(), amount, BudgetSnapshotSchema (+26 more)
 
 ### Community 33 - "paypal-provider.ts"
-Cohesion: 0.13
-Nodes (25): AuthorizeHoldResult, authorizeOperationHold(), completeAuthorizationHold(), CompleteAuthorizationResult, CompositeProviderConfig, createExecutionProvider(), payPalApply(), payPalLookupCapture() (+17 more)
+Cohesion: 0.15
+Nodes (29): Delivered, AuthorizeHoldResult, authorizeOperationHold(), completeAuthorizationHold(), CompleteAuthorizationResult, CompositeProviderConfig, payPalApply(), describeUnknown() (+21 more)
 
 ### Community 34 - "app.js"
 Cohesion: 0.25
 Nodes (23): card(), chip(), date(), dateTime(), eventText(), h(), lookup(), money() (+15 more)
 
-### Community 35 - "fixtures.ts"
-Cohesion: 0.10
-Nodes (23): ConfiguredCatalog, CatalogSchema, MAX_AMOUNT_MINOR, Quote, asConfirmedMandate(), countingAdapter(), fixtureAdapter(), RAW_CATALOG (+15 more)
+### Community 35 - "Backend wire API (simulation) and the PayPal gateway contract"
+Cohesion: 0.33
+Nodes (6): Backend wire API (simulation) and the PayPal gateway contract, Config and private runtime state, PayPal gateway (unit-4 contract + unit-5 sandbox additions), Private runtime folders, Provider selection and credentials (unit 5), Starting point: the operator CLI
 
 ### Community 36 - "review-output.ts"
-Cohesion: 0.08
-Nodes (56): formatSgd(), ascii(), ASCII_FOLDS, bar(), barLine(), briefNextStepLines(), briefRefusalLine(), briefSummaryBody() (+48 more)
+Cohesion: 0.09
+Nodes (55): formatSgd(), ascii(), ASCII_FOLDS, bar(), barLine(), briefNextStepLines(), briefRefusalLine(), briefSummaryBody() (+47 more)
 
 ### Community 37 - "shop.test.ts"
 Cohesion: 0.10
-Nodes (11): fixture(), hostileB(), kit, mock, policy, practice, request, root (+3 more)
+Nodes (13): fixture(), hostileB(), kit, mock, policy, practice, request, root (+5 more)
 
 ### Community 38 - "Splittap — CLI-first equipment purchasing"
-Cohesion: 0.22
-Nodes (9): Dashboard, Demo flow, Fixture-store controls, Run, Separate PayPal feasibility spike, Splittap — CLI-first equipment purchasing, Start here, Status (+1 more)
+Cohesion: 0.20
+Nodes (10): Dashboard, Demo flow, Fixture-store controls, Mandate draft and review, Run, Separate PayPal feasibility spike, Splittap — CLI-first equipment purchasing, Start here (+2 more)
 
 ### Community 39 - "shop.ts"
-Cohesion: 0.17
-Nodes (26): readLedgerFacts(), useColor(), backendKind(), buildModel(), buildTransport(), displayPath(), DRAFT_EXIT_CODES, EXIT_CODES (+18 more)
+Cohesion: 0.16
+Nodes (30): bundled(), printable(), printableLine(), printOrigin(), printProposal(), readJson(), runMandate(), readLedgerFacts() (+22 more)
 
 ### Community 40 - "Splittap purchasing agent"
-Cohesion: 0.20
-Nodes (9): Authority and trust, Current implementation boundary, Implementation and verification, Knowledge graph, Purchasing invariants, Purpose and current scope, Sources of truth and personalization, Splittap purchasing agent (+1 more)
-
-### Community 41 - "cli/src/mandate.ts"
-Cohesion: 0.35
-Nodes (10): bundled(), printable(), printableLine(), printOrigin(), printProposal(), readJson(), runMandate(), outputTarget() (+2 more)
+Cohesion: 0.22
+Nodes (8): Authority and trust, Current implementation boundary, Implementation and verification, Knowledge graph, Purchasing invariants, Purpose and current scope, Sources of truth and personalization, Splittap purchasing agent
 
 ### Community 42 - "dashboard.test.ts"
-Cohesion: 0.11
-Nodes (17): assertReadOnlyCommand(), commandAction(), CommandResult, CommandRunner, createProcessRunner(), DASHBOARD_READ_COMMANDS, dashboardChildEnvironment(), DashboardSource (+9 more)
+Cohesion: 0.12
+Nodes (15): assertReadOnlyCommand(), commandAction(), CommandResult, CommandRunner, createProcessRunner(), DASHBOARD_READ_COMMANDS, dashboardChildEnvironment(), DashboardSource (+7 more)
 
 ### Community 43 - "CLI-first architecture"
 Cohesion: 0.29
 Nodes (7): Authority and evidence, CLI-first architecture, Ledger and recovery requirements, Repository map, Stage-one boundaries, Technology decisions, Test strategy
 
 ### Community 44 - "createExecutionWorker"
-Cohesion: 0.29
-Nodes (26): database(), effectKey(), createExecutionWorker(), callProvider(), captureRequestPayload(), claim(), createIntent(), execute() (+18 more)
+Cohesion: 0.19
+Nodes (39): database(), Accepted P1 repair pass (2026-11-05, branch `unit3-durable-execution`), Delivered, Minors, effectKey(), callBounded(), createExecutionWorker(), callProvider() (+31 more)
 
 ### Community 45 - "paypal/gateway.ts"
-Cohesion: 0.07
-Nodes (28): PayPalExchange, AUTHORIZATION_STATUSES, AuthorizationStatus, AuthorizationStatusEvidence, AuthorizeEvidence, AuthorizeOrderInput, CaptureEvidence, CreateAuthorizationOrderInput (+20 more)
+Cohesion: 0.06
+Nodes (34): PayPalExchange, AUTHORIZATION_STATUSES, AuthorizationStatus, AuthorizationStatusEvidence, AuthorizeEvidence, AuthorizeOrderInput, AuthorizeOutcome, CaptureAuthorizationInput (+26 more)
 
 ### Community 46 - "PayPal sandbox spike (build step 1)"
 Cohesion: 0.33
 Nodes (6): Application path (exercised 2026-11-07, PR #17 tree + one live fix), One-time setup (about 15 minutes), PayPal sandbox spike (build step 1), Results, Run, What each check means
 
 ### Community 47 - "dashboard.ts"
-Cohesion: 0.27
-Nodes (13): commandId(), createDashboardServer(), DashboardAssets, DashboardServerOptions, loadDashboardAssets(), main(), parsePort(), root (+5 more)
+Cohesion: 0.16
+Nodes (16): commandId(), createDashboardServer(), DashboardAssets, DashboardServerOptions, descendants(), renderClient(), loadDashboardAssets(), main() (+8 more)
 
 ### Community 48 - "worker-paypal.test.ts"
-Cohesion: 0.12
-Nodes (15): authorizationCapturedRoute(), authorizationDeniedRoute(), capturedAmount(), captureReadRoute(), captureRoute(), ChildOperation, ChildResult, ExchangeLine (+7 more)
+Cohesion: 0.07
+Nodes (39): ledger(), Change (exact), Checks, LEDGER-R5-001 repair (2026-11-05): REPAIRED, not carried forward, Residuals disclosed, Root cause, with runtime evidence, definePolicySnapshot(), draftMandateRevision() (+31 more)
 
 ### Community 49 - "demo-flow.test.ts"
 Cohesion: 0.06
-Nodes (59): awaitEnter(), checkSummary(), childEnvironment(), DEMO_SESSION_FILE, demoBackendConfig(), DemoFailure, DemoPlan, demoPlan() (+51 more)
+Nodes (62): awaitEnter(), checkSummary(), childEnvironment(), DEMO_SCENES, DEMO_SESSION_FILE, demoBackendConfig(), DemoFailure, DemoPlan (+54 more)
 
-### Community 50 - "ledger/store.ts"
-Cohesion: 0.09
-Nodes (40): Review record (EGM goldfish, five-round cap reached), resolveIdentities(), seedBinding(), applyMigrations(), LedgerMigration, maxKnownMigrationVersion(), MIGRATIONS, SCHEMA_VERSION (+32 more)
+### Community 50 - "canonicalize"
+Cohesion: 0.21
+Nodes (13): sha256CanonicalJson(), createExecutionProvider(), payPalLookupCapture(), payPalLookupRefund(), openLedgerReadConnection(), seedRefundEffect(), commercialTerms(), canonicalCartJson() (+5 more)
 
 ### Community 51 - "Backend delivery design (accepted specification with implementation status)"
 Cohesion: 0.15
 Nodes (13): Acceptance and remaining milestones, Alternatives and choice, Backend delivery design (accepted specification with implementation status), Current system and sources, Detailed implementation plan, Durable fake execution, Goals and exclusions, Implementation status (addendum, accurate as of unit 4, 2026-11-06) (+5 more)
 
 ### Community 52 - "execution/worker.ts"
-Cohesion: 0.10
-Nodes (19): PaymentProvider, ApplicationBackendConfig, FakeProviderGateway, loadProviderRow(), ProviderRow, RawRow, readString(), ApplyOutcome (+11 more)
-
-### Community 53 - "cli/src/backend.test.ts"
-Cohesion: 0.12
-Nodes (18): accessFingerprint(), assertOwnerOnlyOnWindows(), BackendFixture, entry, makePrivateDirectory(), reserveForTest(), root, runBackend() (+10 more)
+Cohesion: 0.09
+Nodes (29): createFakeProviderGateway(), FakeProviderGateway, FakeProviderScenario, loadProviderRow(), openProviderDatabase(), ProviderRow, RawRow, readString() (+21 more)
 
 ### Community 54 - "shopper.test.ts"
-Cohesion: 0.13
-Nodes (13): createOfflineShoppingSession(), ShoppingToolErrorCode, build, catalog, code(), getCatalog(), line, mandate (+5 more)
+Cohesion: 0.11
+Nodes (23): catalogFacts(), createOfflineShoppingSession(), createSession(), handle(), loadCatalog(), requireRequirement(), requireSupplier(), submitOutput() (+15 more)
 
 ### Community 55 - "Unit 2 result: trusted authority and SQLite atomic reservations"
-Cohesion: 0.29
-Nodes (6): Brief corrections and disclosures, Checks (run at delegation and again at orchestrator level), Delivered, Limitations (no capability claimed beyond tests), Suggested next steps, Unit 2 result: trusted authority and SQLite atomic reservations
+Cohesion: 0.25
+Nodes (7): Brief corrections and disclosures, Checks (run at delegation and again at orchestrator level), Delivered, Limitations (no capability claimed beyond tests), Review record (EGM goldfish, five-round cap reached), Suggested next steps, Unit 2 result: trusted authority and SQLite atomic reservations
 
 ### Community 56 - "shopper.ts"
-Cohesion: 0.12
-Nodes (19): BackendErrorCode, CartSubmission, BackendSessionError, CartEstimate, CatalogFacts, OfflineSessionInputSchema, OfflineSubmission, ProposalPort (+11 more)
+Cohesion: 0.09
+Nodes (24): Operation, BudgetSnapshot, CartSubmission, EligibilityResult, Mandate, LedgerFacts, StatusView, StoreDecision (+16 more)
 
 ### Community 57 - "agent/package.json"
 Cohesion: 0.24
@@ -347,17 +340,17 @@ Nodes (10): Acceptance evidence trail (offline, all reproducible below), Backend
 Cohesion: 0.08
 Nodes (29): built(), call(), cart(), cartLines, COMPROMISED_CALLS, compromisedEvents, compromisedReview(), CSI_C1 (+21 more)
 
-### Community 60 - "Backend wire API (simulation) and the PayPal gateway contract"
-Cohesion: 0.33
-Nodes (6): Backend wire API (simulation) and the PayPal gateway contract, Config and private runtime state, PayPal gateway (unit-4 contract + unit-5 sandbox additions), Private runtime folders, Provider selection and credentials (unit 5), Starting point: the operator CLI
+### Community 60 - "saved-review-cli.test.ts"
+Cohesion: 0.17
+Nodes (7): catalogFile, entry, lines, mandateFile, mockArgs, root, MAX_SAVED_REVIEW_BYTES
 
 ### Community 61 - "Devpost description draft"
 Cohesion: 0.12
 Nodes (16): AI tools list, Checklist, Devpost description draft, How AI is used, How it works, How PayPal is used, In the product, Judge access: proposal (+8 more)
 
 ### Community 62 - "mock.ts"
-Cohesion: 0.14
-Nodes (22): Unit 1 review follow-up, BackendMethod, BackendMethodSchema, createMock(), canonicalCart(), canonicalize(), compareText(), correlationFields() (+14 more)
+Cohesion: 0.21
+Nodes (12): BackendMethod, BackendMethodSchema, ProposalSubmitResultSchema, canonicalCart(), canonicalize(), compareText(), correlationFields(), MockBackend (+4 more)
 
 ### Community 63 - "Unit 4 result: sandbox PayPal gateway contracts and accurate delivery documentation"
 Cohesion: 0.33
@@ -367,119 +360,107 @@ Nodes (5): Checks, Deviations from the orchestrator's file list, Honest boundari
 Cohesion: 0.33
 Nodes (6): Confirmation and stock: integration status, Current review surface, Decisions for Pranav and Danny, From draft to shopping, Next milestone exit evidence, Platforms
 
-### Community 65 - "createSession"
-Cohesion: 0.33
-Nodes (9): catalogFacts(), createSession(), handle(), loadCatalog(), requireRequirement(), requireSupplier(), submitOutput(), createShoppingSession() (+1 more)
-
 ### Community 66 - "ci.yml"
 Cohesion: 0.07
 Nodes (29): runs-on, steps, strategy, timeout-minutes, concurrency, cancel-in-progress, group, node-version (+21 more)
 
 ### Community 67 - "review.ts"
 Cohesion: 0.06
-Nodes (47): BackendErrorCodeSchema, BudgetSnapshot, amount, BackendKind, BudgetView, budgetView(), buildRunReview(), CartBuildSchema (+39 more)
+Nodes (46): BackendErrorCodeSchema, amount, BackendKind, BudgetView, budgetView(), buildRunReview(), CartBuildSchema, CartSubmitSchema (+38 more)
 
 ### Community 68 - "ref_node_child_process"
-Cohesion: 0.29
+Cohesion: 0.33
 Nodes (8): check(), entry, expectFailure(), expectSuccess(), root, run(), seedPath, store()
 
 ### Community 69 - "Detailed implementation decisions"
 Cohesion: 0.29
 Nodes (7): CLI contract, Concrete storage, Detailed implementation decisions, Exact wire shapes, Lease and provider behavior, Readiness resolutions: imports and PayPal adapter, Review resolutions: cart identity and capture retries
 
-### Community 70 - "Demo script"
-Cohesion: 0.33
-Nodes (6): Before you record, Demo script, Sandbox variant for scene 6 (`--sandbox-paypal`, opt-in), The script, What not to say, With the dashboard beside the terminal
+### Community 70 - "saved-review.ts"
+Cohesion: 0.08
+Nodes (28): canonical(), prepareSavedReviewFile(), present(), SavedReviewDestination, OUTCOME_SENTENCES, aggregateMinor, BudgetSchema, CheckGroupSchema (+20 more)
 
 ### Community 71 - "Delivered"
-Cohesion: 0.20
-Nodes (10): loadSandboxCredentials(), readEnvFile(), Answers for the teammate (issue #16), Checks, Delivered, Deviations, Exact output shapes, Honest limitations (+2 more)
+Cohesion: 0.17
+Nodes (11): Answers for the teammate (issue #16), Checks, Deviation (disclosed), Deviations, Exact output shapes, Honest limitations, Observations (records, no code), Original operation schema proposal (superseded by issue #16 follow-up) (+3 more)
 
 ### Community 72 - "Setting up a new device"
 Cohesion: 0.25
 Nodes (7): 1. Install the tools, 2. Get the code, 3. Add your API key, 4. Check it works, 5. What a clone doesn't include, 6. Start a new Claude session, Setting up a new device
 
 ### Community 73 - "evaluatePurchase"
-Cohesion: 0.14
-Nodes (18): Accepted P1 repair pass (2026-11-05, branch `unit3-durable-execution`), Checks, Checks, Deviations, Deviations, Goldfish review round 1 (2026-11-05), Goldfish review round 2 (2026-11-05), Honest boundaries (+10 more)
+Cohesion: 0.13
+Nodes (14): Checks, Checks, Deviations, Deviations, Goldfish review round 1 (2026-11-05), Goldfish review round 2 (2026-11-05), Honest boundaries, Majors (+6 more)
 
 ### Community 74 - "backend-session.ts"
-Cohesion: 0.14
-Nodes (12): BackendResponse, INDETERMINATE_CODES, proposalIdempotencyKey(), proposalOutcome(), REJECTION_CODES, resendUnresolvedCarts(), ResentCart, SessionOptionsSchema (+4 more)
+Cohesion: 0.15
+Nodes (13): BackendErrorCode, BackendSessionError, INDETERMINATE_CODES, proposalIdempotencyKey(), proposalOutcome(), REJECTION_CODES, resendUnresolvedCarts(), ResentCart (+5 more)
 
 ### Community 75 - "client.mock.test.ts"
-Cohesion: 0.29
-Nodes (4): cart, cartBase, catalog, mandate
-
-### Community 76 - "CliError"
-Cohesion: 0.23
-Nodes (15): assertPrivateWindowsDirectory(), checkPrivateRuntimeDirectory(), CliError, createPrivateRuntimeDirectory(), loadConfig(), loadSnapshotSet(), operatorIdentity(), parseArgv() (+7 more)
-
-### Community 77 - "dashboard-http-ui.test.ts"
-Cohesion: 0.14
-Nodes (4): ClientNode, descendants(), renderClient(), SECURITY_HEADERS
-
-### Community 78 - "execution/test-worker.ts"
-Cohesion: 0.17
-Nodes (14): Observations recorded, deliberately no code change, createFakeProviderGateway(), FakeProviderScenario, openProviderDatabase(), PaymentProviderSelection, PayPalProviderScenario, buildScriptedPayPalChild(), PayPalScript (+6 more)
+Cohesion: 0.19
+Nodes (9): BackendRequest, BackendRequestSchema, BackendResponseSchema, BackendProtocolError, cart, cartBase, catalog, createMock() (+1 more)
 
 ### Community 79 - "client.test.ts"
 Cohesion: 0.20
 Nodes (8): Delivered, createPayPalClient(), accessToken(), call(), withTimeout(), PayPalApiError, PayPalTimeoutError, DENIED()
 
-### Community 80 - "paypal-provider.test.ts"
-Cohesion: 0.17
-Nodes (20): sha256CanonicalJson(), payPalLookupRefund(), authorizationReadRoute(), captureSucceededRoute(), closeHarness(), Harness, holdCreateRoutes(), json() (+12 more)
-
 ### Community 81 - "paypal/client.ts"
 Cohesion: 0.22
 Nodes (12): PayPalMoney, Authorization, BASE_URLS, Capture, CaptureParams, Order, PayPalClient, PayPalConfig (+4 more)
 
-### Community 82 - "Mandate planning and the bounded shopper"
-Cohesion: 0.29
-Nodes (6): Mandate draft and review, Drafting from plain English, Mandate planning, Mandate planning and the bounded shopper, Tests, review()
+### Community 82 - "saved-review.test.ts"
+Cohesion: 0.22
+Nodes (19): Team, ownership and branches, fixture(), review(), shop(), BackendTransport, createBackendClient(), createMockBackend(), createBackendShoppingSession() (+11 more)
 
 ### Community 83 - "ref_node_fs"
-Cohesion: 0.07
-Nodes (24): entry, fixedClock, root, draft(), entry, invalid(), kitPath, policyPath (+16 more)
+Cohesion: 0.10
+Nodes (13): entry, fixedClock, root, calls, cliEntry, root, shopEntry, textFile (+5 more)
 
-### Community 84 - "Delivered"
+### Community 84 - "paypal-provider.test.ts"
+Cohesion: 0.09
+Nodes (35): reviewMandateRevision(), authorizationReadRoute(), captureSucceededRoute(), closeHarness(), Harness, harnessFetch(), holdCreateRoutes(), json() (+27 more)
+
+### Community 87 - "createPayPalGateway"
 Cohesion: 0.29
-Nodes (9): Delivered, assertLeaseHeld(), claimLeaseRow(), consumeReservationRow(), insertEffectIntentRow(), LeaseLost, loadLeaseRow(), releaseReservationRow() (+1 more)
-
-### Community 85 - "providerFacts"
-Cohesion: 0.33
-Nodes (7): providerFacts(), providerIdFilter(), Applied, Deviation (disclosed), Observations (records, no code), Review round 1 (2026-11-07), Round-1 checks
-
-### Community 87 - "money.ts"
-Cohesion: 0.23
-Nodes (11): cart(), harnessFetch(), paypalAdapter(), assertSupportedCurrency(), fromMinor(), paypalMoney(), SUPPORTED_CURRENCIES, toMinor() (+3 more)
-
-### Community 88 - "Mandate"
-Cohesion: 0.50
-Nodes (4): LoadedConfig, Mandate, Policy, LoadedAuthority
+Nodes (9): cart(), assertSupportedCurrency(), fromMinor(), paypalMoney(), SUPPORTED_CURRENCIES, toMinor(), createPayPalGateway(), assessAmount() (+1 more)
 
 ### Community 89 - "application.ts"
-Cohesion: 0.16
-Nodes (29): authorityFailureResponse(), buildSnapshot(), buildWireOperation(), correlationFields(), createApplicationBackend(), catalogList(), handleProposalSubmit(), handleValidRequest() (+21 more)
+Cohesion: 0.21
+Nodes (20): wireOperation(), authorityFailureResponse(), buildSnapshot(), buildWireOperation(), createApplicationBackend(), catalogList(), handleProposalSubmit(), handleValidRequest() (+12 more)
+
+### Community 90 - "cli/src/mandate.test.ts"
+Cohesion: 0.24
+Nodes (9): draft(), entry, invalid(), kitPath, policyPath, requestPath, root, run() (+1 more)
+
+### Community 91 - "application.ts"
+Cohesion: 0.12
+Nodes (18): LoadedConfig, PaymentProvider, Policy, ApplicationBackendConfig, ConfiguredSupplier, correlationFields(), FAILURE_PRIORITY, IdentityResolution (+10 more)
+
+### Community 93 - "createMockBackend"
+Cohesion: 0.60
+Nodes (5): findMandate(), handleValidRequest(), submitProposal(), errorResponse(), identityKey()
+
+### Community 96 - "agent/README.md"
+Cohesion: 0.20
+Nodes (8): Drafting from plain English, Mandate planning, Mandate planning and the bounded shopper, Tests, Acceptance, Interface, Output and authority, Saved shopper reviews
 
 ## Knowledge Gaps
-- **7 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **8 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Durable ledger (M2 slice — authority + reservations)` connect `README.md` to `application.test.ts`, `execution/worker.ts`?**
-  _High betweenness centrality (0.058) - this node is a cross-community bridge._
+- **Why does `Durable ledger (M2 slice — authority + reservations)` connect `README.md` to `paypal-provider.ts`, `execution/worker.ts`?**
+  _High betweenness centrality (0.060) - this node is a cross-community bridge._
 - **Are the 4 inferred relationships involving `openLedgerStore()` (e.g. with `Change (exact)` and `Minors`) actually correct?**
   _`openLedgerStore()` has 4 INFERRED edges - model-reasoned connections that need verification._
-- **Should `application.test.ts` be split into smaller, more focused modules?**
-  _Cohesion score 0.11605937921727395 - nodes in this community are weakly interconnected._
-- **Why does `runTransaction()` connect `application.test.ts` to `paypal-provider.ts`, `createExecutionWorker`, `README.md`, `paypal-provider.test.ts`, `worker-paypal.test.ts`, `ledger/store.ts`, `execution/worker.ts`, `cli/src/backend.test.ts`, `Unit 2 result: trusted authority and SQLite atomic reservations`, `authority.ts`, `application.ts`, `execution/worker.test.ts`?**
-  _High betweenness centrality (0.047) - this node is a cross-community bridge._
 - **Should `paypal-spike.ts` be split into smaller, more focused modules?**
   _Cohesion score 0.11083743842364532 - nodes in this community are weakly interconnected._
-- **Why does `Hackathon project: an AI purchasing agent that can't overspend` connect `Hackathon project: an AI purchasing agent that can't overspend` to `README.md`?**
-  _High betweenness centrality (0.027) - this node is a cross-community bridge._
+- **Why does `runTransaction()` connect `paypal-provider.ts` to `execution/worker.test.ts`, `createExecutionWorker`, `README.md`, `worker-paypal.test.ts`, `canonicalize`, `paypal-provider.test.ts`, `execution/worker.ts`, `Unit 2 result: trusted authority and SQLite atomic reservations`, `ledger/store.ts`, `application.ts`, `cli/src/backend.ts`, `application.ts`?**
+  _High betweenness centrality (0.049) - this node is a cross-community bridge._
 - **Should `gateway.test.ts` be split into smaller, more focused modules?**
-  _Cohesion score 0.0743321718931475 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.08232118758434548 - nodes in this community are weakly interconnected._
+- **Why does `BudgetSnapshot` connect `shopper.ts` to `index.ts`, `review.ts`, `CLI-first architecture`, `execution/worker.ts`, `Acceptance evidence trail (offline, all reproducible below)`, `application.ts`?**
+  _High betweenness centrality (0.043) - this node is a cross-community bridge._
+- **Should `package.json` be split into smaller, more focused modules?**
+  _Cohesion score 0.09057971014492754 - nodes in this community are weakly interconnected._

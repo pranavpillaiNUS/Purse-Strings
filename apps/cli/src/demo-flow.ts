@@ -477,7 +477,7 @@ export function revisionSummary(draft: { budgetMinor: number; allowedSuppliers: 
  */
 export function childEnvironment(entry: 'main' | 'backend' | 'shop', args: readonly string[], env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const copy = { ...env };
-  if (entry !== 'shop' || args[0] === 'status') delete copy.ANTHROPIC_API_KEY;
+  if (entry !== 'shop' || args[0] === 'status' || args[0] === 'review') delete copy.ANTHROPIC_API_KEY;
   if (entry !== 'backend') {
     for (const name of Object.keys(copy)) {
       if (name.toUpperCase().startsWith('PAYPAL_')) delete copy[name];
@@ -700,7 +700,8 @@ async function main(): Promise<void> {
   /** --brief, because the live lines already show each call and scene 6 shows the next step. */
   function shopRun(runId: string, mandateId: string, script: string | null, accept: number[]): TraceSummary {
     const trace = local(`${runId}.jsonl`);
-    const args = ['run', '--run-id', runId, '--mandate-id', mandateId, '--brief', ...shopBackend, '--trace', trace];
+    const review = local(`${runId}.review.json`);
+    const args = ['run', '--run-id', runId, '--mandate-id', mandateId, '--brief', ...shopBackend, '--trace', trace, '--review-out', review];
     const scriptArgs = script === null ? [] : ['--scripted', script];
     run('shop', [...args, ...scriptArgs], { shown: ['run', '--run-id', runId, '--mandate-id', mandateId, '--brief', ...scriptArgs], accept });
     const summary = summarizeTrace(readFileSync(trace, 'utf8'));

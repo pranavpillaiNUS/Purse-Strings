@@ -24,6 +24,20 @@ and says how many lines it left out.
 For a scripted rehearsal, say "the scripted stand-in" wherever the narration below says
 "Claude", and omit the live-only part of scene 4 that starts "Now Claude".
 
+Each shopper run also saves `<runId>.review.json` in the take directory. To inspect
+scene 5 again without a model call or another submission:
+
+```powershell
+npm.cmd run --silent shop -- review --file .runtime/demo/recovery.review.json --brief
+```
+
+The replay is visibly historical. It shows the reservation captured before scene 6,
+even after the current ledger says the operation executed. Use `shop status` for
+current facts; keep that distinction in the recording. A replay is a saved review,
+not a recording of another live model run.
+Keep a separate `--dir` for each take or copy the review before rerunning: a normal
+simulation reset clears the previous take's files.
+
 The scripted flow passes in CI on Linux, Windows and macOS. A live take has not run on Linux or
 macOS, or on Windows with the backend's folder check on, so rehearse one first on the machine you
 record with.

@@ -159,6 +159,13 @@ named operations, with no model or key.
 it cannot be combined with `--json`. The bars show money and units **allocated**,
 meaning reserved or committed, not delivered. A reservation sets budget aside; it makes no payment.
 
+`shop run --review-out NEW.json` saves the full final review. Replay it with
+`npm run shop -- review --file NEW.json [--brief|--json]`, without another model call
+or backend request. Replays show the capture time and historical status, preserve
+unknown outcomes and give no execution instructions from saved state. `demo:flow`
+saves `<runId>.review.json` files in its take directory automatically; see
+[saved reviews](services/agent/README.md#save-and-replay-a-review).
+
 This PowerShell walkthrough uses the scripted model, so it needs no API key. The backend
 keeps its state in `.runtime/backend/`, a private folder it creates itself, and refuses an
 existing folder with wider access. If that happens, delete the folder and run the command
