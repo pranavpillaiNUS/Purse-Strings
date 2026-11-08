@@ -213,6 +213,12 @@ sandbox credentials in `.env` (it stops before any reservation without them) and
 pauses while a sandbox buyer approves the hold in a browser. The supplier order stays
 simulated in both variants, and the default flow still needs no key or network.
 
+Sandbox demo directories are retained for recovery and cannot be reset by a later
+demo command, including a default fake-only run. Use a fresh `--dir` for each sandbox
+take, for example `--dir .runtime/demo-sandbox-take-1`. For an interrupted take, use
+its original config/database with backend `status`, `audit` and
+`operation-reconcile`; keep its ledger until the provider outcome is established.
+
 The scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and on macOS with
 Node 26. Live Claude has run it only in temporary Windows copies with the backend's folder check
 skipped.

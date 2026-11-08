@@ -54,6 +54,13 @@ export type GetCaptureInput = {
   expected: ExpectedMoney;
 };
 
+export type GetOrderCaptureInput = {
+  orderId: string;
+  authorizationId: string;
+  invoiceId: string;
+  expected: ExpectedMoney;
+};
+
 export type RefundCaptureInput = {
   captureId: string;
   requestId: string;
@@ -111,8 +118,6 @@ export type AuthorizationStatusEvidence = {
   status: AuthorizationStatus;
   currency: 'SGD';
   amountMinor: number;
-  /** Validated capture-link hint from the sandbox `rel: 'capture'` link only. */
-  captureIdHint?: string;
 };
 
 export type CreateOrderOutcome =
@@ -189,6 +194,10 @@ type RawResource = {
   supplementary_data?: { related_ids?: Record<string, unknown> };
   links?: Array<{ rel?: unknown; href?: unknown }>;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
 
 type Failure =
   | { kind: 'invalid_response'; hint?: undefined }
@@ -317,30 +326,6 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
     return typeof id === 'string' && RESOURCE_ID_PATTERN.test(id) ? id : undefined;
   }
 
-  /**
-   * Unit 5: the capture link HINT on an authorization read. Links are hints,
-   * never evidence: the only requirement is that the `rel: 'capture'` link is
-   * parseable, served from the exact sandbox API origin and shaped
-   * /v2/payments/captures/{validated id}. The caller still verifies any capture
-   * through the full unit-4 getCapture binding check before trusting it.
-   */
-  function captureLinkHint(resource: RawResource): string | undefined {
-    for (const link of resource.links ?? []) {
-      if (link?.rel !== 'capture' || typeof link.href !== 'string') continue;
-      try {
-        const url = new URL(link.href);
-        if (url.origin !== SANDBOX_API_ORIGIN) continue;
-        const match = /^\/v2\/payments\/captures\/([^/]+)$/.exec(url.pathname);
-        if (!match) continue;
-        const id = decodeURIComponent(match[1]!);
-        if (RESOURCE_ID_PATTERN.test(id)) return id;
-      } catch {
-        // Unparseable hrefs are hints and never followed.
-      }
-    }
-    return undefined;
-  }
-
   /** Exact SGD/minor amount check; missing or malformed amounts are invalid_response. */
   function assessAmount(resource: RawResource, expected: ExpectedMoney): Failure | undefined {
     const amount = resource.amount;
@@ -380,7 +365,7 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
     }
   }
 
-  return {
+  const gateway = {
     /**
      * Captures against an authorization the ledger already bound. The POST endpoint is
      * the trusted parent binding; response parent evidence is only checked for
@@ -463,6 +448,62 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
           state: 'succeeded',
           resource: { authorizationId, captureId: hint, invoiceId: input.invoiceId, currency: 'SGD', amountMinor: expected.amountMinor },
         };
+      } catch (error) {
+        return unknownFromError(error);
+      }
+    },
+
+    /**
+     * Discover a response-lost capture from the persisted order's documented
+     * purchase_units[].payments history, then verify it through getCapture.
+     * No response link is followed and an absent/ambiguous capture stays unknown.
+     * PayPal Orders v2 schema: purchase_unit.payments / payment_collection.captures.
+     */
+    async getOrderCapture(input: GetOrderCaptureInput): Promise<GatewayOutcome> {
+      validateInputObject(input, 'getOrderCapture');
+      const orderId = validateIdField(input.orderId, 'orderId');
+      const authorizationId = validateIdField(input.authorizationId, 'authorizationId');
+      const invoiceId = validateHeaderIdField(input.invoiceId, 'invoiceId');
+      const expected = validateExpected(input.expected, 'getOrderCapture');
+      try {
+        const order: unknown = await client.getOrder(orderId);
+        if (!isRecord(order) || !validIdHint(order.id)) return unknownOutcome({ kind: 'invalid_response' });
+        if (order.id !== orderId || order.intent !== 'AUTHORIZE') {
+          return unknownOutcome({ kind: 'binding_unverified' });
+        }
+        if (order.status !== 'COMPLETED') return unknownOutcome({ kind: 'unconfirmed_status' });
+        if (!Array.isArray(order.purchase_units) || order.purchase_units.length !== 1) {
+          return unknownOutcome({ kind: 'invalid_response' });
+        }
+        const unit: unknown = order.purchase_units[0];
+        if (!isRecord(unit) || typeof unit.invoice_id !== 'string') return unknownOutcome({ kind: 'invalid_response' });
+        if (unit.invoice_id !== invoiceId) return unknownOutcome({ kind: 'binding_unverified' });
+        const unitAmount = assessAmount(unit as RawResource, expected);
+        if (unitAmount) return relayFailure(unitAmount);
+        const payments = unit.payments;
+        if (!isRecord(payments)) return unknownOutcome({ kind: 'invalid_response' });
+        // A present authorization list must identify this operation's one hold.
+        // The final capture read independently requires its parent authorization.
+        if (payments.authorizations !== undefined) {
+          if (!Array.isArray(payments.authorizations) || payments.authorizations.length !== 1
+            || !isRecord(payments.authorizations[0]) || payments.authorizations[0].id !== authorizationId) {
+            return unknownOutcome({ kind: 'binding_unverified' });
+          }
+        }
+        if (!Array.isArray(payments.captures) || payments.captures.length !== 1) {
+          return unknownOutcome({ kind: 'unconfirmed_status' });
+        }
+        const capture: unknown = payments.captures[0];
+        if (!isRecord(capture)) return unknownOutcome({ kind: 'invalid_response' });
+        const captureId = validIdHint(capture.id);
+        if (captureId === undefined) return unknownOutcome({ kind: 'invalid_response' });
+        for (const failure of [assessCompletion(capture as RawResource), assessAmount(capture as RawResource, expected)]) {
+          if (failure) return relayFailure(failure, captureId);
+        }
+        if (capture.invoice_id !== undefined && capture.invoice_id !== invoiceId) {
+          return unknownOutcome({ kind: 'binding_unverified', hint: captureId });
+        }
+        return await gateway.getCapture({ captureId, authorizationId, invoiceId, expected });
       } catch (error) {
         return unknownFromError(error);
       }
@@ -683,8 +724,7 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
      * Unit 5: reads an authorization's durable status. `succeeded` is the
      * read-must-verify guarantee (ID + amount binding), not a capture verdict;
      * the caller classifies statuses (CAPTURED requires follow-up through the
-     * full unit-4 getCapture binding check, using `captureIdHint` only as a
-     * validated narrowing hint).
+     * persisted order's payment history and a verified capture read).
      */
     async getAuthorization(input: GetAuthorizationInput): Promise<GetAuthorizationOutcome> {
       validateInputObject(input, 'getAuthorization');
@@ -706,7 +746,6 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
         if (!(AUTHORIZATION_STATUSES as readonly string[]).includes(authorization.status)) {
           return unknownOutcome({ kind: 'unconfirmed_status', hint });
         }
-        const captureIdHint = captureLinkHint(authorization);
         return {
           state: 'succeeded',
           resource: {
@@ -714,7 +753,6 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
             status: authorization.status as AuthorizationStatus,
             currency: 'SGD',
             amountMinor: expected.amountMinor,
-            ...(captureIdHint !== undefined ? { captureIdHint } : {}),
           },
         };
       } catch (error) {
@@ -722,6 +760,7 @@ export function createPayPalGateway(config: PayPalGatewayConfig) {
       }
     },
   };
+  return gateway;
 }
 
 export type PayPalGateway = ReturnType<typeof createPayPalGateway>;

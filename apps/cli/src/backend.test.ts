@@ -9,6 +9,7 @@ import { createWindowsPrivateDirectory, evaluateDirectorySecurity, evaluateFileS
 import type { Operation } from '../../../packages/contracts/src/backend.ts';
 import {
   canonicalize, insertEffectIntentRow, openLedgerStore, runTransaction,
+  insertPayPalBindingRow,
   setEffectStateRow, sha256Hex, updateOperationStatusRow,
 } from '../../../services/checker/src/ledger/store.ts';
 
@@ -740,6 +741,44 @@ function reserveForTest(fixture: BackendFixture, configPath = fixture.configPath
   assert.equal(rpc.status, 0, rpc.stderr);
   return (singleJsonLine(rpc.stdout, 'reserve') as { result: { operation: Operation } }).result.operation;
 }
+
+test('sandbox execution without a held authorization refuses before intent and displays the pending order id', () => {
+  const fixture = buildFixture('missing-held-authorization');
+  try {
+    const configPath = paypalConfigPath(fixture);
+    const operation = reserveForTest(fixture, configPath);
+    const args = ['--db', fixture.dbPath, '--config', configPath];
+    const invoke = () => runBackend([...args, 'operation-run', '--id', operation.id], undefined, {
+      cwd: fixture.directory, env: { ...process.env, PAYPAL_ENV: 'live' },
+    });
+    for (const withOrder of [false, true]) {
+      if (withOrder) {
+        const database = openLedgerStore(fixture.dbPath);
+        try {
+          runTransaction(database, () => insertPayPalBindingRow(database, {
+            operationId: operation.id, orderId: 'ORDER-PENDING', invoiceId: operation.id,
+            amountMinor: operation.totalMinor, createdAt: new Date().toISOString(),
+          }));
+        } finally { database.close(); }
+      }
+      const result = invoke();
+      assert.equal(result.status, 2);
+      assert.equal(result.stdout, '');
+      assert.match(result.stderr, /No held sandbox authorization exists/);
+      const database = openLedgerStore(fixture.dbPath);
+      try {
+        assert.equal(database.prepare('SELECT COUNT(*) AS n FROM effects WHERE operation_id = ?').get(operation.id)?.n, 0);
+        assert.equal(database.prepare('SELECT status FROM operations WHERE operation_id = ?').get(operation.id)?.status, 'reserved');
+      } finally { database.close(); }
+    }
+    for (const command of ['status', 'audit']) {
+      const result = runBackend([...args, command, '--id', operation.id]);
+      assert.equal(result.status, 0, result.stderr);
+      const output = singleJsonLine(result.stdout, command) as { providerIds: { orderId: string; authorizationId?: string } };
+      assert.deepEqual(output.providerIds, { orderId: 'ORDER-PENDING' });
+    }
+  } finally { fixture.close(); }
+});
 
 test('operation commands exit zero for completed failed or unresolved outcomes; JSON carries the business state', () => {
   for (const unresolved of [false, true]) {

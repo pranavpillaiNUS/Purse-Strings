@@ -386,10 +386,27 @@ test('capture lookupEffect classifies durable authorization statuses', async () 
       createdAdapter.close();
     }
 
-    // CAPTURED: resolve through the validated capture hint + full unit-4 getCapture check.
+    const capturedOrderRoute: Route = {
+      pattern: /\/v2\/checkout\/orders\/ORDTEST01$/,
+      reply: () => json({
+        id: ORDER_ID, intent: 'AUTHORIZE', status: 'COMPLETED',
+        purchase_units: [{
+          invoice_id: ledgerHarness.operationId,
+          amount: { currency_code: 'SGD', value: minorToDecimal(ledgerHarness.amountMinor) },
+          payments: {
+            authorizations: [{ id: AUTH_ID }],
+            captures: [{ id: CAPTURE_ID, status: 'COMPLETED',
+              amount: { currency_code: 'SGD', value: minorToDecimal(ledgerHarness.amountMinor) },
+              invoice_id: ledgerHarness.operationId }],
+          },
+        }],
+      }),
+    };
+    // CAPTURED: resolve through the stored order's history and a full capture read.
     const capturedAdapter = paypalAdapter(ledgerHarness, [
       tokenRoute,
       authorizationReadRoute('CAPTURED', ledgerHarness.amountMinor),
+      capturedOrderRoute,
       {
         pattern: /\/v2\/payments\/captures\/CAPTTEST01$/,
         reply: () => json({
@@ -406,7 +423,7 @@ test('capture lookupEffect classifies durable authorization statuses', async () 
       assert.equal(lookup.outcome, 'succeeded');
       if (lookup.outcome === 'succeeded') {
         assert.equal(lookup.providerId, CAPTURE_ID);
-        assert.equal((JSON.parse(lookup.responseJson) as { invoice_id: string }).invoice_id,
+        assert.equal((JSON.parse(lookup.responseJson) as { invoiceId: string }).invoiceId,
           ledgerHarness.operationId);
       }
     } finally {
@@ -417,6 +434,7 @@ test('capture lookupEffect classifies durable authorization statuses', async () 
     const contradictingAdapter = paypalAdapter(ledgerHarness, [
       tokenRoute,
       authorizationReadRoute('CAPTURED', ledgerHarness.amountMinor),
+      capturedOrderRoute,
       {
         pattern: /\/v2\/payments\/captures\/CAPTTEST01$/,
         reply: () => json({
@@ -470,11 +488,28 @@ test('capture lookupEffect classifies durable authorization statuses', async () 
     } finally {
       failedAdapter.close();
     }
-  } catch {
-    // fallthrough to cleanup below
   } finally {
     closeHarness(ledgerHarness);
   }
+});
+
+test('a released reservation cannot create a new authorization hold', async () => {
+  const harness = await createHarness('released-hold');
+  try {
+    seedBinding(harness, 'order_created');
+    const { calls, fetchFn } = harnessFetch([]);
+    const gateway = createPayPalGateway({ clientId: 'fixture-id', clientSecret: 'fixture-secret', fetchFn, timeoutMs: 50 });
+    const database = openLedgerStore(harness.databasePath);
+    try {
+      database.prepare("UPDATE reservations SET state = 'released' WHERE operation_id = ?").run(harness.operationId);
+      database.prepare("UPDATE operations SET status = 'failed' WHERE operation_id = ?").run(harness.operationId);
+      const result = await completeAuthorizationHold({ database, gateway, operationId: harness.operationId, now: TEST_CLOCK });
+      assert.ok(result.kind === 'refused');
+      assert.equal(result.code, 'operation-not-reserved');
+      assert.equal(calls.length, 0);
+      assert.equal(loadPayPalBindingRow(database, harness.operationId)?.providerState, 'order_created');
+    } finally { database.close(); }
+  } finally { closeHarness(harness); }
 });
 
 test('refund lookupEffect verifies a persisted refund id and refuses discovery without one', async () => {

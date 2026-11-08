@@ -48,7 +48,7 @@ export function demoBackendConfig(input: {
 export function sandboxCredentialRefusal(stderr: string): string | null {
   const text = inert(stderr.trim());
   if (text.includes('Sandbox credentials are not configured')) {
-    return 'Add the sandbox PayPal keys (PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET) to .env at the repository root, then run again.';
+    return 'Add the sandbox PayPal keys (PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET) to .env at the repository root, then start again with a fresh --dir.';
   }
   if (text.includes('Only the sandbox PayPal environment')) {
     return 'The credentials in this invocation are not the PayPal sandbox (PAYPAL_ENV must be "sandbox").';
@@ -78,7 +78,8 @@ Usage:
             reservation without them), the hold's approval link comes on screen, and a
             sandbox buyer must approve it in a browser before Enter continues. The
             supplier order stays simulated. Default off: no credentials, no network.
-  --dir     Working directory, cleared at the start. Default .runtime/demo.
+  --dir     Working directory. Default .runtime/demo. Fake-only runs may reuse it;
+            sandbox run state is preserved, so use a fresh directory for each run.
 
 Every date is generated from today, so the flow does not expire. Scenes: the control
 panel, a plain-English request, human confirmation, a hostile listing, a store change
@@ -454,17 +455,45 @@ function waitForEnter(prompt: string): void {
   }
 }
 
-/** Clears only a directory this command created, so a mistyped --dir cannot delete real work. */
-function prepareWorkDirectory(directory: string): void {
+const SANDBOX_WORK_MARKER = '.splittap-demo-paypal';
+
+/** A sandbox run may own an unsettled hold or capture even after it stops.
+ * Keep its recovery records, including when the next invocation is fake-only.
+ * The marker protects new runs before any backend command can have effects;
+ * config detection also protects runs made before the marker was introduced. */
+function mayContainSandboxState(directory: string): boolean {
+  if (existsSync(join(directory, SANDBOX_WORK_MARKER))) return true;
+  const runtimeExists = existsSync(join(directory, 'runtime'));
+  const configPath = join(directory, 'config.json');
+  if (!existsSync(configPath)) return runtimeExists;
+  try {
+    const config: unknown = JSON.parse(readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''));
+    if (config === null || typeof config !== 'object' || Array.isArray(config)) return runtimeExists;
+    const prior = config as { version?: unknown; paymentProvider?: unknown };
+    if (prior.paymentProvider === 'paypal-sandbox') return true;
+    return runtimeExists && (prior.version !== 1 || (prior.paymentProvider !== undefined && prior.paymentProvider !== 'fake'));
+  } catch {
+    // A missing/unreadable config is not evidence that existing runtime state
+    // belongs only to fake providers. Do not discard what cannot be classified.
+    return runtimeExists;
+  }
+}
+
+/** Clears only verified fake-only state created by this command. */
+function prepareWorkDirectory(directory: string, sandbox: boolean): void {
   const marker = join(directory, '.splittap-demo');
   if (existsSync(directory)) {
     if (readdirSync(directory).length > 0 && !existsSync(marker)) {
       throw new DemoFailure(`Refusing to clear ${directory}: this command did not create it`);
     }
+    if (mayContainSandboxState(directory)) {
+      throw new DemoFailure(`Refusing to clear ${directory}: it may contain PayPal sandbox recovery state. Keep the original database and config for backend status and operation-reconcile. Start another demo with a fresh --dir.`);
+    }
     rmSync(directory, { recursive: true, force: true });
   }
   mkdirSync(directory, { recursive: true });
   writeFileSync(marker, '');
+  if (sandbox) writeFileSync(join(directory, SANDBOX_WORK_MARKER), '');
 }
 
 async function main(): Promise<void> {
@@ -497,7 +526,7 @@ async function main(): Promise<void> {
   const tokens = { input: 0, output: 0 };
   let sceneNumber = 0;
 
-  prepareWorkDirectory(directory);
+  prepareWorkDirectory(directory, sandbox);
   const paths = {
     request: local('request.txt'),
     draftCalls: local('draft-calls.json'),

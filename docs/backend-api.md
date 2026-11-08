@@ -211,7 +211,7 @@ Operator `operation-run`, `operation-reconcile`, `status` and `audit` also carry
 the same provider at top level (`null` when unrecorded). Audit returns original
 stored event details without adding the current config's provider to history.
 When sandbox identifiers exist in ledger facts, these outputs add sanitized
-`providerIds: {authorizationId?, captureId?, refundId?}`. The shopper receives
+`providerIds: {orderId?, authorizationId?, captureId?, refundId?}`. The shopper receives
 the provider name only; payment identifiers and credentials stay backend-side.
 
 ### The sandbox-authorization lifecycle (unit 5)
@@ -231,7 +231,8 @@ execution. Flow: `rpc proposal.submit` (reserved) → operator `operation-author
   with `approvalUrl` and nothing is ever a second candidate. A stored binding
   replays the existing order through the same request id and refuses a provider
   answer naming a different order.
-- `operation-complete-authorization` calls `authorizeOrder` with request id
+- `operation-complete-authorization` requires an active reservation before it
+  can mint a hold, and calls `authorizeOrder` with request id
   `<operationId>:authorize`; PayPal's documented `ORDER_NOT_APPROVED` failure
   maps to the closed message "The sandbox buyer has not approved this hold yet"
   (exit 2, never a raw payload). Success upgrades the binding row to
@@ -242,10 +243,19 @@ execution. Flow: `rpc proposal.submit` (reserved) → operator `operation-author
   order/authorization/invoice/currency/amount columns, `provider_state`
   `order_created` → `authorization_held` are the only controlled changes); every
   write also appends `binding_created`/`binding_upgraded` audit events.
-- At execution the worker requires the capture to run under
-  `provider_state: authorization_held`; a missing (or not-yet-held) binding
-  surfaces as conservative `unknown` — authority retained, nothing released —
-  until the operator completes the hold flow.
+- `operation-run` refuses a new capture without an `authorization_held` binding
+  before loading credentials or writing an intent. The operator gets exit 2 and
+  the original reservation stays untouched. Ambiguous effects already dispatched
+  remain subject to reconciliation; they are never silently reset.
+
+Known sandbox lifecycle limits: a failed execution gate can release the local
+reservation while the unused PayPal authorization remains held. The executor does
+not automatically void that hold; local budget release is not provider hold
+release. Review the original authorization in the sandbox and retain its ledger
+until it is voided or expires. A lost refund response without a persisted refund
+ID also remains unresolved. Retry after an early `ORDER_NOT_APPROVED` response
+uses the original request ID and still needs a sandbox-account exercise; account
+replay behavior is not proven by mocks. These limits do not mark M3 complete.
 
 ### Replay, cart identity and idempotency aliases
 
@@ -348,7 +358,7 @@ Unit-5 method semantics (same evidence discipline; new outcome shapes are
 documented in the source), consuming the client's Orders v2 create/authorize and
 the authorization read:
 
-- `createAuthorizationOrder` posts `{intent:'AUTHORIZATION', purchase_units:[
+- `createAuthorizationOrder` posts `{intent:'AUTHORIZE', purchase_units:[
   {amount, invoice_id}]}` with the caller's request id. Success requires an
   order that parsed with status `CREATED`, an echoed `purchase_units[0]`
   matching the submitted amount (currency + value) and `invoice_id`, and
@@ -375,15 +385,21 @@ the authorization read:
   verified: read-back id equals the requested id and the amount matches
   `expected`. `succeeded` here is a verified RESOURCE read, not a capture
   verdict: the resource carries its durable `status`
-  (`CREATED|CAPTURED|DENIED|EXPIRED|PARTIALLY_CAPTURED|PENDING|VOIDED`) plus
-  `captureIdHint` — a narrowed hint taken ONLY from a `rel:'capture'` link whose
-  origin is the exact sandbox API origin and whose path is
-  `/v2/payments/captures/{validated id}`. The consumer of the hint must still
-  verify the capture through the full unit-4 `getCapture` binding check before
-  trusting it; links are never followed.
+  (`CREATED|CAPTURED|DENIED|EXPIRED|PARTIALLY_CAPTURED|PENDING|VOIDED`). Its
+  `rel:'capture'` link is a POST action, not a capture resource identifier.
+- `getOrderCapture` reads the binding's persisted order ID with Orders v2 GET,
+  validates the order ID, `AUTHORIZE` intent, purchase-unit invoice and all-in
+  amount, and requires one completed capture candidate of the exact amount.
+  Optional authorization history must agree with the stored authorization.
+  It then calls `getCapture` to verify that candidate's amount, invoice and
+  authorization parent independently. Missing, ambiguous or inconsistent history
+  remains unknown; it never authorizes a retry, release or refund by absence.
+  Sources: [PayPal authorization read](https://developer.paypal.com/api/payments/v2/authorizations-get),
+  [Orders read](https://developer.paypal.com/api/orders/v2/orders-get) and its
+  [payment-history schema](https://developer.paypal.com/api/orders/v2/schema.json).
 
 The execution provider (`execution/paypal-provider.ts`) classifies those reads
-for the durable worker: `CAPTURED` + verified `getCapture` → capture succeeded;
+for the durable worker: `CAPTURED` + verified order history and `getCapture` → capture succeeded;
 `DENIED|VOIDED|EXPIRED` → durable non-application evidence the worker may safely
 release on; `CREATED|PENDING` → `not_applied` (our capture never completed, so
 the worker's existing same-key/revalidation retry discipline applies);

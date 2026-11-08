@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -247,6 +247,59 @@ test('a mistyped --dir is never cleared', (t) => {
   assert.equal(readFileSync(precious, 'utf8'), 'keep me');
 });
 
+test('a previous sandbox demo keeps its ledger and intents on flagged and unflagged reruns', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-keep-sandbox-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  for (const savedBy of ['config', 'marker'] as const) {
+    const work = join(directory, savedBy);
+    mkdirSync(join(work, 'runtime'), { recursive: true });
+    writeFileSync(join(work, '.splittap-demo'), '');
+    // Older releases wrote only config. New releases also keep a marker, so
+    // losing or editing config cannot erase the evidence that this was sandbox.
+    const config = savedBy === 'config' ? '{"version":1,"paymentProvider":"paypal-sandbox"}' : '{"version":1}';
+    writeFileSync(join(work, 'config.json'), config);
+    if (savedBy === 'marker') writeFileSync(join(work, '.splittap-demo-paypal'), '');
+    const files = [
+      ['runtime/app.db', 'ledger with unresolved capture'],
+      ['runtime/app.db-wal', 'capture intent not checkpointed'],
+      ['runtime/providers.db', 'supplier order facts'],
+      ['recovery.jsonl', 'operation id and original cart'],
+    ] as const;
+    for (const [path, value] of files) writeFileSync(join(work, path), value);
+    for (const flags of [[], ['--sandbox-paypal']]) {
+      const result = spawnSync(process.execPath, [entry, ...flags, '--dir', work], {
+        cwd: root, encoding: 'utf8', input: '',
+      });
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(result.stdout, '', 'refuse before any scene or backend command');
+      assert.match(result.stderr, /PayPal sandbox recovery state/);
+      assert.match(result.stderr, /backend status and operation-reconcile/);
+      assert.match(result.stderr, /fresh --dir/);
+      assert.equal(readFileSync(join(work, 'config.json'), 'utf8'), config);
+      for (const [path, value] of files) assert.equal(readFileSync(join(work, path), 'utf8'), value);
+    }
+  }
+});
+
+test('unverifiable prior runtime state is preserved when config is missing or corrupt', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-keep-unclassified-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  for (const savedConfig of [undefined, 'not JSON', '{"version":1,"paymentProvider":"unknown"}']) {
+    const work = join(directory, savedConfig === undefined ? 'missing' : savedConfig === 'not JSON' ? 'corrupt' : 'unknown');
+    mkdirSync(join(work, 'runtime'), { recursive: true });
+    writeFileSync(join(work, '.splittap-demo'), '');
+    if (savedConfig !== undefined) writeFileSync(join(work, 'config.json'), savedConfig);
+    const ledger = join(work, 'runtime', 'app.db');
+    writeFileSync(ledger, 'keep existing recovery state');
+    const result = spawnSync(process.execPath, [entry, '--dir', work], { cwd: root, encoding: 'utf8', input: '' });
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /PayPal sandbox recovery state/);
+    assert.equal(readFileSync(ledger, 'utf8'), 'keep existing recovery state');
+    if (savedConfig !== undefined) assert.equal(readFileSync(join(work, 'config.json'), 'utf8'), savedConfig);
+  }
+});
+
 test('closed input stops the flow at the first prompt, so nothing is confirmed', (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-eof-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -452,6 +505,8 @@ test('the sandbox flag aborts before anything is reserved when the credentials a
   // The generated config did ask for the sandbox provider, and nothing was reserved.
   const generatedConfig = JSON.parse(readFileSync(join(work, 'config.json'), 'utf8')) as Record<string, unknown>;
   assert.equal(generatedConfig.paymentProvider, 'paypal-sandbox');
+  assert.equal(readFileSync(join(work, '.splittap-demo-paypal'), 'utf8'), '',
+    'sandbox recovery protection exists even when the credential probe stops before reservation');
   assert.ok(!/Recovery: |Operation: ordered|Attempted/.test(result.stdout), result.stdout);
 });
 

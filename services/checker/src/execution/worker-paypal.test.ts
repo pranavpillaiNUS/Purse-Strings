@@ -339,8 +339,22 @@ const authorizationCapturedRoute = (harness: Harness): ScriptRoute => ({
     amount: capturedAmount(harness),
     links: [
       { rel: 'self', href: `${SANDBOX}/v2/payments/authorizations/${AUTH_ID}` },
-      { rel: 'capture', href: `${SANDBOX}/v2/payments/captures/${CAPTURE_ID}` },
+      { rel: 'capture', method: 'POST', href: `${SANDBOX}/v2/payments/authorizations/${AUTH_ID}/capture` },
     ],
+  },
+});
+
+const orderCapturedRoute = (harness: Harness): ScriptRoute => ({
+  pattern: '/v2/checkout/orders/ORDDEMO0001$',
+  body: {
+    id: 'ORDDEMO0001', intent: 'AUTHORIZE', status: 'COMPLETED',
+    purchase_units: [{
+      invoice_id: harness.operationId, amount: capturedAmount(harness),
+      payments: {
+        authorizations: [{ id: AUTH_ID }],
+        captures: [{ id: CAPTURE_ID, status: 'COMPLETED', amount: capturedAmount(harness), invoice_id: harness.operationId }],
+      },
+    }],
   },
 });
 
@@ -395,7 +409,7 @@ test('a full paypal-sandbox run consumes the hold capture, keeps the fake order,
   }
 });
 
-test('SIGKILL after the PayPal capture commit recovers via getAuthorization→getCapture after mandate expiry; exactly one capture, no refund', async () => {
+test('SIGKILL after the PayPal capture commit recovers through authorization, order history and verified capture after mandate expiry', async () => {
   const harness = await createHarness('pp-w-crash');
   try {
     const logPath = `${harness.directory}/exchange-log.jsonl`;
@@ -407,6 +421,7 @@ test('SIGKILL after the PayPal capture commit recovers via getAuthorization→ge
       tokenRoute(),
       captureRoute(harness),
       authorizationCapturedRoute(harness),
+      orderCapturedRoute(harness),
       captureReadRoute(harness),
     );
     const killed = await runExecutionChild(childConfig(harness, scriptPath, TEST_CLOCK, 'run'), 'run');
@@ -433,6 +448,7 @@ test('SIGKILL after the PayPal capture commit recovers via getAuthorization→ge
       call.method === 'POST' && /authorizations\/AUTHDEMO000\/capture$/.test(call.url)).length,
       1, 'exactly one capture commit');
     assert.ok(calls.some((call) => call.url.endsWith(`/v2/payments/authorizations/${AUTH_ID}`)));
+    assert.ok(calls.some((call) => call.method === 'GET' && call.url.endsWith('/v2/checkout/orders/ORDDEMO0001')));
     assert.ok(calls.some((call) => call.url.endsWith(`/v2/payments/captures/${CAPTURE_ID}`)));
     assert.equal(calls.filter((call) => call.url.includes('/refunds/')).length, 0);
     assert.equal(bindingState(harness.databasePath, harness.operationId), 'authorization_held');

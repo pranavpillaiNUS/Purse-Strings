@@ -30,7 +30,9 @@ import {
 import {
   LedgerIdentityConflict,
   loadEffectRows,
+  loadEffectRowByKind,
   loadOperationStorageRow,
+  loadReservationRow,
   openLedgerStore,
   canonicalize,
   loadPayPalBindingRow,
@@ -493,7 +495,7 @@ function loadSandboxCredentials(explicitPath?: string): { clientId: string; clie
 }
 
 /** The JSON-line output carrying provider facts is always this constant shape. */
-type ProviderIds = { authorizationId?: string; captureId?: string; refundId?: string };
+type ProviderIds = { orderId?: string; authorizationId?: string; captureId?: string; refundId?: string };
 
 function providerIdFilter(value: string | null): string | undefined {
   if (value === null || value.length === 0) return undefined;
@@ -510,6 +512,8 @@ function providerFacts(database: DatabaseSync, operationId: string, paymentProvi
   }
   const binding = loadPayPalBindingRow(database, operationId);
   if (binding !== null) {
+    const orderId = providerIdFilter(binding.orderId);
+    if (orderId !== undefined) facts.orderId = orderId;
     const authorizationId = providerIdFilter(binding.authorizationId);
     if (authorizationId !== undefined) facts.authorizationId = authorizationId;
   }
@@ -690,6 +694,21 @@ async function runOperationCommand(
   config: LoadedConfig,
   operationId: string,
 ): Promise<number> {
+  // Missing consent is an operator refusal, not an unknown provider effect.
+  // Check before loading credentials or letting the worker persist an intent.
+  if (config.paymentProvider === 'paypal-sandbox' && name === 'operation-run') {
+    const database = openLedgerStore(applicationPath);
+    try {
+      operationRow(database, operationId);
+      const reservation = loadReservationRow(database, operationId);
+      const capture = loadEffectRowByKind(database, operationId, 'capture');
+      const binding = loadPayPalBindingRow(database, operationId);
+      if (reservation?.state === 'active' && (capture === null || capture.state === 'intent')
+        && binding?.providerState !== 'authorization_held') {
+        throw new CliError('No held sandbox authorization exists; run operation-authorize, approve as the sandbox buyer, then operation-complete-authorization before operation-run');
+      }
+    } finally { database.close(); }
+  }
   const suppliers: ExecutionSupplier[] = buildSuppliers(config).map((supplier) => ({
     supplierId: supplier.supplierId,
     catalog: supplier.catalog,

@@ -729,7 +729,7 @@ test('createAuthorizationOrder and authorizeOrder map HTTP failures and lost res
 test('getAuthorization returns the verified status read without following links', async () => {
   const { calls, fetchFn } = harness([tokenRoute(), authorizationReadRoute(
     authorizationBody({ status: 'CAPTURED', links: [...authorizationBody().links as never,
-      { rel: 'capture', href: `${SANDBOX}/v2/payments/captures/${CAPTURE_ID}` }] }),
+      { rel: 'capture', method: 'POST', href: `${SANDBOX}/v2/payments/authorizations/${AUTH_ID}/capture` }] }),
   )]);
   const outcome = await makeGateway(fetchFn).getAuthorization(getAuthorizationInput);
   assert.deepEqual(outcome, {
@@ -739,7 +739,6 @@ test('getAuthorization returns the verified status read without following links'
       status: 'CAPTURED',
       currency: 'SGD',
       amountMinor: 5540,
-      captureIdHint: CAPTURE_ID,
     },
   });
   assert.equal(calls.length, 2); // token + single read; capture links are never fetched
@@ -757,21 +756,22 @@ test('getAuthorization returns terminal hold-loss statuses as verified reads', a
   }
 });
 
-test('getAuthorization drops capture-link hints that are not exact sandbox-origin capture paths', async () => {
+test('getAuthorization never interprets action or untrusted links as capture evidence', async () => {
   for (const href of [
-    `https://evil.example/v2/payments/captures/${CAPTURE_ID}`,
+    'https://evil.example/action',
     `${SANDBOX}/v2/checkout/orders/${ORDER_ID}`,
-    `${SANDBOX}/v2/payments/captures/not%20a%20valid%20id`,
+    `${SANDBOX}/v2/payments/authorizations/${AUTH_ID}/capture`,
   ]) {
-    const { fetchFn } = harness([tokenRoute(), authorizationReadRoute(authorizationBody({
+    const { calls, fetchFn } = harness([tokenRoute(), authorizationReadRoute(authorizationBody({
       status: 'CAPTURED',
       links: [{ rel: 'capture', href }],
     }))]);
     const outcome = await makeGateway(fetchFn).getAuthorization(getAuthorizationInput);
     assert.equal(outcome.state, 'succeeded');
     if (outcome.state === 'succeeded') {
-      assert.equal(outcome.resource.captureIdHint, undefined, href);
+      assert.equal('captureIdHint' in outcome.resource, false, href);
     }
+    assert.equal(calls.length, 2, 'no response link is fetched');
   }
 });
 
@@ -832,4 +832,107 @@ test('unit-5 inputs are validated locally before any fetch', async () => {
   await rejects(gateway.authorizeOrder([1] as unknown as typeof authorizeInput), /authorizeOrder input must be an object/);
   await rejects(gateway.getAuthorization(undefined as unknown as typeof getAuthorizationInput), /getAuthorization input must be an object/);
   assert.equal(fetchCalled, 0);
+});
+
+const orderCaptureInput = { orderId: ORDER_ID, authorizationId: AUTH_ID, invoiceId: INVOICE, expected: SGD_55_40 };
+
+function capturedOrderBody(unitOverrides: Record<string, unknown> = {}, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: ORDER_ID, intent: 'AUTHORIZE', status: 'COMPLETED',
+    purchase_units: [{
+      amount: { currency_code: 'SGD', value: '55.40' }, invoice_id: INVOICE,
+      payments: { authorizations: [{ id: AUTH_ID }], captures: [captureBody()] },
+      ...unitOverrides,
+    }],
+    ...overrides,
+  };
+}
+
+test('getOrderCapture discovers the one capture from order payment history and verifies its independent resource', async () => {
+  for (const includeAuthorizations of [true, false]) {
+    const body = capturedOrderBody({ payments: {
+      ...(includeAuthorizations ? { authorizations: [{ id: AUTH_ID }] } : {}), captures: [captureBody()],
+    } }, { links: [{ rel: 'capture', href: 'https://evil.example/capture' }] });
+    const { calls, fetchFn } = harness([
+      tokenRoute(),
+      { match: /\/v2\/checkout\/orders\/ORD0001$/, reply: () => json(body) },
+      { match: /\/v2\/payments\/captures\/CAP0001$/, reply: () => json(captureBody()) },
+    ]);
+    assert.deepEqual(await makeGateway(fetchFn).getOrderCapture(orderCaptureInput), {
+      state: 'succeeded', resource: {
+        authorizationId: AUTH_ID, captureId: CAPTURE_ID, invoiceId: INVOICE, currency: 'SGD', amountMinor: 5540,
+      },
+    });
+    assert.deepEqual(calls.map(({ url }) => url), [
+      `${SANDBOX}/v1/oauth2/token`, `${SANDBOX}/v2/checkout/orders/${ORDER_ID}`, `${SANDBOX}/v2/payments/captures/${CAPTURE_ID}`,
+    ]);
+    assert.equal(calls[1]?.init?.method, 'GET');
+    assert.equal(calls[2]?.init?.method, 'GET');
+  }
+});
+
+test('getOrderCapture keeps absent, ambiguous, pending or mismatched order payment evidence unknown', async () => {
+  const cases = [
+    null,
+    capturedOrderBody({}, { id: 'OTHERORDER' }),
+    capturedOrderBody({}, { intent: 'CAPTURE' }),
+    capturedOrderBody({}, { status: 'APPROVED' }),
+    capturedOrderBody({}, { purchase_units: [] }),
+    capturedOrderBody({}, { purchase_units: [{}, {}] }),
+    capturedOrderBody({ invoice_id: 'other-operation' }),
+    capturedOrderBody({ amount: { currency_code: 'SGD', value: '55.41' } }),
+    capturedOrderBody({ amount: { currency_code: 'USD', value: '55.40' } }),
+    capturedOrderBody({ payments: {} }),
+    capturedOrderBody({ payments: { captures: [] } }),
+    capturedOrderBody({ payments: { captures: [captureBody(), captureBody()] } }),
+    capturedOrderBody({ payments: { authorizations: [{ id: 'OTHERAUTH' }], captures: [captureBody()] } }),
+    capturedOrderBody({ payments: { authorizations: [{ id: AUTH_ID }, { id: 'OTHERAUTH' }], captures: [captureBody()] } }),
+    capturedOrderBody({ payments: { captures: [captureBody({ status: 'PENDING' })] } }),
+    capturedOrderBody({ payments: { captures: [captureBody({ id: '../invalid' })] } }),
+    capturedOrderBody({ payments: { captures: [captureBody({ amount: { currency_code: 'SGD', value: '55.41' } })] } }),
+    capturedOrderBody({ payments: { captures: [captureBody({ invoice_id: 'other-operation' })] } }),
+  ];
+  for (const body of cases) {
+    const { calls, fetchFn } = harness([
+      tokenRoute(), { match: /\/v2\/checkout\/orders\/ORD0001$/, reply: () => json(body) },
+    ]);
+    const outcome = await makeGateway(fetchFn).getOrderCapture(orderCaptureInput);
+    assert.equal(outcome.state, 'unknown', JSON.stringify(body));
+    assert.equal(calls.length, 2, 'a candidate that has not passed the binding gates never triggers a capture read');
+  }
+});
+
+test('getOrderCapture requires capture resource verification even when order history claims success', async () => {
+  for (const body of [
+    captureBody({ id: 'OTHERCAPTURE' }),
+    captureBody({ supplementary_data: { related_ids: { authorization_id: 'OTHERAUTH' } } }),
+    captureBody({ supplementary_data: undefined }),
+    captureBody({ invoice_id: 'other-operation' }),
+    captureBody({ status: 'PENDING' }),
+  ]) {
+    const { calls, fetchFn } = harness([
+      tokenRoute(), { match: /\/v2\/checkout\/orders\/ORD0001$/, reply: () => json(capturedOrderBody()) },
+      { match: /\/v2\/payments\/captures\/CAP0001$/, reply: () => json(body) },
+    ]);
+    assert.equal((await makeGateway(fetchFn).getOrderCapture(orderCaptureInput)).state, 'unknown');
+    assert.equal(calls.length, 3);
+  }
+});
+
+test('getOrderCapture validates trusted bindings before fetch and reports read failures conservatively', async () => {
+  let fetchCalled = 0;
+  const gateway = makeGateway(() => { fetchCalled++; return Promise.reject(new Error('must not fetch')); });
+  for (const input of [
+    { ...orderCaptureInput, orderId: '../order' },
+    { ...orderCaptureInput, authorizationId: '' },
+    { ...orderCaptureInput, invoiceId: '' },
+    { ...orderCaptureInput, expected: { currency: 'USD', amountMinor: 5540 } },
+  ]) {
+    await assert.rejects(gateway.getOrderCapture(input as typeof orderCaptureInput), GatewayInputError);
+  }
+  assert.equal(fetchCalled, 0);
+  const http = harness([tokenRoute(), { match: /\/v2\/checkout\/orders\/ORD0001$/, reply: () => json({}, 500) }]);
+  assert.deepEqual(await makeGateway(http.fetchFn).getOrderCapture(orderCaptureInput), { state: 'unknown', reason: 'provider_error' });
+  const stalled = harness([tokenRoute(), { match: /\/v2\/checkout\/orders\/ORD0001$/, reply: () => new Promise<Response>(() => {}) }]);
+  assert.deepEqual(await makeGateway(stalled.fetchFn, 20).getOrderCapture(orderCaptureInput), { state: 'unknown', reason: 'transport' });
 });

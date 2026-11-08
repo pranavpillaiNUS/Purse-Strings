@@ -247,23 +247,24 @@ export function createExecutionProvider(config: CompositeProviderConfig): Execut
       // unverified rather than definitive.
       return { outcome: 'unknown' };
     }
-    if (read.resource.captureIdHint === undefined) {
+    if (binding.orderId === null) return { outcome: 'unknown' };
+    // PayPal's authorization capture link is a POST action, not a capture ID.
+    // Discover through the persisted order's payment history, then verify the
+    // exact capture resource. Missing or ambiguous history remains unknown.
+    const captureRead: GatewayOutcome = await gateway.getOrderCapture({
+      orderId: binding.orderId,
+      authorizationId: binding.authorizationId!,
+      invoiceId: binding.invoiceId,
+      expected,
+    });
+    if (captureRead.state !== 'succeeded' || !('captureId' in captureRead.resource)) {
       return { outcome: 'unknown' };
     }
-      const captureRead: GatewayOutcome = await gateway.getCapture({
-        captureId: read.resource.captureIdHint,
-        authorizationId: binding.authorizationId!,
-        invoiceId: binding.invoiceId,
-        expected,
-      });
-      if (captureRead.state !== 'succeeded' || !('captureId' in captureRead.resource)) {
-        return { outcome: 'unknown' };
-      }
-      return {
-        outcome: 'succeeded',
-        providerId: captureRead.resource.captureId,
-        responseJson: canonicalize(captureRead.resource),
-      };
+    return {
+      outcome: 'succeeded',
+      providerId: captureRead.resource.captureId,
+      responseJson: canonicalize(captureRead.resource),
+    };
   }
 
   async function payPalLookupRefund(key: string, operationId: string): Promise<LookupOutcome> {
@@ -533,6 +534,10 @@ export async function completeAuthorizationHold(config: HoldCommandConfig): Prom
   const { database, operationId } = config;
   const row = loadOperationStorageRow(database, operationId);
   if (row === null) return refusal('operation-not-found', 'Operation was not found');
+  const reservation = loadReservationRow(database, operationId);
+  if (reservation === null || reservation.state !== 'active') {
+    return refusal('operation-not-reserved', 'Operation is not awaiting authorization; its reservation is no longer active');
+  }
   const binding = loadPayPalBindingRow(database, operationId);
   if (binding === null) {
     return refusal('binding-missing',

@@ -80,6 +80,14 @@ says not assessed; payment doesn't mean equipment has arrived.
 
 ### Sandbox variant for scene 6 (`--sandbox-paypal`, opt-in)
 
+Use a fresh working directory for each sandbox take (`--dir
+.runtime/demo-sandbox-take-1`, then a new name for the next take). A directory
+used for the sandbox is never automatically cleared, even by a later default
+run. If a take stops, preserve its ledger, provider database and trace, and use
+the original backend config/database with `status`, `audit` and
+`operation-reconcile`. A missing or corrupt config alongside runtime state also
+prevents automatic cleanup. This protects unknown captures and pending holds.
+
 The default flow stays the one CI and first runs rely on: no key, no network, scene 6 on
 fake providers. `npm run demo:flow -- --live --pause --sandbox-paypal` connects scene 6's
 payment to the verified PayPal path instead. The generated backend config gains
