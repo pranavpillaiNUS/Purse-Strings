@@ -1,5 +1,15 @@
 # Unit 5 result: PayPal sandbox wired into durable execution (config opt-in), buyer-approval commands, provider on screen
 
+Follow-up on November 8, 2026: the delivery below is historical. Its original
+capture-recovery fixture supplied an unsupported capture-resource link on an
+authorization. The cleanup replaces that assumption with the persisted Orders
+GET payment history followed by an independently verified capture read; the
+updated SIGKILL test proves that path with fake fetch only. Account recovery is
+still unverified. The cleanup also binds provider identity to ledger history,
+preserves sandbox demo directories, refuses missing/inactive authorization
+authority, and exposes order IDs without labelling rejected holds as captures.
+Current behavior and known hold/retry/refund limits are in `docs/backend-api.md`.
+
 Date: 2026-11-07. Branch: `unit5-paypal-in-path` (fresh from `origin/main`, df5a854),
 two focused commits. Everything ran offline: NOT ONE real or sandbox PayPal request
 was made, and the buyer-approval sandbox exercise remains an explicitly authorized

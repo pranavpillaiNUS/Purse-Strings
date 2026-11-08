@@ -81,11 +81,13 @@ claimed beyond what those tests exercise.
 - PayPal: unit-4/5 gateway + injected-fetch/finite-timeout client as described in
   [backend-api.md](backend-api.md). The purchase path is wired behind the backend
   config (`paymentProvider`) with ledger binding rows (migration 3), the two
-  operator hold commands, and crash recovery through sandbox reads
-  (`worker-paypal.test.ts`). **No PayPal sandbox account behaviour has been
-  verified.** The interactive spike (`npm run spike:paypal`) exists and
-  `docs/paypal-spike.md` still records NO results; nothing in this unit changes
-  that. Real supplier quote APIs also remain unchecked.
+  operator hold commands, and recovery through authorization status, the persisted
+  order's payment history and an independent capture read (`worker-paypal.test.ts`).
+  The November 8 cleanup replaced a synthetic capture-link assumption in that
+  test. This remains a fake-fetch crash proof; no account recovery exercise ran
+  during the cleanup. Separate manual observations live in `docs/paypal-spike.md`
+  and do not establish response-loss recovery, early-approval retry or unused-hold
+  release. M3 remains incomplete. Real supplier quote APIs also remain unchecked.
 
 ### Milestones M4/M5
 
