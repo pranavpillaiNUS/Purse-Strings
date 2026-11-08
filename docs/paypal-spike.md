@@ -87,7 +87,7 @@ Run 1 facts (authorization `48N27869UF418711G`, order `4KP481773U222774K`):
 - A single buyer approval held the full S$8,000 with no fee and no risk review (`PENDING`).
 - Hold timing: created 2026-11-07T19:06:13Z, honor period ends ~2026-11-10, full expiry 2026-12-06. **Demo consequence: sandbox holds go stale inside three days, so refresh the hold on demo day instead of pre-creating one.**
 - Captures settled with fees (S$122.69 / 81.77 / 52.20 gross→net visible on re-read), and the authorization moved to `PARTIALLY_CAPTURED` with exactly 3 captures on the order.
-- **Over-capture: the surprising result.** PayPal accepted S$507.35 against a S$495.35 remainder (`COMPLETED`) — the hold is **not** a hard ceiling on this account. The checker's own amount verification in `services/checker/src/paypal/gateway.ts` (expected amount passed per capture) is therefore the *only* cap; say this honestly in the demo/write-up.
+- **Over-capture: the surprising result.** PayPal accepted S$507.35 against a S$495.35 remainder (`COMPLETED`) — the hold is **not** a hard ceiling on this account. The transactional ledger must enforce the approved total across commitments and active reservations. Gateway checks verify each capture's expected amount; they do not establish the cumulative budget ceiling. State the ledger's role honestly in the demo/write-up.
 - The earlier run `spike-20261107190056` ended with `buyer cancelled` at the approval page (login trouble before the dashboard credentials were recovered); order `9TK54416118491612` — no hold was exercised, no state to clean up.
 - Raw request/response excerpts for this run (with PayPal `debug_id`s) stay in `spike-logs/` (gitignored); they are not reproduced in this file.
 
@@ -95,7 +95,7 @@ Run 2 facts (`--finish=final --refund`, run `spike-20261108062830`, authorizatio
 
 - Reproduces every run-1 result and adds the partial refund: refund `5MV8654727882740K` for `100.00` of capture `3HR51156CD066832X` came back `COMPLETED`, and a fresh capture read showed `PARTIALLY_REFUNDED`.
 - **Racing bug found and fixed.** Two earlier `--finish=final` attempts (`spike-20261108061154`, `spike-20261108061237`) died with `422 ORDER_NOT_APPROVED` on the authorize: the buyer's browser hits our local `/return` before PayPal's server-side approval state settles, so an immediate `authorizeOrder` can replay before the order is authorizable. The spike now retries `authorizeOrder` briefly on `ORDER_NOT_APPROVED` (up to 6 attempts with backoff); a genuinely unapproved order still fails after the window.
-- Over-capture warning held again: `507.35` accepted against a `495.35` remainder (`COMPLETED`). The checker's per-capture amount verification remains the only budget cap — state this in the demo and write-up.
+- Over-capture warning held again: `507.35` accepted against a `495.35` remainder (`COMPLETED`). The transactional ledger enforces the approved total; per-capture verification checks the individual amount. The provider authorization is not a budget cap — state this in the demo and write-up.
 - The over-capture step and closing steps are one design gap: with the remainder consumed by the probe, neither void nor `final_capture=true` was exercised on this pass. Either cap the last probe to the true remainder (then void the rest) or drop the probe's amount to leave a remainder.
 - Hold timing: created 2026-11-08T06:34:08Z, honor period ends ~2026-11-11, full expiry 2026-12-07. The three-day staleness rule stands: create demo holds on demo day.
 

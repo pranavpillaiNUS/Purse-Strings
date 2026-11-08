@@ -72,9 +72,9 @@
     "semantic_hash": ""
   },
   "services/checker/scripts/paypal-spike.ts": {
-    "mtime": 1793780666.1983652,
-    "seen": 1794119018.0696917,
-    "ast_hash": "d394f93460097b7bfaac39b2dfd3ab70",
+    "mtime": 1794120391.0674157,
+    "seen": 1794120401.613863,
+    "ast_hash": "5e9e7fcd8018d4555eea0777de1cc665",
     "semantic_hash": ""
   },
   "services/checker/src/money.test.ts": {
@@ -162,9 +162,9 @@
     "semantic_hash": ""
   },
   "docs/paypal-spike.md": {
-    "mtime": 1794118128.3710115,
-    "seen": 1794119018.0696917,
-    "ast_hash": "7e8170fe13badf635ded852c5b6f26af",
+    "mtime": 1794120391.0674157,
+    "seen": 1794120401.613863,
+    "ast_hash": "d79300fbae6ec5b5b9a8a6b4be4125a0",
     "semantic_hash": ""
   },
   "docs/project-scope.md": {
