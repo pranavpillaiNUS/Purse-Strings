@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import { createMandateDraft } from '../../../services/agent/src/mandate.ts';
 import {
   awaitEnter, checkSummary, childEnvironment, demoBackendConfig, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor,
@@ -281,11 +282,49 @@ test('a previous sandbox demo keeps its ledger and intents on flagged and unflag
   }
 });
 
-test('unverifiable prior runtime state is preserved when config is missing or corrupt', (t) => {
+test('a markerless legacy sandbox ledger survives reruns after config changes to fake', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-keep-legacy-sandbox-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  for (const evidence of ['binding', 'operation_reserved', 'payment_provider_selected'] as const) {
+    const work = join(directory, evidence);
+    mkdirSync(join(work, 'runtime'), { recursive: true });
+    writeFileSync(join(work, '.splittap-demo'), '');
+    const config = '{"version":1,"paymentProvider":"fake"}';
+    writeFileSync(join(work, 'config.json'), config);
+    const ledger = join(work, 'runtime', 'app.db');
+    const database = new DatabaseSync(ledger);
+    try {
+      // The storage inspected by the operator script, with the same table and
+      // column names as a legacy ledger. No account or external call is involved.
+      database.exec(`
+        CREATE TABLE operation_paypal_bindings (operation_id TEXT PRIMARY KEY);
+        CREATE TABLE audit_events (kind TEXT, event_json TEXT);
+        CREATE TABLE effects (kind TEXT, provider_id TEXT);
+      `);
+      if (evidence === 'binding') {
+        database.prepare('INSERT INTO operation_paypal_bindings VALUES (?)').run('unsettled-sandbox-operation');
+      } else {
+        database.prepare('INSERT INTO audit_events VALUES (?, ?)').run(evidence, '{"paymentProvider":"paypal-sandbox"}');
+      }
+    } finally { database.close(); }
+    const original = readFileSync(ledger);
+    for (const flags of [[], ['--sandbox-paypal']]) {
+      const result = spawnSync(process.execPath, [entry, ...flags, '--dir', work], { cwd: root, encoding: 'utf8', input: '' });
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(result.stdout, '', 'refuse before any scene or backend command');
+      assert.match(result.stderr, /PayPal sandbox recovery state/);
+      assert.match(result.stderr, /fresh --dir/);
+      assert.deepEqual(readFileSync(ledger), original, 'the read-only inspection must leave recovery facts unchanged');
+      assert.equal(readFileSync(join(work, 'config.json'), 'utf8'), config);
+    }
+  }
+});
+
+test('unverifiable prior runtime state is preserved when config or ledger cannot be classified', (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-keep-unclassified-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  for (const savedConfig of [undefined, 'not JSON', '{"version":1,"paymentProvider":"unknown"}']) {
-    const work = join(directory, savedConfig === undefined ? 'missing' : savedConfig === 'not JSON' ? 'corrupt' : 'unknown');
+  for (const [index, savedConfig] of [undefined, 'not JSON', '{"version":1,"paymentProvider":"unknown"}', '{"version":1,"paymentProvider":"fake"}'].entries()) {
+    const work = join(directory, String(index));
     mkdirSync(join(work, 'runtime'), { recursive: true });
     writeFileSync(join(work, '.splittap-demo'), '');
     if (savedConfig !== undefined) writeFileSync(join(work, 'config.json'), savedConfig);

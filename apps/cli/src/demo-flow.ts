@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, readSync, rmSync, wri
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { DatabaseSync } from 'node:sqlite';
 
 // An operator's script. It runs the same commands a person would, each in its own
 // process, so this one holds no model key and loads no checker or payment code.
@@ -471,10 +472,38 @@ function waitForEnter(prompt: string): void {
 
 const SANDBOX_WORK_MARKER = '.splittap-demo-paypal';
 
+/** Existing config may have changed since execution. Consult the original
+ * ledger without migrations or writes before classifying its runtime state. */
+function ledgerMayContainSandboxState(path: string): boolean {
+  let database: DatabaseSync | undefined;
+  let preserve = true;
+  try {
+    database = new DatabaseSync(path, { readOnly: true });
+    const binding = database.prepare('SELECT 1 FROM operation_paypal_bindings LIMIT 1').get();
+    const providerFact = database.prepare(
+      `SELECT 1 FROM audit_events
+       WHERE kind IN ('operation_reserved', 'payment_provider_selected', 'binding_created', 'binding_upgraded')
+         AND json_type(event_json, '$.paymentProvider') IS NOT NULL
+         AND json_extract(event_json, '$.paymentProvider') IS NOT 'fake' LIMIT 1`,
+    ).get();
+    const unclassifiedEffect = database.prepare(
+      `SELECT 1 FROM effects WHERE kind IN ('capture', 'refund')
+       AND provider_id IS NOT NULL AND provider_id NOT GLOB 'fake-*' LIMIT 1`,
+    ).get();
+    preserve = binding !== undefined || providerFact !== undefined || unclassifiedEffect !== undefined;
+  } catch {
+    // Missing, unreadable or unfamiliar storage cannot establish that resetting
+    // this runtime is confined to the local simulation.
+  } finally {
+    try { database?.close(); } catch { preserve = true; }
+  }
+  return preserve;
+}
+
 /** A sandbox run may own an unsettled hold or capture even after it stops.
  * Keep its recovery records, including when the next invocation is fake-only.
  * The marker protects new runs before any backend command can have effects;
- * config detection also protects runs made before the marker was introduced. */
+ * config and ledger detection also protect runs made before that marker. */
 function mayContainSandboxState(directory: string): boolean {
   if (existsSync(join(directory, SANDBOX_WORK_MARKER))) return true;
   const runtimeExists = existsSync(join(directory, 'runtime'));
@@ -485,7 +514,9 @@ function mayContainSandboxState(directory: string): boolean {
     if (config === null || typeof config !== 'object' || Array.isArray(config)) return runtimeExists;
     const prior = config as { version?: unknown; paymentProvider?: unknown };
     if (prior.paymentProvider === 'paypal-sandbox') return true;
-    return runtimeExists && (prior.version !== 1 || (prior.paymentProvider !== undefined && prior.paymentProvider !== 'fake'));
+    if (!runtimeExists) return false;
+    if (prior.version !== 1 || (prior.paymentProvider !== undefined && prior.paymentProvider !== 'fake')) return true;
+    return ledgerMayContainSandboxState(join(directory, 'runtime', 'app.db'));
   } catch {
     // A missing/unreadable config is not evidence that existing runtime state
     // belongs only to a local simulation. Keep what cannot be classified.

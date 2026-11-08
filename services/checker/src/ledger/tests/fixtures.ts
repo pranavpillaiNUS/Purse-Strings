@@ -69,7 +69,9 @@ export function makeTempDir(prefix: string): string {
 }
 
 export function removeTempDir(directory: string): void {
-  rmSync(directory, { recursive: true, force: true });
+  // Windows can briefly retain a file handle after the child has closed.
+  // Retry transient EPERM/EBUSY cleanup errors; persistent failures still fail.
+  rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
 export function fixtureAdapter(catalog: Catalog = TEST_CATALOG): SupplierAdapter {
