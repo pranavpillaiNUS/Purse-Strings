@@ -72,9 +72,9 @@
     "semantic_hash": ""
   },
   "services/checker/scripts/paypal-spike.ts": {
-    "mtime": 1793690568.786042,
-    "seen": 1793978252.3106353,
-    "ast_hash": "77a22cba86028c112befe2b109cf6c7f",
+    "mtime": 1794120056.4380496,
+    "seen": 1794120069.4756713,
+    "ast_hash": "7702f9cd1eacaefbbbb4378eb1bfcb90",
     "semantic_hash": ""
   },
   "services/checker/src/money.test.ts": {
@@ -138,14 +138,14 @@
     "semantic_hash": ""
   },
   "AGENTS.md": {
-    "mtime": 1794076713.0037136,
-    "seen": 1794076781.76775,
+    "mtime": 1794079844.3063505,
+    "seen": 1794120069.4757051,
     "ast_hash": "975766be4d2ce6b360d23c80fda64c77",
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1794076681.8339334,
-    "seen": 1794076781.7677524,
+    "mtime": 1794079844.3063505,
+    "seen": 1794120069.4757063,
     "ast_hash": "2ba770d85ceb0ffbd7f119e239c3fb27",
     "semantic_hash": ""
   },
@@ -162,9 +162,9 @@
     "semantic_hash": ""
   },
   "docs/paypal-spike.md": {
-    "mtime": 1793690568.7820418,
-    "seen": 1793978252.3106992,
-    "ast_hash": "f324d7415a03b0e34bd24b91939594c2",
+    "mtime": 1794120056.4380496,
+    "seen": 1794120069.4757109,
+    "ast_hash": "845ca5cff7409afd88b96546cb542492",
     "semantic_hash": ""
   },
   "docs/project-scope.md": {
@@ -330,9 +330,9 @@
     "semantic_hash": ""
   },
   "apps/cli/src/backend.test.ts": {
-    "mtime": 1794075800.5770202,
-    "seen": 1794076781.7675798,
-    "ast_hash": "cb6e02fcb7e769bdfcc8fe143524947d",
+    "mtime": 1794079797.7645202,
+    "seen": 1794120069.475629,
+    "ast_hash": "7ceb376e3c6bd64ee0febfaf6a2662ae",
     "semantic_hash": ""
   },
   "apps/cli/src/backend.ts": {
@@ -660,15 +660,15 @@
     "semantic_hash": ""
   },
   "services/checker/src/paypal/gateway.test.ts": {
-    "mtime": 1794075800.500773,
-    "seen": 1794076781.76771,
-    "ast_hash": "817a75ac0e76b812e38d64a317ba4d9e",
+    "mtime": 1794079797.7687752,
+    "seen": 1794120069.4756856,
+    "ast_hash": "56df169db8c0a275316b146924071f66",
     "semantic_hash": ""
   },
   "services/checker/src/paypal/gateway.ts": {
-    "mtime": 1794075800.500773,
-    "seen": 1794076781.7677112,
-    "ast_hash": "ee9e809ac449a71dba68798cf80b0e93",
+    "mtime": 1794079797.7687752,
+    "seen": 1794120069.475686,
+    "ast_hash": "32ff04d883ca73fc7609a70aede1f67e",
     "semantic_hash": ""
   },
   ".audit/backend-delivery/unit4-result.md": {
@@ -720,15 +720,15 @@
     "semantic_hash": ""
   },
   "apps/cli/src/demo-flow.test.ts": {
-    "mtime": 1794076593.6437001,
-    "seen": 1794076781.7675855,
-    "ast_hash": "938faa06a6474753d0396dc629d765a5",
+    "mtime": 1794079844.3063505,
+    "seen": 1794120069.4756317,
+    "ast_hash": "4959679dfa67cf81b7b1155dc8ac53aa",
     "semantic_hash": ""
   },
   "apps/cli/src/demo-flow.ts": {
-    "mtime": 1794076487.2104375,
-    "seen": 1794076781.7675872,
-    "ast_hash": "6c28d8b00a52b4dc8299cb25fbee8af3",
+    "mtime": 1794079844.3063505,
+    "seen": 1794120069.4756324,
+    "ast_hash": "caf0af6f9b8f16147446db9cfd6e5203",
     "semantic_hash": ""
   },
   "apps/cli/src/format.ts": {
@@ -804,8 +804,8 @@
     "semantic_hash": ""
   },
   "docs/demo-script.md": {
-    "mtime": 1794076699.9691606,
-    "seen": 1794076781.7677581,
+    "mtime": 1794079844.3063505,
+    "seen": 1794120069.4757092,
     "ast_hash": "e29907bf91423df048d51455a43af1f2",
     "semantic_hash": ""
   },
