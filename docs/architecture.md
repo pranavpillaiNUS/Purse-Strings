@@ -21,9 +21,11 @@ select `paymentProvider: "paypal-sandbox"` to route capture/refund effects throu
 the sandbox gateway (the supplier order stays fake). The shopper is its own CLI entry
 point: it reaches the backend through the shared client, over one `rpc` child process
 per request, and never holds PayPal credentials. There is no executing payment service,
-identity system or deployed process isolation. Stage one builds no custom website; the only
-browser interaction anywhere in this scaffold is PayPal's own hosted buyer-consent page,
-reached during the operator's authorized sandbox hold steps or the sandbox spike.
+identity system or deployed process isolation. The one page we serve is the stage-two
+read-only dashboard (`npm run dashboard`): a local view built only from read commands, with
+no action of its own. The only other browser interaction is PayPal's own hosted
+buyer-consent page, reached during the operator's authorized sandbox hold steps or the
+sandbox spike.
 
 ## Repository map
 
@@ -46,7 +48,8 @@ reached during the operator's authorized sandbox hold steps or the sandbox spike
 Keep Node 24.15+ or 26+, erasable TypeScript and ESM. Use Zod for runtime validation and
 `node:test` for behavior tests. Node built-ins handle CLI arguments/files; no CLI,
 server or agent framework is needed for M0. Stdout in JSON mode contains a single
-JSON result; operational errors go to stderr. No frontend dependencies.
+JSON result; operational errors go to stderr. No frontend dependencies: the dashboard is
+plain HTML, CSS and JavaScript served by `node:http`, with no build step.
 
 The shopper uses `@anthropic-ai/sdk` through a manual Messages loop rather than an agent
 framework, because the worker must own every bound and validate every call itself. This

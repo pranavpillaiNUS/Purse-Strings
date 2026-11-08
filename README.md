@@ -4,9 +4,10 @@ Help a small-company operations manager equip new hires on time, using approved
 hardware, suppliers and an all-in budget. The AI proposes; independent rules and
 human-confirmed authority govern execution. The name is provisional.
 
-**Stage one is terminal input/output only.** Prove the purchasing core before building
-a website. The checker supports offline eligibility and simulated payment execution
-using fake providers.
+**Everything happens in the terminal.** Drafting, confirmation, authorization and execution
+are CLI commands. Stage two adds one [read-only dashboard](#dashboard) that shows what those
+commands report and can change nothing. The checker supports offline eligibility and
+simulated payment execution using fake providers.
 
 ## Start here
 
@@ -223,6 +224,33 @@ The scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and 
 Node 26. Live Claude has run it only in temporary Windows copies with the backend's folder check
 skipped.
 
+## Dashboard
+
+A read-only page that follows `demo:flow` scene by scene. It needs no key, network or extra
+install:
+
+```sh
+npm run dashboard                       # serves http://127.0.0.1:7070, follows .runtime/demo
+npm run demo:flow -- --pause            # in a second terminal; the page updates as it runs
+```
+
+It shows the current scene, the stored mandate, the ledger's budget and units, each operation
+with payment, supplier order, refund and readiness as separate facts, its audit trail, any PayPal
+sandbox IDs to match on the sandbox Activity page, and the two stores with record ages against
+the policy limit. Pass the same `--dir` as `demo:flow` to follow another take. To follow one
+mandate in any backend instead:
+
+```sh
+npm run dashboard -- --backend-db PATH --backend-config PATH --mandate-id ID --operation ID
+```
+
+It is a view, not a second ledger. It starts only read commands (backend `mandate-review`,
+`status` and `audit`, `shop status` and `store show`), each in its own process with no model key
+or PayPal detail, and `demo:flow` adds only the scene and result lines through
+`session.json` in its working directory. The server listens on 127.0.0.1, answers only to
+`127.0.0.1` or `localhost` host names, accepts only GET and HEAD, and the page loads nothing
+from elsewhere. Exit codes: 0 stopped normally, 2 a bad option or a busy port, 1 anything else.
+
 ## Status
 
 **Implemented:** runtime contracts, company-policy/mandate examples, fixture supplier,
@@ -257,9 +285,9 @@ PayPal's hosted page during the operator's own authorized steps), and the
 `packages/contracts` `paymentProvider` proposal
 through the ledger, real supplier
 execution, exceptions and equipment-readiness tracking. All will be tested through the
-CLI. No custom website is in the scaffold or stage-one acceptance; the only browser
-page involved anywhere is PayPal's own hosted buyer-consent screen during the
-optional sandbox spike.
+CLI. The only page we serve is the read-only [dashboard](#dashboard), which no stage-one
+acceptance depends on. The only other browser page involved is PayPal's own hosted
+buyer-consent screen during the sandbox hold steps or the optional spike.
 
 ## Separate PayPal feasibility spike
 

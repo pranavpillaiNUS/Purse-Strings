@@ -14,9 +14,9 @@ location on time, with spend reconciled and exceptions attributable to a human.
 transactional budget govern what can execute. Do not claim universal novelty or
 prompt-injection immunity.
 
-**Delivery constraint:** stage one uses CLI input/output exclusively. No custom
-website, frontend or web framework is built, and purchasing behavior is
-browser-free; the one browser step anywhere is PayPal's own hosted buyer-consent
+**Delivery constraint:** stage one uses CLI input/output exclusively. No web
+framework is built, the one page we serve is the stage-two read-only dashboard below, and
+purchasing behavior is browser-free; the one browser step anywhere is PayPal's own hosted buyer-consent
 page, which the operator (or demo operator) reaches only during the authorized
 sandbox hold commands or the sandbox spike, not a site we build. Build and test the
 purchasing implementation before adding any website. Later UI work calls the proven core.
@@ -72,11 +72,22 @@ execution. Stage one is complete only when CLI acceptance scenarios below are pr
 M1–M5 command names and contracts will be finalized with each implementation; do not
 add empty commands that report success. M0's fixture checks are not those implementations.
 
-## Stage two — deferred
+## Stage two — read-only dashboard started
 
-A website may later provide mandate review, exceptions, progress and readiness views.
-It must reuse the tested application core and persisted operations. No website files
-or dependencies are part of this scaffold or stage-one acceptance.
+Both people agreed on Nov 8 to start stage two with a read-only dashboard
+(`npm run dashboard`, `apps/cli/src/dashboard.ts`). It shows the demo's scene, the stored
+mandate, the ledger's budget and units, each operation's separate payment, supplier order,
+refund and readiness facts with its audit trail, and the stores. Every fact comes from an
+existing read command (backend `mandate-review`, `status` and `audit`, `shop status`,
+`store show`); `demo:flow` adds only the scene, the IDs to read and its result lines. It
+serves one page on 127.0.0.1, needs no key, and adds no frontend dependency or build step.
+Nothing in stage-one acceptance depends on it.
+
+Still deferred, each needing both people's agreement: any page that acts (mandate review and
+confirmation, approvals, exceptions, running or reconciling operations), progress and
+readiness views beyond what the ledger records, and anything served beyond this machine. A
+page that acts must reuse the tested application core and persisted operations, and keep the
+same authority boundaries as the CLI.
 
 ## Prototype boundaries
 
