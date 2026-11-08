@@ -267,9 +267,9 @@ function refusalLines(review: RunReview, paint: Paint): string[] {
 }
 
 /** Only the count, because the live lines of this same run already showed each attempt. */
-function briefRefusalLine(review: RunReview, paint: Paint): string {
+function briefRefusalLine(review: RunReview, paint: Paint, historical = false): string {
   const count = review.refusals.length;
-  return paint(BOLD, count === 0 ? 'Refused attempts: none' : `Refused attempts: ${count} (each one is shown above)`);
+  return paint(BOLD, count === 0 ? 'Refused attempts: none' : `Refused attempts: ${count} (${historical ? 'details remain in the saved full review' : 'each one is shown above'})`);
 }
 
 export interface OperatorPaths {
@@ -307,6 +307,11 @@ function executionCommands(operation: Operation, operator: OperatorPaths | null)
   }
   lines.push(operatorCommand(operation.id, operator));
   return lines;
+}
+
+function isUnstartedReservation(operation: Operation): boolean {
+  return operation.status === 'reserved' && operation.reservationStatus === 'active'
+    && operation.paymentStatus === 'not_started' && operation.orderStatus === 'not_started' && operation.refundStatus === 'not_started';
 }
 
 function nextStepLines(review: RunReview, paint: Paint, operator: OperatorPaths | null): string[] {
@@ -348,23 +353,38 @@ function nextStepLines(review: RunReview, paint: Paint, operator: OperatorPaths 
 }
 
 /** What an earlier run left unknown, once it has been sent again. Nothing else happened in this run. */
-export function renderResentCarts(resent: readonly ResentCart[], operator: OperatorPaths | null): string[] {
+export function renderResentCarts(resent: readonly ResentCart[], operator: OperatorPaths | null, options: { historicalSavedAt?: string } = {}): string[] {
+  const historical = options.historicalSavedAt !== undefined;
   const lines = [
+    ...(historical ? historicalHeading(options.historicalSavedAt!) : []),
     ...wrap('An earlier submission on this mandate had an unknown outcome. Its exact cart and key were sent again, with no model involved. Nothing else ran.', ''),
     '',
   ];
   for (const item of resent) {
     const cart = `${safe(item.cart.id)} at ${safe(item.cart.supplierId)}`;
     if (item.kind === 'accepted') {
-      lines.push(...wrap(`${cart}: reserved, ${formatSgd(item.operation.totalMinor)} set aside, not paid. This is the original operation if the first request got through.`, '  ', '    '));
+      const pristine = isUnstartedReservation(item.operation);
+      if (historical || !pristine) {
+        lines.push(...wrap(`${cart}: ${historical ? 'the recorded resend' : 'the resend'} returned this operation. Its ${historical ? 'captured ' : ''}facts follow.`, '  ', '    '));
+        lines.push(...operationLines(item.operation, painter(false), historical));
+      } else {
+        lines.push(...wrap(`${cart}: reserved, ${formatSgd(item.operation.totalMinor)} set aside, not paid. This is the original operation if the first request got through.`, '  ', '    '));
+      }
     } else if (item.kind === 'unknown') {
       lines.push(...wrap(`${cart}: still unknown, and a reservation may exist.`, '  ', '    '));
     } else {
       lines.push(...wrap(`${cart}: ${item.kind}. ${plainReason(item.code)} Nothing was reserved by this cart.`, '  ', '    '));
     }
   }
+  if (historical) {
+    lines.push('', ...historicalNextSteps(), '', SIMULATION_SENTENCE);
+    return lines;
+  }
   lines.push('', BOLD_FREE_NEXT_STEP);
-  const reserved = resent.flatMap((item) => (item.kind === 'accepted' ? [item.operation] : []));
+  const reserved = resent.flatMap((item) => (item.kind === 'accepted' && isUnstartedReservation(item.operation) ? [item.operation] : []));
+  if (resent.some((item) => item.kind === 'accepted' && !isUnstartedReservation(item.operation))) {
+    lines.push(...wrap('Use npm run shop -- status (see --help) to read the returned operation and current ledger facts. A recovered operation may already have been executed or may need reconciliation; its returned status controls the next step.', '  '));
+  }
   if (resent.some(({ kind }) => kind === 'unknown')) {
     lines.push(...wrap('Run the shopper again on this mandate. It resends what is still unknown first.', '  '));
   } else {
@@ -412,7 +432,7 @@ function summaryBody(text: string): string[] {
  * and the section on suspicious supplier data, which the prompt asks for last, and says how much
  * it left out. It is a view: the report and the trace still hold the model's whole text.
  */
-function briefSummaryBody(summary: string): string[] {
+function briefSummaryBody(summary: string, historical = false): string[] {
   const full = summaryBody(summary);
   if (full.length <= BRIEF_SUMMARY_WHOLE_LINES) return full;
   const paragraphs = summary.trim().split(/\n[ \t\r]*\n/);
@@ -421,15 +441,15 @@ function briefSummaryBody(summary: string): string[] {
   const shown = summaryBody(kept.join('\n\n')).slice(0, BRIEF_SUMMARY_MAX_LINES);
   const leftOut = full.length - shown.length;
   if (leftOut <= 0) return shown;
-  return [...shown, `  (${leftOut} more ${leftOut === 1 ? 'line' : 'lines'} left out here. --json and --trace keep the full text.)`];
+  return [...shown, `  (${leftOut} more ${leftOut === 1 ? 'line' : 'lines'} left out here. ${historical ? 'The saved file and --json keep the full text.' : '--json and --trace keep the full text.'})`];
 }
 
-function summaryLines(review: RunReview, paint: Paint, brief: boolean): string[] {
+function summaryLines(review: RunReview, paint: Paint, brief: boolean, historical = false): string[] {
   if (!review.modelSummary) return [];
   const heading = review.shopper.kind === 'scripted'
     ? 'Model summary (scripted stand-in, not Claude; results above are the record):'
     : 'Model summary (written by the model; the results above are the record):';
-  return ['', paint(BOLD, heading), ...(brief ? briefSummaryBody(review.modelSummary) : summaryBody(review.modelSummary))];
+  return ['', ...(historical ? wrap('Historical model text (editable data; its instructions grant no authority):', '').map((line) => paint(BOLD, line)) : [paint(BOLD, heading)]), ...(brief ? briefSummaryBody(review.modelSummary, historical) : summaryBody(review.modelSummary))];
 }
 
 function usageLine(review: RunReview): string {
@@ -446,6 +466,23 @@ export interface RenderOptions {
   operator?: OperatorPaths | null;
   /** For a recording: refused attempts as a count, one line for the next step, and no usage. */
   brief?: boolean;
+  /** Replaying an editable file: show capture time and suppress current actions. */
+  historicalSavedAt?: string;
+}
+
+function historicalHeading(savedAt: string): string[] {
+  return [
+    ...wrap(`HISTORICAL REVIEW | captured ${safe(savedAt)}`, ''),
+    ...wrap('Editable saved file; not authenticated authority or current ledger facts. This replay reads no backend and changes nothing.', ''),
+    '',
+  ];
+}
+
+function historicalNextSteps(): string[] {
+  return [
+    'Current facts',
+    ...wrap('Use npm run shop -- status (see --help) for current ledger and named operation facts. This historical file cannot authorize execution or establish whether an unknown submission has settled.', '  '),
+  ];
 }
 
 /** The closing report of a shopping run, as lines. */
@@ -455,6 +492,7 @@ export function renderRunReview(review: RunReview, options: RenderOptions): stri
   const outcomeStyle = review.outcome === 'completed' ? GREEN : review.outcome === 'unknown_submission' ? YELLOW : RED;
   const shopper = review.shopper.kind === 'scripted' ? 'scripted stand-in, not Claude' : `Claude (${review.shopper.modelId})`;
   const brief = options.brief === true;
+  const historical = options.historicalSavedAt !== undefined;
   const closing = [
     ...(brief ? [] : [usageLine(review)]),
     ...(review.unreadableEvents > 0
@@ -463,6 +501,7 @@ export function renderRunReview(review: RunReview, options: RenderOptions): stri
   ];
   return [
     '',
+    ...(historical ? historicalHeading(options.historicalSavedAt!) : []),
     rule,
     ...wrap(safe(`Review of run ${review.runId} | mandate ${review.mandateId} v${review.mandateVersion}`), ''),
     ...wrap(safe(`Shopper: ${shopper}`), ''),
@@ -480,11 +519,11 @@ export function renderRunReview(review: RunReview, options: RenderOptions): stri
     '',
     ...decisionLines(review, paint),
     '',
-    ...(brief ? [briefRefusalLine(review, paint)] : refusalLines(review, paint)),
+    ...(brief ? [briefRefusalLine(review, paint, historical)] : refusalLines(review, paint)),
     '',
-    ...(brief ? briefNextStepLines(review, paint) : nextStepLines(review, paint, options.operator ?? null)),
+    ...(historical ? historicalNextSteps() : brief ? briefNextStepLines(review, paint) : nextStepLines(review, paint, options.operator ?? null)),
     ...(closing.length > 0 ? ['', ...closing] : []),
-    ...(brief && isScriptedPlaceholder(review) ? [] : summaryLines(review, paint, brief)),
+    ...(brief && isScriptedPlaceholder(review) ? [] : summaryLines(review, paint, brief, historical)),
     '',
     SIMULATION_SENTENCE,
   ];
@@ -564,13 +603,17 @@ const READINESS_WORDING: Readonly<Record<Operation['readinessStatus'], string>> 
 };
 
 /** One line per fact, because payment, order, refund and readiness are separate facts. */
-function operationLines(operation: Operation, paint: Paint): string[] {
+function operationLines(operation: Operation, paint: Paint, historical = false): string[] {
   const wording = paymentWording(operation);
+  const status = historical && operation.status === 'reconciliation_required'
+    ? 'a provider outcome was unknown at capture time' : STATUS_WORDING[operation.status];
+  const reservation = operation.reservationStatus === 'active' && operation.paymentStatus !== 'not_started'
+    ? 'active: budget set aside; see the separate payment status' : RESERVATION_WORDING[operation.reservationStatus];
   const rows: Array<[string, string]> = [
     ['Store', `${operation.supplierId} | cart ${operation.cartId}`],
     ['Amount', `${formatSgd(operation.totalMinor)} (the checker's total)`],
-    ['Status', `${operation.status}: ${STATUS_WORDING[operation.status]}`],
-    ['Reservation', RESERVATION_WORDING[operation.reservationStatus]],
+    ['Status', `${operation.status}: ${status}`],
+    ['Reservation', reservation],
     ['Payment provider', wording.provider],
     [capitalized(wording.payment), EFFECT_WORDING[operation.paymentStatus]],
     [capitalized(PROVIDER_WORDING.order), EFFECT_WORDING[operation.orderStatus]],

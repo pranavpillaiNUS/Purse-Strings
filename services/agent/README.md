@@ -243,6 +243,47 @@ conclusion and its section on suspicious supplier data, and the review says how 
 it left out; `--json` and `--trace` keep the full text. Exit codes stay the same.
 `--brief` with `--json` is refused with exit 1; `--json` alone is unchanged.
 
+### Save and replay a review
+
+Add `--review-out NEW.json` to `shop run` to keep the full final review for recording
+or later inspection. It also saves a command that only resends a pending submission.
+The output directory must exist and the destination must be new; it cannot be an
+input, trace, backend database/sidecar or part of the submission journal. Publication
+uses a temporary file and a hard link in that directory, so filesystems without hard
+links are refused before shopping starts.
+
+```powershell
+npm.cmd run --silent shop -- review --file .runtime/demo/recovery.review.json --brief
+npm.cmd run --silent shop -- review --file .runtime/demo/recovery.review.json --json
+```
+
+`demo:flow` saves these files automatically: `compromised.review.json`,
+`recovery.review.json`, and `hostile-check.review.json` when that live run is used.
+They capture the shopper's review before scene 6; a reservation in that snapshot
+does not become an executed operation when replayed later.
+Use a separate `--dir` for each take or copy a saved review before reusing a
+simulation take's directory: the normal demo reset clears its previous files.
+
+Replay needs no model or backend and never loads `.env`. It still refuses a launch
+that inherited `PAYPAL_*`, like the other shopper commands. It shows the saved time,
+labels the file as editable historical data, preserves unknown outcomes and omits
+execution/retry instructions. Use `shop status` for current ledger facts. Valid JSON
+does not authenticate a saved review. Invalid, unsupported or oversized files fail
+with exit 1 and empty stdout; a valid replay exits 0 regardless of the saved outcome.
+Files are limited to 4 MiB, with no raw prompt/tool trace or backend connection paths.
+
+Run exit codes and JSON stdout remain unchanged. `--brief` saves the full review;
+`--json --review-out` keeps the existing worker report on stdout and makes the extra
+ledger read needed for the saved review. A late save failure warns on stderr while
+preserving the run's outcome, operation IDs and exit code. This feature records a
+completed command; it does not resume an interrupted worker or replace the pending
+submission journal. [Format and limits](SAVED_REVIEWS.md).
+
+When a pending cart's resend returns an operation that has since executed or
+entered reconciliation, the readable recovery output shows those returned facts.
+It does not describe that operation as an unpaid reservation or offer fresh execution
+commands from its earlier state.
+
 ### Read-only status
 
 ```powershell

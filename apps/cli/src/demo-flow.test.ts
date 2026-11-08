@@ -7,6 +7,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { createMandateDraft } from '../../../services/agent/src/mandate.ts';
+import { parseSavedReview } from '../../../services/agent/src/saved-review.ts';
 import {
   awaitEnter, checkSummary, childEnvironment, demoBackendConfig, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor,
   revisionSummary, runSandboxPayment, sandboxCredentialRefusal, scriptedDraftCalls, SANDBOX_CREDENTIAL_PROBE_ID, STALE_HOURS,
@@ -190,6 +191,7 @@ test('the model key reaches only the shopper commands that call a model', () => 
   assert.equal(childEnvironment('shop', ['run'], env).ANTHROPIC_API_KEY, 'sk-test');
   assert.equal(childEnvironment('shop', ['draft'], env).ANTHROPIC_API_KEY, 'sk-test');
   assert.equal(childEnvironment('shop', ['status'], env).ANTHROPIC_API_KEY, undefined);
+  assert.equal(childEnvironment('shop', ['review'], env).ANTHROPIC_API_KEY, undefined);
   assert.equal(childEnvironment('backend', ['audit'], env).ANTHROPIC_API_KEY, undefined);
   assert.equal(childEnvironment('main', ['store'], env).ANTHROPIC_API_KEY, undefined);
   assert.equal(childEnvironment('main', ['store'], env).PATH, 'p');
@@ -201,7 +203,7 @@ test('PayPal details reach only the backend, so the shopper can still start besi
   const backend = childEnvironment('backend', ['operation-run'], env);
   assert.equal(backend.PAYPAL_CLIENT_ID, 'id');
   assert.equal(backend.PayPal_Client_Secret, 'secret');
-  for (const [entry, args] of [['shop', ['run']], ['shop', ['draft']], ['shop', ['status']], ['main', ['store']]] as const) {
+  for (const [entry, args] of [['shop', ['run']], ['shop', ['draft']], ['shop', ['status']], ['shop', ['review']], ['main', ['store']]] as const) {
     assert.deepEqual(childEnvironment(entry, args, env), { PATH: 'p' }, `${entry} ${args[0]}`);
   }
   assert.equal(env.PAYPAL_CLIENT_ID, 'id', 'The caller keeps its own copy');
@@ -451,6 +453,31 @@ test('the whole flow runs with no key or network, twice in the same directory', 
     assert.deepEqual(accepted, []);
     assert.match(stdout, new RegExp(`Refused attempts: ${refused} \\(each one is shown above\\)`));
     assert.match(stdout, new RegExp(`Hostile listing: ${refused} attempts refused, nothing reserved`));
+
+    const compromised = parseSavedReview(JSON.parse(readFileSync(join(work, 'compromised.review.json'), 'utf8')));
+    const savedRecoveryPath = join(work, 'recovery.review.json');
+    const savedRecovery = parseSavedReview(JSON.parse(readFileSync(savedRecoveryPath, 'utf8')));
+    assert.equal(compromised.kind, 'saved-shop-review');
+    assert.equal(savedRecovery.kind, 'saved-shop-review');
+    if (compromised.kind !== 'saved-shop-review' || savedRecovery.kind !== 'saved-shop-review') assert.fail('Expected saved run reviews');
+    assert.equal(compromised.review.refusals.length, refused);
+    assert.equal(compromised.review.decisions.filter(({ decision }) => decision === 'accepted').length, 0);
+    assert.deepEqual(savedRecovery.review.decisions.map(({ decision }) => decision), ['rejected', 'accepted']);
+    assert.equal(savedRecovery.review.budget.source, 'ledger');
+    assert.equal(savedRecovery.review.budget.committedMinor, 0);
+    assert.equal(savedRecovery.review.budget.reservedMinor, 751010);
+    const recordedOperation = savedRecovery.review.decisions[1]!.operation!;
+    assert.equal(recordedOperation.status, 'reserved', 'the saved shopper review predates scene 6 execution');
+    assert.equal(recordedOperation.paymentStatus, 'not_started');
+    assert.equal(recordedOperation.orderStatus, 'not_started');
+    assert.equal(recordedOperation.paymentProvider, 'fake');
+    const replay = spawnSync(process.execPath, [join(root, 'apps/cli/src/shop.ts'), 'review', '--file', savedRecoveryPath, '--brief'], {
+      cwd: root, encoding: 'utf8', env: childEnvironment('shop', ['review'], env),
+    });
+    assert.equal(replay.status, 0, replay.stderr);
+    assert.match(replay.stdout, /HISTORICAL REVIEW/);
+    assert.match(replay.stdout, /S\$7,510\.10/);
+    assert.doesNotMatch(replay.stdout, /operation-run|operation-authorize|operation-complete-authorization|Run the shopper again/);
 
     // Brief, so the recording does not repeat itself or wrap a long command.
     assert.doesNotMatch(stdout, /^Usage:|Model summary|operation-run --id \S+\s+--db/m);
