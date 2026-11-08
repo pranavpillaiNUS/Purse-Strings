@@ -336,6 +336,9 @@ export async function runSandboxPayment(input: SandboxPaymentInput): Promise<San
   if (run.operation?.status !== 'ordered') {
     throw new DemoFailure(`The operation ended as ${JSON.stringify(run.operation?.status)}`);
   }
+  if (run.paymentProvider !== 'paypal-sandbox') {
+    throw new DemoFailure('The backend did not report paypal-sandbox; no sandbox capture is established');
+  }
   const id = (source: unknown): string | undefined =>
     typeof source === 'string' && source.length > 0 && source.length <= 64 && /^[A-Za-z0-9_-]+$/.test(source) ? source : undefined;
   const authorizationId = id(held.authorizationId) ?? id(run.providerIds?.authorizationId);

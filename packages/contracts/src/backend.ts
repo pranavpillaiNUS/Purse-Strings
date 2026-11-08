@@ -90,6 +90,9 @@ export const EffectStatusSchema = z.enum([
 
 export const ReadinessStatusSchema = z.literal('not_assessed');
 
+export const PaymentProviderSchema = z.enum(['fake', 'paypal-sandbox']);
+export type PaymentProvider = z.infer<typeof PaymentProviderSchema>;
+
 export const OperationSchema = z.object({
   id,
   mandateId: id,
@@ -103,6 +106,8 @@ export const OperationSchema = z.object({
   updatedAt: z.iso.datetime({ offset: true }),
   reservationStatus: ReservationStatusSchema,
   paymentStatus: EffectStatusSchema,
+  /** Backend-owned execution route. Older responses may omit it; absence is unknown. */
+  paymentProvider: PaymentProviderSchema.optional(),
   orderStatus: EffectStatusSchema,
   refundStatus: EffectStatusSchema,
   readinessStatus: ReadinessStatusSchema,

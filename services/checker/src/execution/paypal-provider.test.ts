@@ -91,6 +91,7 @@ async function createHarness(prefix: string): Promise<Harness> {
 
   const backend = createApplicationBackend({
     databasePath,
+    paymentProvider: 'paypal-sandbox',
     suppliers: [
       { supplierId: 'store-a', catalog: TEST_CATALOG, adapter: createFixtureSupplier(TEST_CATALOG) },
     ] as unknown as ConfiguredSupplier[],

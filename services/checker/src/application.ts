@@ -15,6 +15,7 @@ import {
   type BackendRequest,
   type BackendResponse,
   type Operation,
+  type PaymentProvider,
 } from '../../../packages/contracts/src/backend.ts';
 import type { Check, EligibilityResult } from '../../../packages/contracts/src/index.ts';
 import {
@@ -47,6 +48,7 @@ import {
   loadEffectRows,
   loadMandateTotals,
   loadOperationStorageRow,
+  loadOperationPaymentProvider,
   loadReservationRow,
   openLedgerStore,
   runTransaction,
@@ -73,6 +75,8 @@ export interface ConfiguredSupplier {
 
 export interface ApplicationBackendConfig {
   databasePath: string;
+  /** Trusted backend configuration, never part of a shopper request. */
+  paymentProvider?: PaymentProvider;
   suppliers: ReadonlyArray<ConfiguredSupplier>;
   /** Backend-owned trusted clock. Never derived from any request field. */
   clock?: () => string;
@@ -271,6 +275,7 @@ export function buildWireOperation(
     const effect = effects.find((item) => item.kind === kind);
     return effect?.state ?? 'not_started';
   };
+  const paymentProvider = loadOperationPaymentProvider(database, row.operationId);
   const wire = {
     id: row.operationId,
     mandateId: row.mandateId,
@@ -284,6 +289,7 @@ export function buildWireOperation(
     updatedAt: row.updatedAt,
     reservationStatus: reservation.state,
     paymentStatus: statusForKind('capture'),
+    ...(paymentProvider === null ? {} : { paymentProvider }),
     orderStatus: statusForKind('order'),
     refundStatus: statusForKind('refund'),
     readinessStatus: 'not_assessed' as const,
@@ -443,7 +449,7 @@ export function createApplicationBackend(config: ApplicationBackendConfig): Appl
         lines: typedCart.lines,
         idempotencyKey,
         auditKind: 'operation_reserved',
-        auditDetails: { totalMinor: quote.data.totalMinor },
+        auditDetails: { totalMinor: quote.data.totalMinor, paymentProvider: config.paymentProvider ?? 'fake' },
       });
       const row = loadOperationStorageRow(database, operationId);
       if (row === null) throw new AuthorityFailure('INTERNAL_ERROR', 'Reservation was not stored');

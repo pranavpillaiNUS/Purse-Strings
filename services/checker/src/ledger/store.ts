@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 export type { DatabaseSync };
 import { applyMigrations } from './schema.ts';
 import type { CartSubmission } from '../../../../packages/contracts/src/index.ts';
+import { PaymentProviderSchema, type PaymentProvider } from '../../../../packages/contracts/src/backend.ts';
 
 export interface MandateRow {
   mandateId: string;
@@ -519,6 +520,50 @@ export function recordAuditEvent(
   database.prepare(
     'INSERT INTO audit_events (mandate_id, operation_id, kind, event_json, created_at) VALUES (?, ?, ?, ?, ?)',
   ).run(mandateId, operationId, kind, canonicalize(details), createdAt);
+}
+
+/** Provider facts belong to the operation, never the config used to read it.
+ * Older operations can establish their route from a sandbox binding or a durable
+ * fake capture ID. Otherwise the route remains unknown until the operator runs it. */
+export function loadOperationPaymentProvider(database: DatabaseSync, operationId: string): PaymentProvider | null {
+  const facts = database.prepare(
+    `SELECT json_extract(event_json, '$.paymentProvider') AS provider FROM audit_events
+     WHERE operation_id = ? AND kind IN ('operation_reserved', 'payment_provider_selected')
+       AND json_type(event_json, '$.paymentProvider') IS NOT NULL ORDER BY event_id`,
+  ).all(operationId);
+  let provider: PaymentProvider | null = null;
+  const accept = (value: unknown): void => {
+    const parsed = PaymentProviderSchema.safeParse(value);
+    if (!parsed.success || (provider !== null && provider !== parsed.data)) {
+      throw new LedgerIdentityConflict('Stored payment provider facts conflict');
+    }
+    provider = parsed.data;
+  };
+  for (const fact of facts) accept(fact.provider);
+  if (loadPayPalBindingRow(database, operationId) !== null) accept('paypal-sandbox');
+  const capture = loadEffectRowByKind(database, operationId, 'capture');
+  if (capture?.providerId?.startsWith('fake-capture-')) accept('fake');
+  // Before provider pinning existed, PayPal could not dispatch without the
+  // durable binding above. An unbound legacy capture must resume on fake.
+  else if (provider === null && capture !== null) accept('fake');
+  return provider;
+}
+
+/** Caller holds a short write transaction. Pin before any external effect;
+ * subsequent execution or authorization cannot switch providers on retry. */
+export function bindOperationPaymentProvider(
+  database: DatabaseSync, operation: OperationStorageRow, provider: PaymentProvider, now: string,
+): void {
+  const existing = loadOperationPaymentProvider(database, operation.operationId);
+  if (existing !== null) {
+    if (existing !== provider) {
+      throw new LedgerIdentityConflict('The configured payment provider differs from the operation payment provider');
+    }
+    return;
+  }
+  recordAuditEvent(database, operation.mandateId, operation.operationId, 'payment_provider_selected', {
+    paymentProvider: provider,
+  }, now);
 }
 
 export interface MandateTotals {

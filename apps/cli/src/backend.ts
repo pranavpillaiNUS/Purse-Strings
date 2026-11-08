@@ -502,7 +502,7 @@ function providerIdFilter(value: string | null): string | undefined {
 }
 
 /** Sandbox identifiers a demo viewer can match in the sandbox Activity page. */
-function providerFacts(database: DatabaseSync, operationId: string, paymentProvider: string): ProviderIds {
+function providerFacts(database: DatabaseSync, operationId: string, paymentProvider: string | undefined): ProviderIds {
   const facts: ProviderIds = {};
   if (paymentProvider !== 'paypal-sandbox') {
     // The fake provider's ids are simulation labels, never shown as sandbox ids.
@@ -668,6 +668,7 @@ async function runRpc(applicationPath: string, config: LoadedConfig): Promise<nu
   }));
   const backend = createApplicationBackend({
     databasePath: applicationPath,
+    paymentProvider: config.paymentProvider,
     suppliers,
     clock: trustedClock,
   });
@@ -720,10 +721,10 @@ async function runOperationCommand(
     }
     const database = openLedgerStore(applicationPath);
     try {
-      const providerIds = providerFacts(database, operationId, config.paymentProvider);
+      const providerIds = providerFacts(database, operationId, outcome.operation.paymentProvider);
       emit({
         simulation: SIMULATION,
-        paymentProvider: config.paymentProvider,
+        paymentProvider: outcome.operation.paymentProvider ?? null,
         operation: outcome.operation,
         ...(Object.keys(providerIds).length > 0 ? { providerIds } : {}),
       });
@@ -828,10 +829,10 @@ async function handleCommand(command: Command): Promise<number> {
       const database = openLedgerStore(dbPath);
       try {
         const operation = wireOperation(database, operationRow(database, operationId));
-        const providerIds = providerFacts(database, operationId, config.paymentProvider);
+        const providerIds = providerFacts(database, operationId, operation.paymentProvider);
         emit({
           simulation: SIMULATION,
-          paymentProvider: config.paymentProvider,
+          paymentProvider: operation.paymentProvider ?? null,
           operation,
           ...(Object.keys(providerIds).length > 0 ? { providerIds } : {}),
         });
@@ -844,7 +845,7 @@ async function handleCommand(command: Command): Promise<number> {
       const operationId = requireFlag(command, 'id');
       const database = openLedgerStore(dbPath);
       try {
-        operationRow(database, operationId);
+        const operation = wireOperation(database, operationRow(database, operationId));
         const events = (database.prepare(
           'SELECT event_id, kind, event_json, created_at FROM audit_events WHERE operation_id = ? ORDER BY event_id',
         ).all(operationId) as Array<Record<string, unknown>>).map((row) => {
@@ -862,15 +863,13 @@ async function handleCommand(command: Command): Promise<number> {
             eventId: row.event_id,
             kind: row.kind,
             createdAt: row.created_at,
-            // The provider fact is a backend-owned output annotation derived
-            // from config, not a stored event rewrite.
-            details: { ...details, paymentProvider: config.paymentProvider },
+            details,
           };
         });
-        const providerIds = providerFacts(database, operationId, config.paymentProvider);
+        const providerIds = providerFacts(database, operationId, operation.paymentProvider);
         emit({
           simulation: SIMULATION,
-          paymentProvider: config.paymentProvider,
+          paymentProvider: operation.paymentProvider ?? null,
           operationId,
           events,
           ...(Object.keys(providerIds).length > 0 ? { providerIds } : {}),

@@ -39,7 +39,7 @@ const operation = (overrides: Partial<Operation> = {}): Operation => ({
   id: OPERATION_ID, mandateId: mandate.id, mandateVersion: 1, cartId: 'run-cart-2', supplierId: 'store-a', status: 'reserved',
   currency: 'SGD', totalMinor: 751010, createdAt: '2026-11-07T09:00:00Z', updatedAt: '2026-11-07T09:00:00Z',
   reservationStatus: 'active', paymentStatus: 'not_started', orderStatus: 'not_started', refundStatus: 'not_started',
-  readinessStatus: 'not_assessed', ...overrides,
+  readinessStatus: 'not_assessed', paymentProvider: 'fake', ...overrides,
 });
 const EVIDENCE_CODES = ['PRODUCT_EVIDENCE:LAP-14-AIR', 'STOCK_EVIDENCE:LAP-14-AIR', 'PRODUCT_EVIDENCE:MON-27-USBC', 'STOCK_EVIDENCE:MON-27-USBC', 'DELIVERY_EVIDENCE'];
 
@@ -630,7 +630,7 @@ test('status keeps reservation, payment, order, refund and readiness as separate
   assert.match(text, /\[#{28}-{2}\] S\$7,510\.10 of S\$8,000\.00 allocated/);
   assert.match(text, /engineering-laptops +\[#{10}\] 5 of 5 allocated \| 5 committed \| 0 reserved/);
   assert.match(text, new RegExp(`Operation ${OPERATION_ID}`));
-  assert.match(text, /Status +ordered: the fake order succeeded; this is not a real order/);
+  assert.match(flat(lines), /Status +ordered: the fake order succeeded; this is not a real order/);
   assert.match(text, /Reservation +consumed: now counted as committed/);
   assert.match(text, /Fake payment +succeeded/);
   assert.match(text, /Fake order +succeeded/);
@@ -655,6 +655,47 @@ test('status without operations says where to find them, and the mock says it ch
   assert.match(text, /--operation ID/);
   assert.match(text, /Contract mock: it checks nothing/);
   assert.match(text, /placeholder zeros/);
+});
+
+test('status labels sandbox, fake and absent provider facts separately, including refunds', () => {
+  const sandbox = operation({
+    paymentProvider: 'paypal-sandbox', status: 'compensated', paymentStatus: 'succeeded',
+    orderStatus: 'rejected', refundStatus: 'succeeded', reservationStatus: 'consumed',
+  });
+  const text = flat(renderStatus(buildStatusView({
+    ledger: ledger(0, 0), operations: [sandbox], backend: 'simulation-backend',
+  }), { color: false }));
+  assert.match(text, /Payment provider PayPal sandbox/);
+  assert.match(text, /PayPal sandbox payment succeeded/);
+  assert.match(text, /PayPal sandbox refund succeeded/);
+  assert.match(text, /Fake order rejected/);
+  assert.doesNotMatch(text, /fake payment|fake refund|Fake providers stand in for payment/i);
+  const { paymentProvider: _provider, ...legacy } = sandbox;
+  const legacyText = flat(renderStatus(buildStatusView({
+    ledger: ledger(0, 0), operations: [legacy], backend: 'simulation-backend',
+  }), { color: false }));
+  assert.match(legacyText, /Payment provider not recorded/);
+  assert.match(legacyText, /Payment succeeded/);
+  assert.doesNotMatch(legacyText, /Fake payment|PayPal sandbox payment/);
+  const mixed = renderStatus(buildStatusView({
+    ledger: ledger(0, 0), operations: [sandbox, operation()], backend: 'simulation-backend',
+  }), { color: false });
+  assertTerminalSafe(mixed);
+  assert.match(flat(mixed), /Fake payment not started/);
+  assert.match(flat(mixed), /PayPal sandbox payment succeeded/);
+});
+
+test('sandbox reservations print the buyer authorization steps before the operator run command', () => {
+  const review = view({});
+  review.decisions[0]!.operation = operation({ paymentProvider: 'paypal-sandbox' });
+  const lines = render(review);
+  const text = lines.join('\n');
+  assert.match(flat(lines), /Payment provider: PayPal sandbox\. Supplier orders are simulated/);
+  const authorize = text.indexOf('backend -- operation-authorize');
+  const complete = text.indexOf('backend -- operation-complete-authorization');
+  const execute = text.indexOf('backend -- operation-run');
+  assert.ok(authorize > 0 && complete > authorize && execute > complete);
+  assert.match(text, /Approve the hold as the sandbox buyer/);
 });
 
 test('provider wording lives in one constant', () => {

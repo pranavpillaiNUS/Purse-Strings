@@ -1,4 +1,5 @@
 import type { EffectKind } from '../ledger/store.ts';
+import type { PaymentProvider } from '../../../../packages/contracts/src/backend.ts';
 
 /**
  * Provider seam for durable simulated execution. The payment/supplier calls the
@@ -26,6 +27,8 @@ export type LookupOutcome =
   | /** The provider could not answer (transport/provider error). */ { outcome: 'unknown' };
 
 export interface ExecutionProvider {
+  /** Trusted adapter identity. Legacy test adapters default to fake. */
+  readonly paymentProvider?: PaymentProvider;
   applyEffect(effectKey: string, kind: EffectKind, request: unknown): Promise<ApplyOutcome>;
   lookupEffect(effectKey: string): Promise<LookupOutcome>;
 }

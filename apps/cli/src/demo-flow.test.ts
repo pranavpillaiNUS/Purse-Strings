@@ -454,3 +454,18 @@ test('the sandbox flag aborts before anything is reserved when the credentials a
   assert.equal(generatedConfig.paymentProvider, 'paypal-sandbox');
   assert.ok(!/Recovery: |Operation: ordered|Attempted/.test(result.stdout), result.stdout);
 });
+
+test('the sandbox scene never describes a fake or unlabelled execution as a sandbox capture', async () => {
+  for (const paymentProvider of ['fake', undefined]) {
+    const output: string[] = [];
+    await assert.rejects(runSandboxPayment({
+      backend: fakeBackend(
+        async () => ({ ok: true as const, data: { approvalUrl: 'https://www.sandbox.paypal.com/mock/approve' } }),
+        async () => ({ ok: true as const, data: { authorizationId: 'AUTHDEMO1' } }),
+        async () => ({ ok: true as const, data: { paymentProvider, operation: { status: 'ordered' } } }),
+      ),
+      operationId: 'op-mismatched-provider', waitForBuyer: () => {}, print: (line) => output.push(line),
+    }), /did not report paypal-sandbox/);
+    assert.doesNotMatch(output.join('\n'), /real PayPal SANDBOX capture/);
+  }
+});

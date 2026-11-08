@@ -92,6 +92,8 @@ test('rejects extra authority, price, clock and unknown envelope fields', () => 
     { ...valid, now: '2026-11-04T09:00:00Z' },
     { ...valid, params: { ...valid.params, budgetSnapshot: snapshot } },
     { ...valid, params: { ...valid.params, quote: { totalMinor: 100 } } },
+    { ...valid, params: { ...valid.params, paymentProvider: 'paypal-sandbox' } },
+    { ...valid, params: { ...valid.params, cart: { ...cart, paymentProvider: 'paypal-sandbox' } } },
     {
       ...valid,
       params: {
@@ -111,6 +113,10 @@ test('operation wire schema has only documented public fields and statuses', () 
   assert.equal(OperationSchema.safeParse({ ...operation, providerId: 'private-provider-id' }).success, false);
   assert.equal(OperationSchema.safeParse({ ...operation, status: 'paid' }).success, false);
   assert.equal(OperationSchema.safeParse({ ...operation, paymentStatus: 'captured' }).success, false);
+  for (const paymentProvider of ['fake', 'paypal-sandbox']) {
+    assert.equal(OperationSchema.parse({ ...operation, paymentProvider }).paymentProvider, paymentProvider);
+  }
+  assert.equal(OperationSchema.safeParse({ ...operation, paymentProvider: 'paypal-live' }).success, false);
 });
 
 test('parses strict labelled success and bounded error envelopes', () => {

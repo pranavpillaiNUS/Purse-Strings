@@ -74,7 +74,14 @@ authorization; order stays fake; refund path identical to unit 3 with sandbox
 capture/refund ids). Any unknown keeps authority; DENIED/VOIDED/EXPIRED reads are
 durable non-application evidence.
 
-## Operation schema proposal (needs both owners' co-sign)
+## Original operation schema proposal (superseded by issue #16 follow-up)
+
+Both owners' agreement was confirmed by Pranav on November 8, 2026. The follow-up
+implements the optional field, with **absence meaning unrecorded**, rather than
+the original implicit-fake proposal below. Provider facts now come from the
+operation's ledger history, not the reading invocation's config. See
+`docs/backend-api.md` for the current contract. The unit-5 results below remain
+the historical checks for that delivery, not validation of the follow-up.
 
 `OperationSchema` diff-ready shape (packages/contracts, do NOT land alone):
 

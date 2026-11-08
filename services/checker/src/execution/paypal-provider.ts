@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { EffectKind } from '../ledger/store.ts';
 import {
   LedgerIdentityConflict,
+  bindOperationPaymentProvider,
   canonicalize,
   insertPayPalBindingRow,
   loadEffectRowByKey,
@@ -26,10 +27,9 @@ import type { ApplyOutcome, ExecutionProvider, LookupOutcome } from './gateway.t
  * commands behind it.
  *
  * Boundaries that must not drift:
- * - The ExecutionProvider seam (`execution/gateway.ts`) is UNCHANGED. This file
- *   implements it on top of the unit-4 PayPal gateway without touching the
- *   durable worker; the worker never learns PayPal details beyond provider
- *   name strings and sanitized outcomes.
+ * - The ExecutionProvider effect methods (`execution/gateway.ts`) are unchanged.
+ *   Its paymentProvider identity lets the worker enforce the operation's bound
+ *   route; the worker sees only provider names and sanitized outcomes.
  * - The supplier ORDER kind ALWAYS goes to the fake provider store, in every
  *   configuration: "the supplier order also stays fake". Only capture and
  *   refund effects consult PayPal, and only when the operator's backend config
@@ -298,6 +298,7 @@ export function createExecutionProvider(config: CompositeProviderConfig): Execut
   }
 
   return {
+    paymentProvider: selection,
     async applyEffect(effectKey: string, kind: EffectKind, request: unknown): Promise<ApplyOutcome> {
       if (kind === 'order') {
         // The supplier order also stays fake, in every configuration.
@@ -425,6 +426,12 @@ export async function authorizeOperationHold(config: HoldCommandConfig): Promise
   if (reservation === null || reservation.state !== 'active') {
     return refusal('operation-not-reserved', 'Operation is not awaiting authorization; its reservation is no longer active');
   }
+  try {
+    runTransaction(database, () => bindOperationPaymentProvider(database, row, 'paypal-sandbox', config.now));
+  } catch (error) {
+    if (error instanceof LedgerIdentityConflict) return refusal('binding-conflict', error.message);
+    throw error;
+  }
   const existing = loadPayPalBindingRow(database, operationId);
   if (existing !== null) {
     if (existing.invoiceId !== operationId || existing.amountMinor !== reservation.amountMinor) {
@@ -530,6 +537,12 @@ export async function completeAuthorizationHold(config: HoldCommandConfig): Prom
   if (binding === null) {
     return refusal('binding-missing',
       'No authorization hold exists for this operation; operation-authorize must run first');
+  }
+  try {
+    runTransaction(database, () => bindOperationPaymentProvider(database, row, 'paypal-sandbox', config.now));
+  } catch (error) {
+    if (error instanceof LedgerIdentityConflict) return refusal('binding-conflict', error.message);
+    throw error;
   }
   if (binding.providerState === 'authorization_held') {
     return {

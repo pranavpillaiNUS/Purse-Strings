@@ -11,6 +11,7 @@ import {
 import {
   LedgerIdentityConflict,
   bindIdempotencyAlias,
+  bindOperationPaymentProvider,
   findOperationIdentities,
   insertPayPalBindingRow,
   upgradePayPalBindingRow,
@@ -18,6 +19,7 @@ import {
   loadMandateRow,
   loadMandateTotals,
   loadOperationStorageRow,
+  loadOperationPaymentProvider,
   loadPolicyRow,
   loadReservationRow,
   loadRevisionRow,
@@ -664,6 +666,36 @@ test('migration 3 adds paypal binding storage with fresh-parity invariants and i
       database.close();
     }
   } finally {
+    removeTempDir(dir);
+  }
+});
+
+test('legacy payment-provider facts remain unknown until pinned or supported by a binding, and conflicting facts refuse', () => {
+  const dir = makeTempDir('provider-history');
+  const { database, path } = freshDatabase(dir, 'ledger.db');
+  try {
+    seedAuthority(database);
+    seedReservationOperation(database, 'op-legacy');
+    seedReservationOperation(database, 'op-legacy-sandbox');
+    assert.equal(loadOperationPaymentProvider(database, 'op-legacy'), null);
+    runTransaction(database, () => {
+      bindOperationPaymentProvider(database, loadOperationStorageRow(database, 'op-legacy')!, 'fake', TEST_CLOCK);
+      insertPayPalBindingRow(database, {
+        operationId: 'op-legacy-sandbox', orderId: 'ORDER-LEGACY', invoiceId: 'op-legacy-sandbox',
+        amountMinor: TEST_CART_TOTAL_MINOR, createdAt: TEST_CLOCK,
+      });
+    });
+    assert.throws(() => runTransaction(database, () => {
+      bindOperationPaymentProvider(database, loadOperationStorageRow(database, 'op-legacy')!, 'paypal-sandbox', TEST_CLOCK);
+    }), /configured payment provider differs/);
+    assert.equal(loadOperationPaymentProvider(database, 'op-legacy-sandbox'), 'paypal-sandbox');
+    const reopened = openLedgerStore(path);
+    try { assert.equal(loadOperationPaymentProvider(reopened, 'op-legacy'), 'fake'); }
+    finally { reopened.close(); }
+    recordAuditEvent(database, 'm-1', 'op-legacy', 'payment_provider_selected', { paymentProvider: 'paypal-sandbox' }, TEST_CLOCK);
+    assert.throws(() => loadOperationPaymentProvider(database, 'op-legacy'), /facts conflict/);
+  } finally {
+    database.close();
     removeTempDir(dir);
   }
 });

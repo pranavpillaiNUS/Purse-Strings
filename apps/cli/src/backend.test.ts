@@ -6,6 +6,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { createWindowsPrivateDirectory, evaluateDirectorySecurity, evaluateFileSecurity, readWindowsSecurity } from './windows-acl.ts';
+import type { Operation } from '../../../packages/contracts/src/backend.ts';
+import {
+  canonicalize, insertEffectIntentRow, openLedgerStore, runTransaction,
+  setEffectStateRow, sha256Hex, updateOperationStatusRow,
+} from '../../../services/checker/src/ledger/store.ts';
 
 const isWindows = process.platform === 'win32';
 const windowsOnly = isWindows ? false : 'Windows access rules only';
@@ -718,6 +723,95 @@ function paypalConfigPath(fixture: BackendFixture): string {
   return path;
 }
 
+function reserveForTest(fixture: BackendFixture, configPath = fixture.configPath): Operation {
+  const args = ['--db', fixture.dbPath, '--config', configPath];
+  const draft = runBackend([...args, 'mandate-draft', '--file', fixture.draftPath]);
+  assert.equal(draft.status, 0, draft.stderr);
+  const { digest } = singleJsonLine(draft.stdout, 'draft') as { digest: string };
+  const confirm = runBackend([...args, 'mandate-confirm', '--id', 'cli-mandate', '--revision', '1', '--digest', digest]);
+  assert.equal(confirm.status, 0, confirm.stderr);
+  const rpc = runBackend([...args, 'rpc'], JSON.stringify({
+    apiVersion: '1', requestId: 'provider-test', method: 'proposal.submit',
+    params: { idempotencyKey: 'provider-key', cart: {
+      id: 'provider-cart', mandateId: 'cli-mandate', mandateVersion: 1, supplierId: 'store-a',
+      lines: [{ requirementId: 'eng-laptops', sku: 'LAP-14-AIR', quantity: 1 }],
+    } },
+  }));
+  assert.equal(rpc.status, 0, rpc.stderr);
+  return (singleJsonLine(rpc.stdout, 'reserve') as { result: { operation: Operation } }).result.operation;
+}
+
+test('operation commands exit zero for completed failed or unresolved outcomes; JSON carries the business state', () => {
+  for (const unresolved of [false, true]) {
+    const fixture = buildFixture(unresolved ? 'exit-unresolved' : 'exit-failed');
+    try {
+      const operation = reserveForTest(fixture);
+      if (unresolved) {
+        // A lost response left an unknown capture, with no established provider
+        // outcome. Reconciliation must retain its reservation and report unknown.
+        const database = openLedgerStore(fixture.dbPath);
+        try {
+          const now = new Date().toISOString();
+          const requestJson = canonicalize({ operationId: operation.id, currency: 'SGD', amountMinor: operation.totalMinor });
+          runTransaction(database, () => {
+            insertEffectIntentRow(database, {
+              effectId: 'exit-unknown', operationId: operation.id, kind: 'capture',
+              effectKey: `${operation.id}:capture`, requestJson, requestDigest: sha256Hex(requestJson), createdAt: now,
+            });
+            setEffectStateRow(database, operation.id, 'capture', 'unknown', null, null, now);
+            updateOperationStatusRow(database, operation.id, 'reconciliation_required', now);
+          });
+        } finally { database.close(); }
+      }
+      // Changed terms fail a fresh capture, and also forbid retrying an old
+      // ambiguous capture whose outcome has not been established.
+      const config = JSON.parse(readFileSync(fixture.configPath, 'utf8')) as { catalogFiles: string[] };
+      const path = config.catalogFiles[0]!;
+      const catalog = JSON.parse(readFileSync(path, 'utf8')) as { shippingMinor: number };
+      writeFileSync(path, JSON.stringify({ ...catalog, shippingMinor: catalog.shippingMinor + 100 }));
+      for (const command of ['operation-run', 'operation-reconcile']) {
+        const result = runBackend([...rootArgs(fixture), command, '--id', operation.id]);
+        assert.equal(result.status, 0, result.stderr);
+        const output = singleJsonLine(result.stdout, command) as { operation: Operation };
+        assert.equal(output.operation.status, unresolved ? 'reconciliation_required' : 'failed');
+        assert.equal(output.operation.reservationStatus, unresolved ? 'active' : 'released');
+      }
+    } finally { fixture.close(); }
+  }
+});
+
+test('operator status, audit and shopper RPC keep the reserved provider after config changes', () => {
+  for (const provider of ['fake', 'paypal-sandbox'] as const) {
+    const fixture = buildFixture(`provider-history-${provider}`);
+    try {
+      const sandboxConfig = paypalConfigPath(fixture);
+      const operation = reserveForTest(fixture, provider === 'fake' ? fixture.configPath : sandboxConfig);
+      assert.equal(operation.paymentProvider, provider);
+      const changedArgs = ['--db', fixture.dbPath, '--config', provider === 'fake' ? sandboxConfig : fixture.configPath];
+      for (const command of ['status', 'audit']) {
+        const result = runBackend([...changedArgs, command, '--id', operation.id]);
+        assert.equal(result.status, 0, result.stderr);
+        const output = singleJsonLine(result.stdout, command) as { paymentProvider: string; operation?: Operation };
+        assert.equal(output.paymentProvider, provider);
+        if (output.operation) assert.equal(output.operation.paymentProvider, provider);
+      }
+      const rpc = runBackend([...changedArgs, 'rpc'], JSON.stringify({
+        apiVersion: '1', requestId: 'provider-read', method: 'operation.get',
+        params: { mandateId: operation.mandateId, mandateVersion: 1, operationId: operation.id },
+      }));
+      assert.equal(rpc.status, 0, rpc.stderr);
+      const output = singleJsonLine(rpc.stdout, 'rpc') as { result: { operation: Operation } };
+      assert.equal(output.result.operation.paymentProvider, provider);
+      if (provider === 'paypal-sandbox') {
+        const refused = runBackend([...changedArgs, 'operation-run', '--id', operation.id]);
+        assert.equal(refused.status, 2);
+        assert.equal(refused.stdout, '');
+        assert.match(refused.stderr, /configured payment provider differs/);
+      }
+    } finally { fixture.close(); }
+  }
+});
+
 test('the default config path stays fake and the screen carries the constant provider fact', () => {
   const fixture = buildFixture('provider-screen');
   try {
@@ -759,9 +853,8 @@ test('the default config path stays fake and the screen carries the constant pro
     };
     assert.equal(auditLine.paymentProvider, 'fake');
     assert.ok(auditLine.events.length > 0);
-    for (const event of auditLine.events) {
-      assert.equal(event.details.paymentProvider, 'fake');
-    }
+    assert.ok(auditLine.events.some((event) => event.details.paymentProvider === 'fake'),
+      'the reservation stores the provider; reading audit must preserve the original event details');
   } finally {
     fixture.close();
   }

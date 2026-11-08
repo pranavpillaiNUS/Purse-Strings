@@ -178,6 +178,7 @@ export function createFakeProviderGateway(
   }
 
   const gateway: FakeProviderGateway = {
+    paymentProvider: 'fake',
     async applyEffect(effectKey: string, kind: EffectKind, request: unknown) {
       const requestJson = canonicalize(request);
       const requestDigest = sha256Hex(requestJson);

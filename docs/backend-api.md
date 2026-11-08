@@ -52,14 +52,22 @@ when the operation ends `failed` or `reconciliation_required`. `2` covers usage,
 validation and business refusals; `1` is internal. Scripts that need the
 operation's outcome must read `status`/`audit`, not the exit code.
 
+Backend JSON file inputs (config, policy, catalog and mandate draft) accept one
+leading UTF-8 BOM, including files saved by Windows PowerShell 5.1. Invalid JSON
+and oversized files still fail with exit 2. The stdin RPC envelope remains strict JSON.
+
 ## Provider selection and credentials (unit 5)
 
-`paymentProvider` is a backend-config-only field: `"fake"` (default; absent
+Payment provider selection comes only from backend config: `"fake"` (default; absent
 means fake) or `"paypal-sandbox"`. No command accepts a provider flag, and
 shopper input can never select a provider. With `paypal-sandbox`, capture and
 refund effects go through the sandbox gateway and the supplier order stays on
-the fake provider store; the provider value shown on screen is derived from
-this config and constant per invocation.
+the fake provider store. New reservations bind this choice in their immutable
+`operation_reserved` audit event, in the same transaction as budget and units.
+Reads and idempotent replays retain that provider even if config changes.
+Execution and hold commands refuse a different provider before any external
+effect; use the original config to resume that operation. Config changes select
+the provider for new operations only.
 
 Sandbox credentials flow (containment rules):
 
@@ -181,29 +189,30 @@ Closed error codes: `INVALID_REQUEST`, `UNSUPPORTED_VERSION`, `NOT_FOUND`,
 compensated), currency:"SGD", totalMinor, createdAt, updatedAt, reservationStatus
 (active|consumed|released), paymentStatus, orderStatus, refundStatus
 (not_started|intent|in_flight|unknown|succeeded|rejected), readinessStatus
-("not_assessed")`. There are no public provider IDs, effect keys or leases.
+("not_assessed"), paymentProvider?: ("fake"|"paypal-sandbox")`. There are no
+public provider IDs, effect keys or leases in the shared operation.
 
-The shared `Operation` shape itself is UNCHANGED (packages/contracts untouched;
-that upgrade stays pending both owners' co-sign). The provider fact instead rides
-on the backend-owned operator output: `operation-run`, `operation-reconcile`,
-`status` and `audit` each carry `paymentProvider: "fake" | "paypal-sandbox"`
-(derived from config, constant per invocation), `audit` annotates every event's
-`details` with the same fact, and when sandbox identifiers exist in ledger facts
-the outputs add `providerIds: {authorizationId?, captureId?, refundId?}` —
-sanitized, from provider response evidence only. Backend-owned operator outputs
-(scene/demo screens and the run review, which read these CLI lines) can word
-their statements from this field ("Fake payment provider" and "fake supplier
-order" remain the truth under the default config). Shopper-side screens consume
-backend JSON through the shared `Operation` shape instead, which carries none of
-this — scope the statement to the surface before relying on the name.
+`paymentProvider` is a backend-owned fact returned through both shared methods
+that carry an operation: `proposal.submit` and `operation.get`. It names the
+bound execution route, not proof that a payment happened; `paymentStatus` stays
+separate. Shopper inputs cannot set it. The run review and `shop status` use it
+to distinguish fake payment/refund from PayPal sandbox payment/refund, while
+supplier orders remain fake. Sandbox reservations print the authorize, buyer
+approval, complete-authorization and run steps in order.
 
-Unit-5 output changelog (default-config output compared to the pre-unit-5
-shape): `operation-run`, `operation-reconcile`, `status` and `audit` gained the
-backend-owned `paymentProvider` field on every invocation, plus an optional
-`providerIds` object on the `paypal-sandbox` selection when backend-owned ledger
-facts name sanitized sandbox identifiers. The nested `operation` object is the
-same shared shape as before; consumers that parse the old keys see the operation
-itself unchanged.
+For older operations, a stored PayPal binding establishes the sandbox provider;
+an unbound legacy capture effect can only have dispatched to the fake provider.
+Otherwise the field is absent until execution/authorization pins the route in a
+`payment_provider_selected` audit event. Absence means **not recorded**, never
+implicitly fake. Older wire responses and contract mocks may also omit it. No
+database migration is needed; the existing append-only audit ledger holds the fact.
+
+Operator `operation-run`, `operation-reconcile`, `status` and `audit` also carry
+the same provider at top level (`null` when unrecorded). Audit returns original
+stored event details without adding the current config's provider to history.
+When sandbox identifiers exist in ledger facts, these outputs add sanitized
+`providerIds: {authorizationId?, captureId?, refundId?}`. The shopper receives
+the provider name only; payment identifiers and credentials stay backend-side.
 
 ### The sandbox-authorization lifecycle (unit 5)
 
@@ -267,7 +276,8 @@ uses the real checker core and SQLite ledger) as the shopper README describes.
 
 `services/checker/src/paypal/gateway.ts` is a sandbox-only adapter over the PayPal
 REST client. It is separate from the execution provider seam
-(`services/checker/src/execution/gateway.ts`) — the seam type is unchanged — and
+(`services/checker/src/execution/gateway.ts`) — its effect methods are unchanged;
+the adapter now also declares its payment provider identity — and
 is reachable only through `execution/paypal-provider.ts` when the backend config
 selects it. It cannot resolve an authorization from an operation ID except
 through the ledger binding the operator commands wrote, and it has no
