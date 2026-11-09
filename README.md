@@ -63,8 +63,8 @@ npm run cli -- store reset --catalog services/suppliers/state/store-a.json
 
 `store reset --seed NAME` chooses the baseline: `store-a` (the default), `store-b`, or
 `store-b-hostile`, which is store-b with a prompt-injection listing. Add `--now
-ISO_TIMESTAMP` to re-date all of its evidence, which runs under the backend's real clock
-need. It keeps every status and source as written.
+ISO_TIMESTAMP` to re-date all of its evidence. Runs against the backend need this, because
+the backend uses the real clock. Re-dating keeps every status and source as written.
 
 `store set` accepts one or more of these changes:
 
