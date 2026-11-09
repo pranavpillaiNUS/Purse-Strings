@@ -9,7 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createMandateDraft } from '../../../services/agent/src/mandate.ts';
 import { parseSavedReview } from '../../../services/agent/src/saved-review.ts';
 import {
-  awaitEnter, checkSummary, childEnvironment, demoBackendConfig, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor,
+  awaitEnter, checkSummary, childEnvironment, DEFAULT_MODE_STATEMENT, demoBackendConfig, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor,
   revisionSummary, runSandboxPayment, sandboxCredentialRefusal, scriptedDraftCalls, SANDBOX_CREDENTIAL_PROBE_ID, STALE_HOURS,
   storeTable, summarizeTrace, wrapCommand, wrapLine, type DemoSession, type SandboxPaymentBackend, type StoreView,
 } from './demo-flow.ts';
@@ -219,6 +219,10 @@ test('one constant labels who executes, and the screen still says this is not Pa
   assert.match(EXECUTION_PROVIDER.label, /fake/);
   assert.match(PROVIDER_WORDING.payment, /fake/);
   assert.match(source, /Change the two together/);
+  // A default run is a simulation, and still says the sandbox path exists behind its flag.
+  assert.ok(DEFAULT_MODE_STATEMENT.includes(EXECUTION_PROVIDER.label));
+  assert.match(DEFAULT_MODE_STATEMENT, /no real money/);
+  assert.match(DEFAULT_MODE_STATEMENT, /--sandbox-paypal .*PayPal sandbox/);
 });
 
 test('the runner holds nothing: it imports only Node built-ins and starts each command separately', () => {
@@ -440,7 +444,9 @@ test('the whole flow runs with no key or network, twice in the same directory', 
     assert.match(stdout, /Fake order +succeeded/);
     assert.match(stdout, /Readiness +not assessed/);
     assert.match(stdout, /this is not PayPal and not a real order/);
-    assert.match(stdout, /PayPal is not in this path yet/);
+    // Opening and closing line; it can wrap, so compare with whitespace collapsed.
+    assert.equal(stdout.replace(/\s+/g, ' ').split(DEFAULT_MODE_STATEMENT).length - 1, 2);
+    assert.doesNotMatch(stdout, /not in this path yet/, 'PayPal is opt-in, not absent');
     // Default mode: byte-for-byte the pre-sandbox flow. No provider flag on the config,
     // no hold command, nothing of the sandbox purchase path on screen.
     assert.doesNotMatch(stdout, /operation-authorize|paypal-sandbox/i);

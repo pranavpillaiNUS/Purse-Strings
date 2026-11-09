@@ -9,14 +9,21 @@ import { DatabaseSync } from 'node:sqlite';
 // process, so this one holds no model key and loads no checker or payment code.
 
 /**
- * Who executes today, in one place, so scene 6 changes once when PayPal is connected.
- * This file may import only Node built-ins (demo-flow.test.ts checks that), so it cannot
- * share PROVIDER_WORDING in apps/cli/src/review-output.ts. Change the two together.
+ * Who executes in a default run, in one place. This file may import only Node built-ins
+ * (demo-flow.test.ts checks that), so it cannot share PROVIDER_WORDING in
+ * apps/cli/src/review-output.ts. Change the two together.
  */
 export const EXECUTION_PROVIDER = {
   label: 'fake providers',
   statement: 'Fake providers stand in for payment and the supplier: this is not PayPal and not a real order.',
 } as const;
+
+/**
+ * The opening and closing line of a default run. It says PayPal is opt-in rather than
+ * absent, because the sandbox path exists behind --sandbox-paypal.
+ */
+export const DEFAULT_MODE_STATEMENT =
+  `Simulation: no real money, suppliers or orders. Scene 6 pays over ${EXECUTION_PROVIDER.label}; --sandbox-paypal sends its capture through the PayPal sandbox instead.`;
 
 /**
  * Scene 6's wording when --sandbox-paypal is on. The money is a real PayPal sandbox
@@ -64,7 +71,7 @@ export function sandboxCredentialRefusal(stderr: string): string | null {
  */
 export const SANDBOX_CREDENTIAL_PROBE_ID = 'demo-sandbox-credential-probe';
 
-const HELP = `Repeatable end-to-end demo (simulation; no real money, suppliers, orders or PayPal)
+const HELP = `Repeatable end-to-end demo (simulation; no real money, suppliers or orders; PayPal sandbox only with --sandbox-paypal)
 
 Usage:
   npm run demo:flow -- [--live] [--pause] [--sandbox-paypal] [--dir PATH]
@@ -714,7 +721,7 @@ async function main(): Promise<void> {
   if (sandbox) {
     console.log(`Sandbox mode: scene 6's payment capture goes through the PayPal sandbox; the supplier order stays simulated.`);
   } else {
-    console.log('Simulation: no real money, suppliers or orders. PayPal is not in this path yet.');
+    say(DEFAULT_MODE_STATEMENT);
   }
 
   scene('The control panel', 'Two fake stores we run from this panel: prices, shipping, stock and records can change on cue.');
@@ -893,9 +900,9 @@ async function main(): Promise<void> {
   console.log('\n=== Result ===');
   for (const line of results) say(`  ${line}`);
   say(`Ran in ${seconds} seconds.${live ? ` Shopping used ${tokens.input} input and ${tokens.output} output tokens; drafting is on top of that.` : ''}`);
-  console.log(sandbox
+  say(sandbox
     ? 'Sandbox mode: the payment capture was the PayPal sandbox, never real money; the supplier order and both stores stayed simulated.'
-    : 'Simulation: no real money, suppliers or orders. PayPal is not in this path yet.');
+    : DEFAULT_MODE_STATEMENT);
   if (unusable.length > 0) {
     console.log('\nNot a usable take:');
     for (const problem of unusable) say(`  - ${inert(problem)}`);
