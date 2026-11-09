@@ -119,12 +119,16 @@ prevents automatic cleanup. This protects unknown captures and pending holds.
 
 The default flow stays the one CI and first runs rely on: no key, no network, scene 6 on
 fake providers. `npm run demo:flow -- --live --pause --sandbox-paypal` connects scene 6's
-payment to the verified PayPal path instead. The generated backend config gains
+payment to the configured PayPal sandbox gateway instead. The generated backend config gains
 `paymentProvider: "paypal-sandbox"` (through the strict config schema), and the supplier
-order stays simulated in every variant; only the payment capture is a real call.
+order stays simulated in every variant. The authorization and capture commands call the
+PayPal sandbox. Gateway wiring has fetch-mocked contract and crash-test coverage; the flow's
+sandbox variant still needs an account rehearsal.
 
-Before anything is reserved, the flow checks the credentials with a probe hold on an id
-that has no operation. Without sandbox credentials in `.env` it stops before scene 2 with
+Before anything is reserved, the flow asks the backend to load its sandbox credential
+configuration using an id with no operation. That probe sends no PayPal request and creates
+no hold; it checks local configuration, not whether PayPal accepts the credentials.
+Without configured sandbox credentials in `.env` or the process environment, it stops before scene 2 with
 an instruction to add them, so the run never gets halfway through. Set them up as in the
 [spike](paypal-spike.md): `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`
 (`PAYPAL_ENV=sandbox` if used), from `cp .env.example .env`. Never point the demo at live
