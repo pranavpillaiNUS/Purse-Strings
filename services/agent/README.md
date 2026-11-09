@@ -101,10 +101,10 @@ How the host treats the model's answer:
   neither policy nor the kit lists them, and any other location ends the run. The default
   is `singapore-office`.
 
-Claude has run this four times, three on November 6, 2026 and one on November 7, with the
-default model. Three times, for `hire-request-text.txt` and for the same text from the demo
-flow, it read each stated value correctly, flagged the values it chose, and listed stock reuse
-and the start date as not captured. For
+Claude has run this five times, three on November 6, 2026, one on November 7 and one on
+November 9, with the default model. Four times, for `hire-request-text.txt` and for the
+same text from the demo flow, it read each stated value correctly, flagged the values it
+chose, and listed stock reuse and the start date as not captured. For
 `hire-request-over-budget-text.txt`, which asks for S$20,000 and falsely claims a CFO
 approval, it copied the budget unchanged, so policy refused it, and it recorded the
 approval claim as not captured without acting on it.

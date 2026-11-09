@@ -107,9 +107,8 @@ WHERE THINGS STOOD ON NOV 7, 2026 (check with git and gh first, as this may have
 - Model drafting from plain English (`npm run shop -- draft`) is merged, in PR #10.
 - The demo flow, run review and `shop status` are in PRs #12 and #13. The Windows fix for issue #9
   is in draft PR #15, stacked on them, waiting for Danny's review.
-- Claude has run the whole flow live three times, against the real checker, all on Windows. Two
-  used temporary copies with the backend's folder check skipped. The Nov 9 run used the repository
-  itself with the check on. None has run on Linux or macOS.
+- Claude has run the whole flow live twice, against the real checker, in temporary Windows copies
+  with the backend's folder check skipped. No live run has used that check, on any platform.
 - The scripted `demo:flow` passes in CI on Linux, Windows and macOS.
 
 WAITING ON DANNY (flag these, don't change his code)
