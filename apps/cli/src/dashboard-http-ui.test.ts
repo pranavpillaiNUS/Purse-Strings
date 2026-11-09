@@ -20,8 +20,9 @@ function stateWithRecord(observedAt: string): DashboardState {
       currency: 'SGD', budgetMinor: 800000, purchaseBy: '2026-11-18T00:00:00.000Z', readyBy: '2026-11-19T00:00:00.000Z',
       deliveryLocationId: 'singapore-office', allowedSuppliers: ['store-a'], requirements: [], evidenceMaxAgeHours: 72,
     },
+    ledgerStatus: 'unavailable',
     ledger: null,
-    stores: [{ supplierId: 'store-a', shippingMinor: 0, deliveryBy: '2026-11-18T00:00:00.000Z', oldestRecordAt: observedAt, recordStatuses: ['verified'], products: [] }],
+    stores: [{ supplierId: 'store-a', shippingMinor: 0, deliveryBy: '2026-11-18T00:00:00.000Z', oldestRecordAt: observedAt, newestRecordAt: observedAt, recordStatuses: ['verified'], products: [] }],
     operations: [], notices: [], problems: [],
   };
 }
@@ -179,6 +180,74 @@ test('the rendered Stores evidence flags a future observation instead of describ
   await client.pollAt(future);
   assert.equal(client.recordCell().className, '');
   assert.match(client.recordCell().textContent, /^0 h old/);
+});
+
+test('an older record cannot hide a future observation, and both age warnings stay visible', async () => {
+  for (const ageHours of [1, 73]) {
+    const observedAt = new Date(Date.parse(NOW) - ageHours * HOUR_MS).toISOString();
+    const future = new Date(Date.parse(NOW) + 1).toISOString();
+    const state = stateWithRecord(observedAt);
+    state.stores[0]!.newestRecordAt = future;
+    const client = await renderClient(state);
+    assert.equal(client.recordCell().className, 'stale');
+    assert.match(client.recordCell().textContent, new RegExp(`^${ageHours} h old`));
+    assert.match(client.recordCell().textContent, /Future-dated record: not valid evidence/);
+    assert.equal(client.recordCell().textContent.includes('past the 72 h policy limit'), ageHours > 72);
+
+    // The same cached timestamps become current without a backend state change.
+    await client.pollAt(future);
+    assert.equal(client.recordCell().className === 'stale', ageHours > 72);
+    assert.doesNotMatch(client.recordCell().textContent, /Future-dated/);
+  }
+});
+
+function budgetCard(app: ClientNode): ClientNode {
+  const budget = descendants(app, (node) => node.tagName === 'section')
+    .find((node) => node.childNodes[0]?.textContent.startsWith('Budget'));
+  assert.ok(budget, 'the page renders its Budget card');
+  return budget;
+}
+
+test('an unavailable ledger never implies an unconfirmed mandate or an absence of reservations', async () => {
+  // The mandate card's own status cannot change what a failed ledger read means.
+  for (const confirmation of ['confirmed', 'unconfirmed', 'unknown', null] as const) {
+    const state = stateWithRecord(NOW);
+    if (confirmation === null) state.mandate = null;
+    else state.mandate!.confirmationStatus = confirmation;
+    state.problems = ['Ledger (shop status): the read failed'];
+    const budget = budgetCard((await renderClient(state)).app);
+    assert.match(budget.textContent, /Budget and allocated units are unavailable/, String(confirmation));
+    assert.doesNotMatch(budget.textContent, /once a person confirms|nothing can be reserved/);
+  }
+});
+
+test('before a mandate exists, or while the backend refuses an unconfirmed one, the ledger is not called unavailable', async () => {
+  for (const [kind, ledgerStatus] of [['demo', 'no-mandate'], ['demo', 'unconfirmed'], ['backend', 'unconfirmed']] as const) {
+    const state = stateWithRecord(NOW);
+    state.source.kind = kind;
+    // The opening scenes have no mandate yet. A followed backend cannot review an
+    // unconfirmed mandate without its revision, so it has no mandate card either.
+    state.mandate = null;
+    state.ledgerStatus = ledgerStatus;
+    if (kind === 'demo') state.demo = {
+      mode: 'scripted', paymentProvider: 'fake', startedAt: NOW, updatedAt: NOW, scenes: ['One', 'Two'], scene: 1,
+      results: [], waiting: null, finished: false, failure: null,
+    };
+    else state.notices = ['The backend has no confirmed active revision for this mandate.'];
+    const client = await renderClient(state);
+    assert.doesNotMatch(client.app.textContent, /Waiting for the demo|npm run demo:flow/, `${kind} ${ledgerStatus}`);
+    const budget = budgetCard(client.app);
+    assert.match(budget.textContent, /Shown once a person confirms the mandate/);
+    assert.doesNotMatch(budget.textContent, /unavailable/);
+  }
+});
+
+test('only a demo that has not started shows the waiting screen', async () => {
+  const state = stateWithRecord(NOW);
+  Object.assign(state, { source: { kind: 'demo', label: '.runtime/demo' }, mandate: null, ledgerStatus: 'no-mandate', stores: [], notices: ['Waiting for npm run demo:flow to start in .runtime/demo.'] });
+  const client = await renderClient(state);
+  assert.match(client.app.textContent, /Waiting for the demo/);
+  assert.equal(descendants(client.app, (node) => node.tagName === 'section' && node.className === 'card').length, 0);
 });
 
 test('the rendered mandate distinguishes trusted confirmation, refusal and unknown status in both dashboard modes', async () => {

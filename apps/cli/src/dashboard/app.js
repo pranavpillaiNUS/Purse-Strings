@@ -159,8 +159,13 @@
   function renderBudget(state) {
     const ledger = state.ledger;
     if (!ledger) {
+      // Only the server knows why the ledger is absent. Anything other than "not
+      // asked yet" or the backend's exact refusal means reservations are unknown.
+      const message = state.ledgerStatus === 'no-mandate' || state.ledgerStatus === 'unconfirmed'
+        ? 'Shown once a person confirms the mandate. Until then nothing can be reserved.'
+        : 'Budget and allocated units are unavailable. The ledger read did not succeed, so current reservations are unknown.';
       return card('Budget', 'from the ledger',
-        h('p', { class: 'placeholder' }, 'Shown once a person confirms the mandate. Until then nothing can be reserved.'));
+        h('p', { class: 'placeholder' }, message));
     }
     const { totalMinor, committedMinor, reservedMinor, remainingMinor } = ledger.budget;
     const roles = new Map((state.mandate?.requirements ?? []).map((item) => [item.id, item.role]));
@@ -267,12 +272,13 @@
     const now = Date.now();
     const recordCells = stores.map((store) => {
       const ageMs = now - Date.parse(store.oldestRecordAt);
-      const future = ageMs < 0;
+      const future = Date.parse(store.newestRecordAt) > now;
       const stale = limit !== null && ageMs > limit * HOUR_MS;
       const age = Math.floor(Math.max(0, ageMs) / HOUR_MS);
-      const description = future
-        ? 'Future-dated record: not valid evidence'
-        : `${age} h old${stale ? `, past the ${limit} h policy limit` : ''}`;
+      const description = [
+        ageMs >= 0 ? `${age} h old${stale ? `, past the ${limit} h policy limit` : ''}` : null,
+        future ? 'Future-dated record: not valid evidence' : null,
+      ].filter(Boolean).join('; ');
       return h('td', { class: stale || future ? 'stale' : null }, description, h('br'), store.recordStatuses.join(' / '));
     });
     return h('div', { class: 'span-7' }, card('Stores', 'the control panel (synthetic)',
@@ -308,7 +314,8 @@
     renderBadges(state);
     updated.textContent = `Updated ${time(state.generatedAt)}`;
     updated.classList.remove('lost');
-    if (state.demo === null && state.mandate === null && state.ledger === null && state.problems.length === 0) {
+    // Only a demo that has not started yet is empty; a followed backend always has a mandate to show.
+    if (state.source.kind === 'demo' && state.demo === null && state.problems.length === 0) {
       app.replaceChildren(renderEmpty(state));
       return;
     }

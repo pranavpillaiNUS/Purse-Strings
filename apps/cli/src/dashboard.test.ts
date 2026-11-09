@@ -100,7 +100,7 @@ test('the page writes every value as text, runs no inline code and loads nothing
 function emptyState(): DashboardState {
   return {
     version: 1, generatedAt: '2026-11-08T09:00:00.000Z', source: { kind: 'demo', label: '.runtime/demo' }, demo: null, mandate: null,
-    ledger: null, stores: [], operations: [], notices: ['Waiting'], problems: [],
+    ledgerStatus: 'no-mandate', ledger: null, stores: [], operations: [], notices: ['Waiting'], problems: [],
   };
 }
 
@@ -290,6 +290,7 @@ test('a backend refusal establishes that there is no confirmed active revision',
   const state = await buildDashboardState(demoDirectory(t, unconfirmed), run);
   assert.deepEqual(calls.sort(), ['backend mandate-review', 'main store show', 'shop status']);
   assert.equal(state.ledger, null);
+  assert.equal(state.ledgerStatus, 'unconfirmed');
   assert.equal(state.mandate?.confirmationStatus, 'unconfirmed');
   assert.equal(state.mandate?.confirmedAt, null);
   assert.match(state.notices.join(' '), /backend has no confirmed active revision/);
@@ -332,8 +333,18 @@ test('a failed, malformed or mismatched confirmation read stays unknown despite 
     assert.equal(state.mandate?.confirmationStatus, 'unknown');
     assert.equal(state.mandate?.confirmedAt, null);
     assert.equal(state.ledger, null);
+    assert.equal(state.ledgerStatus, 'unavailable', 'a failed or mismatched read is not an unconfirmed mandate');
     assert.ok(state.problems.some((problem) => problem.startsWith('Ledger (shop status)')));
   }
+});
+
+test('before the demo stores a mandate, no ledger read runs and the ledger is not called unavailable', async (t) => {
+  const { run, calls } = fakeRunner();
+  const state = await buildDashboardState(demoDirectory(t, session({ scene: 1, mandate: null, operationIds: [] })), run);
+  assert.deepEqual(calls, ['main store show']);
+  assert.equal(state.ledgerStatus, 'no-mandate');
+  assert.equal(state.ledger, null);
+  assert.deepEqual(state.problems, []);
 });
 
 test('every fact on the page comes from a read command, with payment, order and refund kept apart', async (t) => {
@@ -341,6 +352,7 @@ test('every fact on the page comes from a read command, with payment, order and 
   const state = await buildDashboardState(demoDirectory(t, session()), run, () => new Date(NOW));
   assert.deepEqual(calls.sort(), ['backend audit', 'backend mandate-review', 'backend status', 'main store show', 'shop status']);
   assert.deepEqual(state.problems, []);
+  assert.equal(state.ledgerStatus, 'read');
   assert.deepEqual(state.ledger?.budget, { totalMinor: 800000, committedMinor: 751010, reservedMinor: 0, remainingMinor: 48990 });
   assert.equal(state.mandate?.evidenceMaxAgeHours, 72);
   assert.equal(state.mandate?.confirmationStatus, 'confirmed');
@@ -355,7 +367,59 @@ test('every fact on the page comes from a read command, with payment, order and 
   assert.deepEqual(op?.providerIds, outputs['backend status'] && (outputs['backend status'] as { providerIds: unknown }).providerIds);
   assert.deepEqual(op?.events.map(({ kind }) => kind), ['operation_reserved', 'capture_succeeded']);
   assert.equal(state.stores[0]?.supplierId, 'store-a');
+  assert.equal(state.stores[0]?.oldestRecordAt, NOW);
+  assert.equal(state.stores[0]?.newestRecordAt, NOW);
   assert.deepEqual(state.demo?.results, ['Confirmation: refused until confirmed']);
+});
+
+test('store evidence keeps both time bounds when ordinary records use different offsets', async (t) => {
+  const deliveryAt = '2026-11-08T15:00:00+08:00'; // 07:00 UTC, before the other records.
+  const productAt = '2026-11-08T08:00:00.000Z';
+  const { run } = fakeRunner({
+    'main store show': {
+      status: 0, stderr: '', stdout: JSON.stringify({
+        catalog: {
+          supplierId: 'store-a', shippingMinor: 2500,
+          delivery: { by: NOW, evidence: { ...evidence, observedAt: deliveryAt } },
+          products: [{
+            sku: 'LAP-14-AIR', unitPriceMinor: 119900, availableUnits: 9,
+            productEvidence: { ...evidence, observedAt: productAt }, stockEvidence: evidence,
+          }],
+        },
+      }),
+    },
+  });
+  const state = await buildDashboardState(demoDirectory(t, session()), run, () => new Date(NOW));
+  assert.deepEqual(state.problems, []);
+  assert.equal(state.stores[0]?.oldestRecordAt, deliveryAt);
+  assert.equal(state.stores[0]?.newestRecordAt, NOW);
+});
+
+test('a future delivery, product or stock record stays visible alongside older evidence', async (t) => {
+  const older = '2026-11-08T08:00:00.000Z';
+  const future = '2026-11-08T09:00:00.001Z';
+  for (const record of ['delivery', 'product', 'stock', 'second-product'] as const) {
+    const at = (kind: 'delivery' | 'product' | 'stock') => ({ ...evidence, observedAt: record === kind ? future : older });
+    const products = [{
+      sku: 'LAP-14-AIR', unitPriceMinor: 119900, availableUnits: 9,
+      productEvidence: at('product'), stockEvidence: at('stock'),
+    }];
+    if (record === 'second-product') products.push({
+      sku: 'MON-27-QHD', unitPriceMinor: 24500, availableUnits: 9,
+      productEvidence: { ...evidence, observedAt: future }, stockEvidence: { ...evidence, observedAt: older },
+    });
+    const { run } = fakeRunner({
+      'main store show': {
+        status: 0, stderr: '', stdout: JSON.stringify({
+          catalog: { supplierId: 'store-a', shippingMinor: 2500, delivery: { by: NOW, evidence: at('delivery') }, products },
+        }),
+      },
+    });
+    const state = await buildDashboardState(demoDirectory(t, session()), run, () => new Date(NOW));
+    assert.deepEqual(state.problems, [], record);
+    assert.equal(state.stores[0]?.oldestRecordAt, older, record);
+    assert.equal(state.stores[0]?.newestRecordAt, future, record);
+  }
 });
 
 test('a failed read shows its own short, inert message and the rest of the page still renders', async (t) => {
@@ -365,6 +429,7 @@ test('a failed read shows its own short, inert message and the rest of the page 
   });
   const state = await buildDashboardState(demoDirectory(t, session()), run);
   assert.equal(state.ledger, null);
+  assert.equal(state.ledgerStatus, 'unavailable');
   assert.equal(state.operations.length, 1, 'the operation still shows');
   assert.deepEqual(state.operations[0]?.events, []);
   const shopProblem = state.problems.find((line) => line.startsWith('Ledger (shop status)'));

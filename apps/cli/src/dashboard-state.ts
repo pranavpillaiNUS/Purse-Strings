@@ -257,6 +257,8 @@ export interface DashboardStore {
   deliveryBy: string;
   /** The oldest record, which is what the policy's evidence age limit applies to. */
   oldestRecordAt: string;
+  /** The newest record, so any future-dated observation remains visible. */
+  newestRecordAt: string;
   recordStatuses: string[];
   products: Array<{ sku: string; unitPriceMinor: number; availableUnits: number }>;
 }
@@ -293,6 +295,13 @@ export interface DashboardState {
     requirements: Array<{ id: string; role: string; quantity: number; allowedSkus: string[]; maxUnitPriceMinor: number; minWarrantyMonths: number }>;
     evidenceMaxAgeHours: number | null;
   };
+  /**
+   * Why `ledger` is or is not present. `no-mandate`: nothing was asked yet.
+   * `unconfirmed`: the backend's exact refusal for an unconfirmed revision.
+   * `unavailable`: the read failed or did not match, so reservations are unknown;
+   * the page must never describe that as an unconfirmed mandate or an empty ledger.
+   */
+  ledgerStatus: 'no-mandate' | 'unconfirmed' | 'unavailable' | 'read';
   /** From the ledger, through shop status. Absent until a revision is confirmed. */
   ledger: null | {
     mandateId: string;
@@ -394,11 +403,13 @@ function readSession(directory: string): SessionRead {
 function storeSummary(catalog: z.infer<typeof StoreShowSchema>['catalog']): DashboardStore {
   const records = [catalog.delivery.evidence, ...catalog.products.flatMap(({ productEvidence, stockEvidence }) => [productEvidence, stockEvidence])];
   const oldest = records.reduce((min, record) => (Date.parse(record.observedAt) < Date.parse(min) ? record.observedAt : min), records[0]!.observedAt);
+  const newest = records.reduce((max, record) => (Date.parse(record.observedAt) > Date.parse(max) ? record.observedAt : max), records[0]!.observedAt);
   return {
     supplierId: catalog.supplierId,
     shippingMinor: catalog.shippingMinor,
     deliveryBy: catalog.delivery.by,
     oldestRecordAt: oldest,
+    newestRecordAt: newest,
     recordStatuses: [...new Set(records.map(({ status }) => status))].sort(),
     products: catalog.products.map(({ sku, unitPriceMinor, availableUnits }) => ({ sku, unitPriceMinor, availableUnits })),
   };
@@ -415,6 +426,7 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
     source: { kind: source.kind, label },
     demo: null,
     mandate: null,
+    ledgerStatus: 'no-mandate',
     ledger: null,
     stores: [],
     operations: [],
@@ -484,18 +496,22 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
 
   if (shop !== null) {
     const parsed = parseJson(ShopStatusSchema, shop);
+    // Only the exact refusal or a matching read below may replace this.
+    state.ledgerStatus = 'unavailable';
     if (parsed === null) {
       // This is the exact trusted CLI refusal for mandate.get. Other failures,
       // including storage/ACL refusal, do not establish a confirmation state.
       if (shop.status === 1 && shop.stdout.trim() === ''
         && shop.stderr.trim() === 'shop: Mandate has no confirmed active revision') {
         confirmationStatus = 'unconfirmed';
+        state.ledgerStatus = 'unconfirmed';
         state.notices.push('The backend has no confirmed active revision for this mandate. The shopper is refused until a person confirms it.');
       } else state.problems.push(problemText('Ledger (shop status)', shop));
     } else if (parsed.mandateId !== mandateId || (revision !== null && parsed.mandateVersion !== revision)) {
       state.problems.push('Ledger (shop status): the confirmed mandate does not match the revision being reviewed.');
     } else {
       state.ledger = { mandateId: parsed.mandateId, mandateVersion: parsed.mandateVersion, budget: parsed.budget, requirements: parsed.requirements };
+      state.ledgerStatus = 'read';
       revision ??= parsed.mandateVersion;
       confirmedAt = parsed.confirmedAt;
       confirmationStatus = 'confirmed';
