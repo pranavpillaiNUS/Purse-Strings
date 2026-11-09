@@ -33,6 +33,22 @@ export const DEFAULT_MODE_STATEMENT =
 export const SANDBOX_EXECUTION_STATEMENT =
   'The payment hold and capture go through the PayPal SANDBOX, and a sandbox buyer must approve the hold in their browser; the supplier order is still simulated.';
 
+/**
+ * The run's last line, from what scene 6 actually did. A take that reserved nothing
+ * executed nothing, so it never reports a hold, a capture or any payment at all.
+ * Every execution failure stops the flow before this line, so `executed` false means skipped.
+ */
+export function closingStatement(sandbox: boolean, executed: boolean): string {
+  if (!executed) {
+    return sandbox
+      ? 'Sandbox mode: nothing was reserved, so no PayPal sandbox hold or capture was attempted and no money moved; both stores stayed simulated.'
+      : `Simulation: nothing was reserved, so scene 6 executed nothing, not even over ${EXECUTION_PROVIDER.label}; no real money, suppliers or orders.`;
+  }
+  return sandbox
+    ? 'Sandbox mode: the payment hold and capture went through the PayPal sandbox, never real money; the supplier order and both stores stayed simulated.'
+    : DEFAULT_MODE_STATEMENT;
+}
+
 /** The backend config the flow writes, with paymentProvider added only for the sandbox flag. */
 export function demoBackendConfig(input: {
   policyFile: string;
@@ -846,6 +862,8 @@ async function main(): Promise<void> {
   }
 
   scene('Execution', `Only the operator runs this, never the shopper. ${sandbox ? SANDBOX_EXECUTION_STATEMENT : EXECUTION_PROVIDER.statement}`);
+  // Set only after an execution succeeded; any failure has already stopped the flow.
+  let executed = false;
   if (reservation) {
     if (sandbox) {
       /** One backend command as data, so a refusal comes back instead of ending the flow. */
@@ -870,6 +888,7 @@ async function main(): Promise<void> {
         },
         print: (line) => console.log(line),
       });
+      executed = true;
       addResult(sandboxRun.summary);
       const audit = backend<{ events: Array<{ kind: string }> }>('audit', ['--id', reservation.operationId]);
       console.log(`Audit trail: ${audit.events.map(({ kind }) => kind).join(', ')}`);
@@ -878,10 +897,11 @@ async function main(): Promise<void> {
       });
       say('The supplier order above stayed simulated (fake). Only the payment hold and capture went through the PayPal sandbox, which never moves real money.');
     } else {
-      const executed = backend<{ operation: { status: string } }>('operation-run', ['--id', reservation.operationId]);
+      const ran = backend<{ operation: { status: string } }>('operation-run', ['--id', reservation.operationId]);
       // operation-run exits 0 whatever status the operation ends in, so the status is what counts.
-      if (executed.operation.status !== 'ordered') throw new DemoFailure(`The operation ended as ${executed.operation.status}`);
-      console.log(`Operation: ${executed.operation.status}, over ${EXECUTION_PROVIDER.label}`);
+      if (ran.operation.status !== 'ordered') throw new DemoFailure(`The operation ended as ${ran.operation.status}`);
+      executed = true;
+      console.log(`Operation: ${ran.operation.status}, over ${EXECUTION_PROVIDER.label}`);
       const audit = backend<{ events: Array<{ kind: string }> }>('audit', ['--id', reservation.operationId]);
       console.log(`Audit trail: ${audit.events.map(({ kind }) => kind).join(', ')}`);
       run('shop', ['status', '--mandate-id', mandateId, ...shopBackend, '--operation', reservation.operationId], {
@@ -900,9 +920,7 @@ async function main(): Promise<void> {
   console.log('\n=== Result ===');
   for (const line of results) say(`  ${line}`);
   say(`Ran in ${seconds} seconds.${live ? ` Shopping used ${tokens.input} input and ${tokens.output} output tokens; drafting is on top of that.` : ''}`);
-  say(sandbox
-    ? 'Sandbox mode: the payment hold and capture went through the PayPal sandbox, never real money; the supplier order and both stores stayed simulated.'
-    : DEFAULT_MODE_STATEMENT);
+  say(closingStatement(sandbox, executed));
   if (unusable.length > 0) {
     console.log('\nNot a usable take:');
     for (const problem of unusable) say(`  - ${inert(problem)}`);

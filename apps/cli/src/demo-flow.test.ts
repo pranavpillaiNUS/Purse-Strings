@@ -4,12 +4,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { createMandateDraft } from '../../../services/agent/src/mandate.ts';
 import { parseSavedReview } from '../../../services/agent/src/saved-review.ts';
 import {
-  awaitEnter, checkSummary, childEnvironment, DEFAULT_MODE_STATEMENT, demoBackendConfig, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor,
+  awaitEnter, checkSummary, childEnvironment, closingStatement, DEFAULT_MODE_STATEMENT, DEMO_SESSION_FILE, demoBackendConfig, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor,
   revisionSummary, runSandboxPayment, sandboxCredentialRefusal, scriptedDraftCalls, SANDBOX_CREDENTIAL_PROBE_ID, STALE_HOURS,
   storeTable, summarizeTrace, wrapCommand, wrapLine, type DemoSession, type SandboxPaymentBackend, type StoreView,
 } from './demo-flow.ts';
@@ -624,6 +624,94 @@ test('the sandbox flag aborts before anything is reserved when the credentials a
   assert.equal(readFileSync(join(work, '.splittap-demo-paypal'), 'utf8'), '',
     'sandbox recovery protection exists even when the credential probe stops before reservation');
   assert.ok(!/Recovery: |Operation: ordered|Attempted/.test(result.stdout), result.stdout);
+});
+
+test('the closing line claims a payment only when scene 6 executed one', () => {
+  const skippedSandbox = closingStatement(true, false);
+  const skippedDefault = closingStatement(false, false);
+  for (const line of [skippedSandbox, skippedDefault]) {
+    assert.match(line, /nothing was reserved/);
+    assert.doesNotMatch(line, /went through|pays over|Scene 6 pays/);
+  }
+  assert.match(skippedSandbox, /no PayPal sandbox hold or capture was attempted/);
+  assert.match(closingStatement(true, true), /hold and capture went through the PayPal sandbox/);
+  assert.equal(closingStatement(false, true), DEFAULT_MODE_STATEMENT);
+});
+
+// What follows stands in for a failed live sandbox take, offline. A preload rewrites the
+// flow's live shopper commands to scripted ones, answers the credential probe as a
+// backend with keys would, and logs then refuses every payment command. No model,
+// key, PayPal request or browser is involved.
+const PAYMENT_STUB_PRELOAD = String.raw`
+import { createRequire, syncBuiltinESMExports } from 'node:module';
+import { appendFileSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
+const require = createRequire(import.meta.url);
+const childProcess = require('node:child_process');
+const original = childProcess.spawnSync;
+const stub = JSON.parse(process.env.SPLITTAP_TEST_FLOW_STUB);
+const reply = (status, stderr) => ({ pid: 0, output: [null, '', stderr], stdout: '', stderr, status, signal: null });
+childProcess.spawnSync = (command, args = [], options = {}) => {
+  const [script, ...rest] = args;
+  const entry = typeof script === 'string' ? basename(script) : '';
+  if (entry === 'backend.ts') {
+    const action = rest.find((arg) => /^operation-(authorize|complete-authorization|run)$/.test(arg));
+    const id = rest[rest.indexOf('--id') + 1];
+    if (action === 'operation-authorize' && id === stub.probeId) return reply(2, 'backend: Operation was not found\n');
+    if (action !== undefined) {
+      appendFileSync(stub.paymentLog, action + '\n');
+      return reply(1, 'test stub: payment commands are refused here\n');
+    }
+  }
+  if (entry === 'shop.ts' && !rest.includes('--scripted')) {
+    if (rest[0] === 'draft') {
+      const request = resolve(options.cwd ?? '.', rest[rest.indexOf('--text-file') + 1]);
+      return original(command, [...args, '--scripted', resolve(dirname(request), 'draft-calls.json')], options);
+    }
+    if (rest[0] === 'run') {
+      const runId = rest[rest.indexOf('--run-id') + 1];
+      return original(command, [...args, '--scripted', stub.scripts[runId]], options);
+    }
+  }
+  return original(command, args, options);
+};
+syncBuiltinESMExports();
+`;
+
+test('a live sandbox take that reserves nothing reports no hold or capture, and runs no payment command', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-demo-skipped-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const preload = join(directory, 'stub.mjs');
+  writeFileSync(preload, PAYMENT_STUB_PRELOAD);
+  const recovery = read('services/agent/fixtures/recovery-shopping-calls.json') as Array<{ tool: string }>;
+  // Store-b is rejected as stale, and the stand-in stops instead of recovering at store-a.
+  const noRecovery = recovery.slice(0, recovery.findIndex(({ tool }) => tool === 'cart.submit') + 1);
+  const scripts = { 'hostile-check': join(directory, 'hostile-check.json'), recovery: join(directory, 'no-recovery.json') };
+  writeFileSync(scripts['hostile-check'], JSON.stringify(recovery.slice(0, 1)));
+  writeFileSync(scripts.recovery, JSON.stringify(noRecovery));
+  const paymentLog = join(directory, 'payment-commands.log');
+  // PAYPAL_ENV=live makes any credential load refuse before the network, as a second guard.
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PAYPAL_ENV: 'live',
+    SPLITTAP_TEST_FLOW_STUB: JSON.stringify({ probeId: SANDBOX_CREDENTIAL_PROBE_ID, paymentLog, scripts }),
+  };
+  delete env.ANTHROPIC_API_KEY;
+  const work = join(directory, 'work');
+  const result = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, entry, '--live', '--sandbox-paypal', '--dir', work], {
+    cwd: root, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.equal(result.status, 2, `${result.stdout}\n${result.stderr}`);
+  const screen = result.stdout.replace(/\s+/g, ' ');
+  assert.match(screen, /store-b +recovery-cart-1 +S\$7,248\.50 +Rejected/);
+  assert.match(screen, /Execution: skipped, because nothing was reserved/);
+  assert.match(screen, /Not a usable take: .*nothing was reserved/);
+  assert.ok(screen.includes(closingStatement(true, false)), result.stdout);
+  assert.doesNotMatch(screen, /went through the PayPal sandbox|real PayPal SANDBOX capture|Payment provider:/);
+  assert.equal(existsSync(paymentLog), false, 'no hold, completion or execution command ran');
+  const session = JSON.parse(readFileSync(join(work, DEMO_SESSION_FILE), 'utf8')) as DemoSession;
+  assert.deepEqual(session.operationIds, []);
+  assert.ok(session.results.includes('Execution: skipped, because nothing was reserved'), session.results.join('\n'));
 });
 
 test('the sandbox scene never describes a fake or unlabelled execution as a sandbox capture', async () => {
