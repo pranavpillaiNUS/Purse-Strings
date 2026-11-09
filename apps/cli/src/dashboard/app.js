@@ -195,7 +195,14 @@
   function renderMandate(state) {
     const mandate = state.mandate;
     if (!mandate) {
-      return card('Mandate', null, h('p', { class: 'placeholder' }, 'Appears once a drafted mandate is stored for confirmation.'));
+      // Only the server knows why the mandate is absent; "not stored" must never
+      // stand in for a stored mandate this view cannot read.
+      const message = state.mandateStatus === 'revision-unknown'
+        ? 'Mandate details are unavailable. The backend holds this mandate but has no confirmed revision, and a followed backend shows the revision only once a person confirms it.'
+        : state.mandateStatus === 'unavailable'
+          ? 'Mandate details are unavailable. The read did not succeed, so the stored revision cannot be shown.'
+          : 'Appears once a drafted mandate is stored for confirmation.';
+      return card('Mandate', null, h('p', { class: 'placeholder' }, message));
     }
     const confirmed = mandate.confirmationStatus === 'confirmed'
       ? chip(mandate.confirmedAt ? `Confirmed ${dateTime(mandate.confirmedAt)}` : 'Confirmed by the ledger', 'good')

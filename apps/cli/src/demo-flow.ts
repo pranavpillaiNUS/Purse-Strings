@@ -23,7 +23,7 @@ export const EXECUTION_PROVIDER = {
  * absent, because the sandbox path exists behind --sandbox-paypal.
  */
 export const DEFAULT_MODE_STATEMENT =
-  `Simulation: no real money, suppliers or orders. Scene 6 pays over ${EXECUTION_PROVIDER.label}; --sandbox-paypal sends its capture through the PayPal sandbox instead.`;
+  `Simulation: no real money, suppliers or orders. Scene 6 pays over ${EXECUTION_PROVIDER.label}; --sandbox-paypal runs its payment hold and capture through the PayPal sandbox instead.`;
 
 /**
  * Scene 6's wording when --sandbox-paypal is on. The money is a real PayPal sandbox
@@ -31,7 +31,7 @@ export const DEFAULT_MODE_STATEMENT =
  * also means no credential is touched and no PayPal call path is reachable.
  */
 export const SANDBOX_EXECUTION_STATEMENT =
-  'Payment capture goes through the PayPal SANDBOX; the supplier order is still simulated, and a sandbox buyer must approve the hold in their browser.';
+  'The payment hold and capture go through the PayPal SANDBOX, and a sandbox buyer must approve the hold in their browser; the supplier order is still simulated.';
 
 /** The backend config the flow writes, with paymentProvider added only for the sandbox flag. */
 export function demoBackendConfig(input: {
@@ -80,7 +80,7 @@ Usage:
             Without it, a scripted stand-in plays Claude: no key or network.
   --pause   Wait for Enter between scenes, for recording.
   --sandbox-paypal
-            Scene 6's payment capture runs through the PayPal sandbox. The generated
+            Scene 6's payment hold and capture run through the PayPal sandbox. The
             backend config gains paymentProvider "paypal-sandbox", the flow needs
             PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET from .env (it stops before any
             reservation without them), the hold's approval link comes on screen, and a
@@ -719,7 +719,7 @@ async function main(): Promise<void> {
 
   console.log(`Demo flow | ${live ? 'live Claude (spends API credit)' : 'scripted stand-in, not Claude'} | ${plan.now}`);
   if (sandbox) {
-    console.log(`Sandbox mode: scene 6's payment capture goes through the PayPal sandbox; the supplier order stays simulated.`);
+    console.log(`Sandbox mode: scene 6's payment hold and capture go through the PayPal sandbox; the supplier order stays simulated.`);
   } else {
     say(DEFAULT_MODE_STATEMENT);
   }
@@ -876,7 +876,7 @@ async function main(): Promise<void> {
       run('shop', ['status', '--mandate-id', mandateId, ...shopBackend, '--operation', reservation.operationId], {
         shown: ['status', '--mandate-id', mandateId, '--operation', reservation.operationId],
       });
-      say('The supplier order above stayed simulated (fake); only the payment capture was the PayPal sandbox, and it is never real money.');
+      say('The supplier order above stayed simulated (fake). Only the payment hold and capture went through the PayPal sandbox, which never moves real money.');
     } else {
       const executed = backend<{ operation: { status: string } }>('operation-run', ['--id', reservation.operationId]);
       // operation-run exits 0 whatever status the operation ends in, so the status is what counts.
@@ -901,7 +901,7 @@ async function main(): Promise<void> {
   for (const line of results) say(`  ${line}`);
   say(`Ran in ${seconds} seconds.${live ? ` Shopping used ${tokens.input} input and ${tokens.output} output tokens; drafting is on top of that.` : ''}`);
   say(sandbox
-    ? 'Sandbox mode: the payment capture was the PayPal sandbox, never real money; the supplier order and both stores stayed simulated.'
+    ? 'Sandbox mode: the payment hold and capture went through the PayPal sandbox, never real money; the supplier order and both stores stayed simulated.'
     : DEFAULT_MODE_STATEMENT);
   if (unusable.length > 0) {
     console.log('\nNot a usable take:');

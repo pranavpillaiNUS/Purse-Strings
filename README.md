@@ -215,7 +215,7 @@ panel, a plain-English request, confirmation, a hostile listing, a store change 
 cart rejected followed by recovery, and execution over fake providers. Add `--live` for Claude, which spends API credit, and `--pause` for recording. The
 scene-by-scene recording plan is in [the demo script](docs/demo-script.md).
 
-`--sandbox-paypal` connects scene 6's payment capture to the PayPal sandbox: the
+`--sandbox-paypal` connects scene 6's payment hold and capture to the PayPal sandbox: the
 generated backend config gains `paymentProvider: "paypal-sandbox"`, the flow needs
 sandbox credentials in `.env` (it stops before any reservation without them) and
 pauses while a sandbox buyer approves the hold in a browser. The supplier order stays

@@ -148,7 +148,8 @@ Scene 6 then plays as a two-person scene:
 - Don't say a scripted run is Claude. The compromised model is always scripted.
 - Don't describe fake-provider results as real payments or orders, or a reservation as payment.
 - Don't call the ledger's allocation a PayPal hold, or allocated units delivered equipment.
-- Don't say a default take used PayPal. PayPal is in the purchase path only with
-  `--sandbox-paypal`, and only for the payment capture; the default run says so on screen.
+- Don't say a default take used PayPal; the default run says on screen that PayPal is opt-in.
+  With `--sandbox-paypal`, PayPal handles the payment hold and capture, and the supplier order
+  stays simulated.
 - Don't claim prompt-injection immunity, production authentication or a passed gate.
 - Don't say stock reuse, delivery tracking, approvals or exceptions work. They aren't built.

@@ -20,6 +20,7 @@ function stateWithRecord(observedAt: string): DashboardState {
       currency: 'SGD', budgetMinor: 800000, purchaseBy: '2026-11-18T00:00:00.000Z', readyBy: '2026-11-19T00:00:00.000Z',
       deliveryLocationId: 'singapore-office', allowedSuppliers: ['store-a'], requirements: [], evidenceMaxAgeHours: 72,
     },
+    mandateStatus: 'read',
     ledgerStatus: 'unavailable',
     ledger: null,
     stores: [{ supplierId: 'store-a', shippingMinor: 0, deliveryBy: '2026-11-18T00:00:00.000Z', oldestRecordAt: observedAt, newestRecordAt: observedAt, recordStatuses: ['verified'], products: [] }],
@@ -208,6 +209,36 @@ function budgetCard(app: ClientNode): ClientNode {
   return budget;
 }
 
+function mandateCard(app: ClientNode): ClientNode {
+  const mandate = descendants(app, (node) => node.tagName === 'section')
+    .find((node) => node.childNodes[0]?.textContent.startsWith('Mandate'));
+  assert.ok(mandate, 'the page renders its Mandate card');
+  return mandate;
+}
+
+test('the mandate card says why its details are missing, and never calls a stored mandate unstored', async () => {
+  const cases = [
+    ['not-stored', /Appears once a drafted mandate is stored for confirmation/],
+    ['revision-unknown', /Mandate details are unavailable\. The backend holds this mandate but has no confirmed revision/],
+    ['unavailable', /Mandate details are unavailable\. The read did not succeed/],
+  ] as const;
+  for (const kind of ['backend', 'demo'] as const) {
+    for (const [mandateStatus, expected] of cases) {
+      const state = stateWithRecord(NOW);
+      state.source.kind = kind;
+      if (kind === 'demo') state.demo = {
+        mode: 'scripted', paymentProvider: 'fake', startedAt: NOW, updatedAt: NOW, scenes: ['One', 'Two'], scene: 2,
+        results: [], waiting: 'next-scene', finished: false, failure: null,
+      };
+      state.mandate = null;
+      state.mandateStatus = mandateStatus;
+      const text = mandateCard((await renderClient(state)).app).textContent;
+      assert.match(text, expected, `${kind} ${mandateStatus}`);
+      if (mandateStatus !== 'not-stored') assert.doesNotMatch(text, /Appears once|is stored for confirmation/, `${kind} ${mandateStatus}`);
+    }
+  }
+});
+
 test('an unavailable ledger never implies an unconfirmed mandate or an absence of reservations', async () => {
   // The mandate card's own status cannot change what a failed ledger read means.
   for (const confirmation of ['confirmed', 'unconfirmed', 'unknown', null] as const) {
@@ -226,8 +257,9 @@ test('before a mandate exists, or while the backend refuses an unconfirmed one, 
     const state = stateWithRecord(NOW);
     state.source.kind = kind;
     // The opening scenes have no mandate yet. A followed backend cannot review an
-    // unconfirmed mandate without its revision, so it has no mandate card either.
+    // unconfirmed mandate without its revision, so it has no mandate details either.
     state.mandate = null;
+    state.mandateStatus = kind === 'backend' ? 'revision-unknown' : 'not-stored';
     state.ledgerStatus = ledgerStatus;
     if (kind === 'demo') state.demo = {
       mode: 'scripted', paymentProvider: 'fake', startedAt: NOW, updatedAt: NOW, scenes: ['One', 'Two'], scene: 1,
