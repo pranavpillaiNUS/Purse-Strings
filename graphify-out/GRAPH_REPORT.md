@@ -1,7 +1,7 @@
 # Graph Report - Splittap-pay  (2026-11-09)
 
 ## Corpus Check
-- 145 files · ~198,822 words
+- 145 files · ~199,138 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 7 file(s) not represented in the graph (top: (none) 4, .tsv 1, .example 1)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `bffcf969`
+- Built from commit: `e88334d8`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -121,8 +121,8 @@
   docs/architecture.md → packages/contracts/src/index.ts
 - `M0 — delivered by the scaffold` --references--> `BudgetSnapshot`  [INFERRED]
   docs/backend-delivery-review.md → packages/contracts/src/index.ts
-- `Observations (records, no code)` --references--> `authorizeOperationHold()`  [INFERRED]
-  .audit/backend-delivery/unit5-result.md → services/checker/src/execution/paypal-provider.ts
+- `The contract mock, and why accepting a mock result proves nothing` --references--> `createMockBackend()`  [INFERRED]
+  docs/backend-api.md → packages/contracts/src/mock.ts
 
 ## Import Cycles
 - None detected.
@@ -464,16 +464,16 @@ Nodes (7): Drafting from plain English, Mandate planning, Mandate planning and t
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `Durable ledger (M2 slice — authority + reservations)` connect `README.md` to `paypal-provider.ts`, `execution/worker.ts`?**
-  _High betweenness centrality (0.058) - this node is a cross-community bridge._
+  _High betweenness centrality (0.051) - this node is a cross-community bridge._
 - **Are the 4 inferred relationships involving `openLedgerStore()` (e.g. with `Change (exact)` and `Minors`) actually correct?**
   _`openLedgerStore()` has 4 INFERRED edges - model-reasoned connections that need verification._
 - **Should `authority.ts` be split into smaller, more focused modules?**
   _Cohesion score 0.10909090909090909 - nodes in this community are weakly interconnected._
 - **Why does `runTransaction()` connect `paypal-provider.ts` to `authority.ts`, `createExecutionWorker`, `README.md`, `worker-paypal.test.ts`, `Unit 2 result: trusted authority and SQLite atomic reservations`, `ledger/store.ts`, `application.ts`, `cli/src/backend.test.ts`, `execution/worker.test.ts`, `execution/worker.ts`?**
-  _High betweenness centrality (0.047) - this node is a cross-community bridge._
+  _High betweenness centrality (0.043) - this node is a cross-community bridge._
 - **Should `paypal-spike.ts` be split into smaller, more focused modules?**
   _Cohesion score 0.09446693657219973 - nodes in this community are weakly interconnected._
-- **Why does `BudgetSnapshot` connect `Mandate` to `index.ts`, `review.ts`, `CLI-first architecture`, `shopper.ts`, `application.ts`, `Acceptance evidence trail (offline, all reproducible below)`, `execution/worker.ts`?**
-  _High betweenness centrality (0.029) - this node is a cross-community bridge._
+- **Why does `evaluatePurchase()` connect `application.ts` to `authority.ts`, `index.ts`, `shop.test.ts`, `Splittap purchasing agent`, `createExecutionWorker`, `cli/src/backend.ts`, `execution/worker.ts`, `ref_node_path`?**
+  _High betweenness centrality (0.020) - this node is a cross-community bridge._
 - **Should `gateway.test.ts` be split into smaller, more focused modules?**
   _Cohesion score 0.07198228128460686 - nodes in this community are weakly interconnected._
