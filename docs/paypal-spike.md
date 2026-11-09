@@ -36,10 +36,14 @@ Pranav reports approving on PayPal's hosted sandbox page, then completing author
 before `operation-run` captured the reserved amount. The supplier order stayed fake;
 no real money or real supplier order was involved.
 
-**Observation for Danny:** the operator reports that the stored binding's `provider_state`
-still reads `authorization_held` after the capture effect succeeded. This records a local
-storage-field observation, not the current provider hold status or a confirmed defect.
-Its interpretation remains for Role A; this documentation makes no backend change.
+**Binding state after capture:** the operator noticed that the stored binding's
+`provider_state` still reads `authorization_held` after the capture effect succeeded.
+Danny [confirmed](https://github.com/pranavpillaiNUS/Splittap-pay/pull/26#pullrequestreview-5826663514)
+this is the current design, not a defect. The ledger only upgrades a binding from
+`order_created` to `authorization_held`, and `worker-paypal.test.ts` expects it to stay in
+that state after a successful capture. The capture is tracked separately as an effect,
+which the audit shows as `capture_succeeded`. The field describes our stored record; it
+does not establish the authorization's current state at PayPal.
 
 **Limits:** this is one normal authorization/capture rehearsal on one Windows machine,
 not the final recorded take. It establishes no crash/unknown-outcome recovery, refund,

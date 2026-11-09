@@ -13,8 +13,16 @@ Rehearse the selected recording variant on its candidate revision before recordi
 ## Before you record
 
 1. Rehearse for free with `npm run demo:flow`. It uses a scripted stand-in and no API key.
-2. Record with `npm run demo:flow -- --live --pause`. It waits for Enter between scenes, and
-   the operator presses Enter to confirm the mandate.
+2. Record with the sandbox variant. The video needs `--sandbox-paypal`: without it, scene 6
+   runs on fake providers and shows no PayPal. Decide the shopper before recording; neither
+   is the default for the final take:
+   - Live Claude: `npm run demo:flow -- --live --pause --sandbox-paypal --dir .runtime/demo-sandbox-take-1`
+   - Scripted stand-in: `npm run demo:flow -- --pause --sandbox-paypal --dir .runtime/demo-sandbox-take-1`
+
+   Rehearse the chosen command first in its own directory, as in step 2 of the
+   [freeze handoff](submission.md#freeze-and-recording-handoff), and give each take a new
+   directory. The flow waits for Enter between scenes, the operator presses Enter to confirm
+   the mandate, and scene 6 waits for the sandbox buyer.
 3. Check the exit code after each take. Exit 2 means Claude did something else, such as
    avoiding store-b, so that take is not usable. The Nov 7 live take used about 57,000 tokens,
    roughly 30 cents, and took 59 seconds. The Nov 9 practice take used about 53,600 tokens
@@ -64,7 +72,9 @@ shows what the ledger recorded.
 
 The narration is about 350 words, which is about 2:20 at a normal pace, and the rest is time
 for viewers to read the screen. Cut waiting time in editing, especially during scenes 2, 4
-and 5, when Claude can take 10 to 20 seconds to answer.
+and 5, when Claude can take 10 to 20 seconds to answer. In a sandbox take, also cut scene 6's
+buyer step down to the approval click. The flow sets no time limit there, and the Nov 9
+rehearsal spent most of its 55 minutes waiting at that step.
 
 | Scene | Target | Running total |
 | --- | --- | --- |
@@ -155,6 +165,21 @@ Scene 6 then plays as a two-person scene:
   (`authorizationId`, `captureId`) a viewer can match in the sandbox's Activity page,
   next to the statement that the supplier order stayed simulated (fake).
 
+**Narration for a sandbox take.** This is a draft for Pranav and Danny to agree. It replaces
+the scene 6 narration above and claims only what the Nov 9 rehearsal showed:
+
+> **6. Execution, with PayPal.** Only the operator can execute this, never the shopper. The
+> operator asks the PayPal sandbox to hold the reserved S$7,510.10, and a sandbox buyer
+> approves it on PayPal's page. No real money: it's a sandbox. Then the operator completes
+> the hold, and PayPal captures it. These IDs come from PayPal. The supplier order is still
+> simulated, and readiness says not assessed: payment doesn't mean the equipment has arrived.
+
+Plan 0:35 for this scene, ten seconds more than the fake-provider version. That brings the
+total to 2:55, still under three minutes but with less slack. Show only the approval click
+from PayPal's page. That page shows the sandbox buyer's generated email and test funding
+sources. They are sandbox data, but check the frame before publishing, as in step 5 of the
+[freeze handoff](submission.md#freeze-and-recording-handoff).
+
 ## What not to say
 
 - Don't say a scripted run is Claude. The compromised model is always scripted.
@@ -163,3 +188,8 @@ Scene 6 then plays as a two-person scene:
 - Don't mention PayPal in the purchase path until it is there.
 - Don't claim prompt-injection immunity, production authentication or a passed gate.
 - Don't say stock reuse, delivery tracking, approvals or exceptions work. They aren't built.
+- Don't call the PayPal hold the budget limit. The ledger enforces the budget; a PayPal
+  authorization is not an exact ceiling.
+- Don't say recovery, refunds or releasing an unused hold work against PayPal through the
+  application. Only normal captures have run on that path; the spike's refund was a separate
+  script.
