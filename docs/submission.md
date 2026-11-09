@@ -50,7 +50,7 @@ The rules do not require a separate AI tools list. We keep one below as accurate
 | Repo made public | Both. Pranav changes the setting | Not done. The repo is private. A scan of its history on Nov 7 found no real secrets. It did find personal details you should both see first. The report is outside the repo. Scan again before the change, because commits are still landing |
 | License visible | Both | In place. `LICENSE` is MIT and GitHub detects it. The copyright line names only `pranavpillaiNUS`, so Danny should confirm that is fine. The public can see it only once the repo is public |
 | Complete setup and run instructions | Pranav | Partly done. `README.md` has run commands. `docs/new-device-setup.md` is a team guide and still says the repo is private. The opening below is not pasted in yet |
-| Working demo instructions | Both | Scripted flow documented and passing CI on Linux and Windows with Node 24.15 and 26, and on macOS with Node 26. Default execution uses fake providers; `--sandbox-paypal` opts into sandbox payment with a simulated supplier. The final sandbox recording still needs to be made. Earlier live Claude runs used temporary Windows copies with the backend's folder check skipped |
+| Working demo instructions | Both | Scripted flow documented and passing CI on Linux and Windows with Node 24.15 and 26, and on macOS with Node 26. Default execution uses fake providers; `--sandbox-paypal` opts into sandbox payment with a simulated supplier. The final sandbox recording still needs to be made. The Nov 6 and 7 live Claude runs used temporary Windows copies with the backend's folder check skipped. A Nov 9 live practice take ran from the repository on Windows with the check on and exited 0 |
 | Judge access until judging ends on Dec 15, with any credentials they need | Both | Not done. The repo must stay public and the instructions must keep working. The scripted flow needs no key. `--live` needs an Anthropic key. **[PAYPAL, Danny and Pranav: decide how judges run the PayPal path, using sandbox details only and committing no secret to the repo. See the proposal below.]** |
 | Name the platform it runs on | Both | Not decided. The rules require consistent running on the intended platform. The tests and the scripted flow pass in CI on Linux, Windows and macOS. Name only platforms where the PayPal path has also run, because the rules hold us to what we name |
 | Video under 3 minutes, public on YouTube | Pranav, with Danny for scene 6 | Not done. `docs/demo-script.md` is the recording plan and targets 2:45. Scene 6 needs a final-tree sandbox recording with buyer consent; wiring alone does not supply that recording |
@@ -150,11 +150,12 @@ Results come from host and backend state. Claude's own summaries are labelled as
 The one-command demo uses a scripted stand-in by default, so anyone can run it with no key. That
 run is not Claude. Adding `--live` uses Claude.
 
-Live testing is still light. Claude has drafted four times and shopped eight times, on November 6
-and 7, 2026. Four of the shopping runs used a contract mock that checks nothing. Four used the real
-checker, in two live passes of the demo flow, in temporary Windows copies with a backend check
-skipped. In each recorded run with the hostile listing, Claude followed none of it and flagged it
-for the manager. That is one fixed injection, not a general result. **[UPDATE before submitting:
+Live testing is still light. Claude has drafted five times and shopped ten times, on November 6,
+7 and 9, 2026. Four of the shopping runs used a contract mock that checks nothing. Six used the real
+checker, in three live passes of the demo flow on Windows. The first two ran in temporary copies
+with a backend check skipped, and the third ran from the repository with that check on. In each
+recorded run with the hostile listing, Claude followed none of it and flagged it for the manager.
+That is one fixed injection, not a general result. **[UPDATE before submitting:
 these counts, if more live runs happen.]**
 
 ### How PayPal is used

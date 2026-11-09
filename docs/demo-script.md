@@ -14,7 +14,8 @@ still runs on fake providers. A sandbox PayPal variant of scene 6 exists
    the operator presses Enter to confirm the mandate.
 3. Check the exit code after each take. Exit 2 means Claude did something else, such as
    avoiding store-b, so that take is not usable. The Nov 7 live take used about 57,000 tokens,
-   roughly 30 cents, and took 59 seconds.
+   roughly 30 cents, and took 59 seconds. The Nov 9 practice take used about 53,600 tokens
+   (50,508 for shopping, 3,093 for drafting) and took 66 seconds.
 
 Every date is generated from the day you run it, so nothing needs editing first. Live runs
 are not identical: Claude picks its own mandate ID and words its own summaries.
@@ -38,9 +39,9 @@ not a recording of another live model run.
 Keep a separate `--dir` for each take or copy the review before rerunning: a normal
 simulation reset clears the previous take's files.
 
-The scripted flow passes in CI on Linux, Windows and macOS. A live take has not run on Linux or
-macOS, or on Windows with the backend's folder check on, so rehearse one first on the machine you
-record with.
+The scripted flow passes in CI on Linux, Windows and macOS. One live take has run on Windows with
+the backend's folder check on: Nov 9, from the repository, exit 0. None has run on Linux or macOS,
+so rehearse one first if you record on another machine.
 
 ### With the dashboard beside the terminal
 
