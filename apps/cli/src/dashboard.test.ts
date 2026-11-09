@@ -100,7 +100,7 @@ test('the page writes every value as text, runs no inline code and loads nothing
 function emptyState(): DashboardState {
   return {
     version: 1, generatedAt: '2026-11-08T09:00:00.000Z', source: { kind: 'demo', label: '.runtime/demo' }, demo: null, mandate: null,
-    ledgerStatus: 'no-mandate', ledger: null, stores: [], operations: [], notices: ['Waiting'], problems: [],
+    ledgerStatus: 'no-mandate', ledger: null, stores: [], requestedOperationIds: [], operations: [], notices: ['Waiting'], problems: [],
   };
 }
 
@@ -279,7 +279,21 @@ test('a session file that is not exactly the recorded shape is reported, and non
     const state = await buildDashboardState(demoDirectory(t, bad), run);
     assert.deepEqual(calls, []);
     assert.match(state.problems.join(' '), /session file .* could not be read/);
+    assert.equal(state.ledgerStatus, 'unavailable', 'invalid session metadata cannot establish an empty or unconfirmed ledger');
   }
+});
+
+test('a session path that cannot be read as a file is unavailable rather than a missing demo', async (t) => {
+  const source = demoDirectory(t, null);
+  assert.equal(source.kind, 'demo');
+  if (source.kind !== 'demo') return;
+  mkdirSync(join(source.directory, 'session.json'));
+  const { run, calls } = fakeRunner();
+  const state = await buildDashboardState(source, run);
+  assert.deepEqual(calls, []);
+  assert.equal(state.ledgerStatus, 'unavailable');
+  assert.match(state.problems.join(' '), /session file .* could not be read/);
+  assert.deepEqual(state.notices, []);
 });
 
 test('a backend refusal establishes that there is no confirmed active revision', async (t) => {
@@ -467,6 +481,7 @@ test('a missing operation cannot hide the confirmed mandate and ledger', async (
   assert.equal(state.mandate?.confirmationStatus, 'confirmed');
   assert.ok(state.ledger);
   assert.deepEqual(state.operations, []);
+  assert.deepEqual(state.requestedOperationIds, ['op-1'], 'a failed read does not erase the requested IDs');
   assert.ok(state.problems.some((problem) => problem.startsWith('Operation op-1')));
 });
 

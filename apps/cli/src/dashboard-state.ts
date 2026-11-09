@@ -310,6 +310,8 @@ export interface DashboardState {
     requirements: Array<{ requirementId: string; required: number; committedUnits: number; reservedUnits: number; remainingUnits: number }>;
   };
   stores: DashboardStore[];
+  /** IDs selected for reading, including ones whose facts are unavailable. */
+  requestedOperationIds: string[];
   operations: DashboardOperation[];
   /** Expected states, such as waiting for the demo to start. */
   notices: string[];
@@ -389,8 +391,8 @@ function readSession(directory: string): SessionRead {
   let text: string;
   try {
     text = readFileSync(path, 'utf8');
-  } catch {
-    return { kind: 'missing' };
+  } catch (error) {
+    return { kind: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid' };
   }
   try {
     const parsed = DemoSessionSchema.safeParse(JSON.parse(text));
@@ -429,6 +431,7 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
     ledgerStatus: 'no-mandate',
     ledger: null,
     stores: [],
+    requestedOperationIds: [],
     operations: [],
     notices: [],
     problems: [],
@@ -452,6 +455,7 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
       return state;
     }
     if (session.kind === 'invalid') {
+      state.ledgerStatus = 'unavailable';
       state.problems.push(`The demo session file in ${label} could not be read.`);
       return state;
     }
@@ -470,6 +474,7 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
     mandateId = source.mandateId;
     operationIds = source.operationIds;
   }
+  state.requestedOperationIds = [...operationIds];
 
   const catalogPaths = readCatalogPaths(configPath);
   // A read command still opens SQLite and validates the database and sidecars.

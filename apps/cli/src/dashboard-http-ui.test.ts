@@ -23,7 +23,7 @@ function stateWithRecord(observedAt: string): DashboardState {
     ledgerStatus: 'unavailable',
     ledger: null,
     stores: [{ supplierId: 'store-a', shippingMinor: 0, deliveryBy: '2026-11-18T00:00:00.000Z', oldestRecordAt: observedAt, newestRecordAt: observedAt, recordStatuses: ['verified'], products: [] }],
-    operations: [], notices: [], problems: [],
+    requestedOperationIds: [], operations: [], notices: [], problems: [],
   };
 }
 
@@ -248,6 +248,30 @@ test('only a demo that has not started shows the waiting screen', async () => {
   const client = await renderClient(state);
   assert.match(client.app.textContent, /Waiting for the demo/);
   assert.equal(descendants(client.app, (node) => node.tagName === 'section' && node.className === 'card').length, 0);
+});
+
+test('an invalid demo session shows unavailable budget data instead of an empty or unconfirmed ledger', async () => {
+  const state = stateWithRecord(NOW);
+  Object.assign(state, { source: { kind: 'demo', label: '.runtime/demo' }, mandate: null, ledgerStatus: 'unavailable', stores: [], problems: ['The demo session file could not be read.'] });
+  const client = await renderClient(state);
+  assert.match(budgetCard(client.app).textContent, /Budget and allocated units are unavailable/);
+  assert.match(client.app.textContent, /Operation details are unavailable/);
+  assert.doesNotMatch(client.app.textContent, /Waiting for the demo|nothing can be reserved|No operation IDs were given|None yet/);
+});
+
+test('failed operation reads are unavailable rather than no IDs or no operations yet', async () => {
+  for (const demoMode of [false, true]) {
+    const state = stateWithRecord(NOW);
+    state.requestedOperationIds = ['op-1'];
+    state.problems = ['Operation op-1: the read failed'];
+    if (demoMode) {
+      state.source.kind = 'demo';
+      state.demo = { mode: 'scripted', paymentProvider: 'fake', startedAt: NOW, updatedAt: NOW, scenes: ['One'], scene: 1, results: [], waiting: null, finished: false, failure: null };
+    }
+    const client = await renderClient(state);
+    assert.match(client.app.textContent, /Operation details are unavailable/);
+    assert.doesNotMatch(client.app.textContent, /No operation IDs were given|None yet/);
+  }
 });
 
 test('the rendered mandate distinguishes trusted confirmation, refusal and unknown status in both dashboard modes', async () => {

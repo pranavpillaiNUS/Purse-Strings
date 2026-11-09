@@ -257,9 +257,11 @@
   function renderOperations(state) {
     const body = state.operations.length > 0
       ? state.operations.map(renderOperation)
-      : [h('p', { class: 'placeholder' }, state.demo
-        ? 'None yet. The shopper proposes carts; only the checker reserves, and only the operator runs.'
-        : 'No operation IDs were given. Pass the IDs the shopper printed with --operation.')];
+      : [h('p', { class: 'placeholder' }, state.requestedOperationIds.length > 0 || (state.source.kind === 'demo' && state.demo === null)
+        ? 'Operation details are unavailable. Read failures are listed above.'
+        : state.demo
+          ? 'None yet. The shopper proposes carts; only the checker reserves, and only the operator runs.'
+          : 'No operation IDs were given. Pass the IDs the shopper printed with --operation.')];
     return h('div', { class: 'span-12' }, card('Operations', 'backend status and audit', ...body));
   }
 
