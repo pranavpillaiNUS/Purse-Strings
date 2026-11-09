@@ -113,8 +113,9 @@ WHERE THINGS STOOD ON NOV 9, 2026 (check with git and gh first, as this may have
 - The scripted `demo:flow` passes in CI on Linux, Windows and macOS.
 - PayPal sandbox is wired into execution behind backend config `paymentProvider: "paypal-sandbox"`.
   Default demo execution uses fake providers, and supplier orders stay simulated in sandbox mode.
-  docs/paypal-spike.md records limited Nov 7-8 application/spike observations; these do not prove
-  current-path recovery or unused-hold closure.
+  docs/paypal-spike.md records limited Nov 7-8 observations and one Nov 9 scripted Windows
+  sandbox authorization/capture rehearsal at 17e917c. It used no live model and omitted --pause.
+  These observations do not prove current-path recovery or unused-hold closure.
 
 WAITING ON DANNY (flag these, don't change his code)
 - PR #24 (dashboard evidence and ledger wording) and PR #25 (Nov 9 live-practice docs) await review.

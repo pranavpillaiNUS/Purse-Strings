@@ -1,7 +1,8 @@
 # Submission pack
 
 **Status: working draft. PayPal sandbox is wired into the purchase path, with limited
-historical manual observations recorded in `docs/paypal-spike.md`. Submission still needs
+manual observations, including the Nov 9 scripted account rehearsal, recorded in
+`docs/paypal-spike.md`. Submission still needs
 a final recorded sandbox demo, agreed judge access, and completion of the checklist below.**
 PayPal placeholders below reserve the final recording narrative and team review; they do
 not mean the gateway is unwired. Historical reports do not validate current-path recovery.
@@ -64,7 +65,7 @@ The rules do not require a separate AI tools list. We keep one below as accurate
 | No copyrighted music or third-party trademarks | Pranav | Cannot be checked until a video exists. A search on Nov 7 found no common hardware brand names in the fixtures, examples, policy files or demo flow. SKUs are synthetic, such as `LAP-14-AIR`. The narration and screen name Claude, a third-party mark, and PayPal, the sponsor. Section 11 says to ask in writing if a term is ambiguous, so consider asking Devpost whether naming the AI tool you used is fine |
 | Devpost text | Both. Pranav drafts, Danny writes the PayPal parts | Draft below, with PayPal placeholders open. Nothing is entered on Devpost |
 | AI tools list | Both | Draft below, with items for each of you to confirm. Codex's summary says the rules do not explicitly require it. Keep it anyway, as accurate disclosure |
-| PayPal in the purchase path | Danny | Wired behind backend config `paymentProvider: "paypal-sandbox"`. `docs/paypal-spike.md` reports a Nov 7 application capture on the PR #17 tree plus the AUTHORIZE fix. Current-path recovery remains backed by injected-fetch crash tests; the final sandbox demo and account recovery evidence remain outstanding |
+| PayPal in the purchase path | Danny | Wired behind backend config `paymentProvider: "paypal-sandbox"`. `docs/paypal-spike.md` records the Nov 7 application capture and a Nov 9 scripted sandbox rehearsal at `17e917c`: one normal authorization/capture for S$7,510.10 with a fake supplier order. Current-path recovery remains backed by injected-fetch crash tests; the final recording, account recovery and unused-hold closure evidence remain outstanding |
 | Sandbox spike results recorded | Danny | Nov 7–8 manual runs are recorded in `docs/paypal-spike.md`, including captures, replay, concurrency, over-capture warnings and a partial refund. Unused-hold void and final-capture closure were not exercised |
 
 ## Freeze and recording handoff
@@ -76,7 +77,7 @@ the open checklist above; none records a decision or a passed gate.
 | Step | Owner | What to supply and what closes it |
 | --- | --- | --- |
 | 1. Confirm submission choices | Pranav and Danny | Agree the final name, Devpost Representative and intended platform. Danny confirms license credit. Each person completes their tools/models disclosure. Written choices resolve these items; repository history cannot choose them. |
-| 2. Rehearse the sandbox variant | Danny, with a sandbox buyer | `demo-script.md` says this variant has not run against a sandbox account. On the candidate revision, in a new take directory, run `npm run demo:flow -- --sandbox-paypal --pause --dir .runtime/demo-sandbox-rehearsal-1` (the scripted shopper spends no model credit). Record the revision, buyer consent, and the operation id with its `authorizationId` and `captureId`. A successful capture shows that run's scene 6 only; current-path recovery and unused-hold closure need their own observations before either is claimed. |
+| 2. Rehearse the recording variant | Danny and Pranav, with a sandbox buyer | One scripted Windows sandbox rehearsal at `17e917c` succeeded on Nov 9 without `--pause`; see the [recorded evidence](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09). Preserve its `.runtime/demo-sandbox-rehearsal-1` directory. On the candidate revision, use a new directory for an authorized recording rehearsal, for example `npm run demo:flow -- --sandbox-paypal --pause --dir .runtime/demo-sandbox-recording-1` (the scripted shopper spends no model credit). Choose separately whether the final take uses live Claude. Record buyer consent and the operation/provider references. A successful capture shows that take's scene 6 only; recovery and unused-hold closure need their own observations before either is claimed. |
 | 3. Set up judge access | Both | Agree how judges receive sandbox details privately, whether live Claude is offered, and how access remains available through judging. Run the selected path from a fresh clone with those judge details. The no-key scripted flow must remain available. Put no credential values in Git, PRs, screenshots or the public video. |
 | 4. Freeze the recording revision | Pranav, after both review | Record the revision, successful test/typecheck/demo results, scripted-flow result and applicable CI/fresh-install evidence. Recheck the README opening (PR #27, a draft until this step) against that revision, then mark it ready. |
 | 5. Record and inspect the video | Pranav, with Danny for scene 6 | Follow the [six-scene script](demo-script.md) and keep the final cut under three minutes. Use one new take directory and the same directory for its terminal and dashboard. Label scripted stand-ins and historical review replays; show only observed sandbox results, and record the take's operation id, `authorizationId` and `captureId` next to the video. Keep the supplier order visibly simulated. Inspect the terminal, browser, buyer-consent screens and audio for credentials, personal details and material requiring permission. |
@@ -84,7 +85,10 @@ the open checklist above; none records a decision or a passed gate.
 
 Preparation evidence from Nov 9: [combined build and dashboard rendering](https://github.com/pranavpillaiNUS/Splittap-pay/pull/24#issuecomment-6734790872)
 and [fresh clone/install with scripted story and review replay](https://github.com/pranavpillaiNUS/Splittap-pay/pull/26#issuecomment-6735113599).
-These checks establish the scripted Windows setup; sandbox and judge-account steps remain open.
+These checks establish the scripted Windows setup. The separate Nov 9
+[sandbox rehearsal](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09) establishes one
+reported normal authorization/capture, cross-checked against the local ledger. The final
+recording, judge-account setup, account recovery and unused-hold closure remain open.
 
 ## Judge access: proposal
 
@@ -195,8 +199,9 @@ behaved, and whether the pitch can extend to "PayPal holds the money." If they d
 leave this out.]**
 
 The gateway is wired into execution behind backend config, with operator-only sandbox hold
-commands. `docs/paypal-spike.md` records earlier manual application/spike observations; this
-checkpoint did not reproduce them. Final submission wording must match the recorded demo and
+commands. `docs/paypal-spike.md` records the earlier application/spike observations and the
+Nov 9 scripted application rehearsal; the latter covers one normal sandbox capture only.
+Final submission wording must match the recorded demo and
 must not turn mocked recovery tests into account-verified recovery or a simulated supplier order
 into a real order.
 

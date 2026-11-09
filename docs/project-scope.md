@@ -175,8 +175,12 @@ the backend config `paymentProvider` and documented in `docs/backend-api.md`) wi
 fetch-mocked capture/refund/refund-read tests, operator hold commands and
 crash-recovery evidence through sandbox reads. `docs/paypal-spike.md` records limited
 historical manual observations: a Nov 7 application capture on the earlier PR #17 tree plus the AUTHORIZE fix,
-and separate Nov 7–8 spike captures and a refund. They do not establish response-loss
-recovery on the current tree or unused-hold closure. This checkpoint ran offline.
+and separate Nov 7–8 spike captures and a refund. A Nov 9 scripted Windows
+[demo rehearsal](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09) at `17e917c`
+records one normal sandbox authorization/capture for S$7,510.10; supplier ordering
+stayed fake. The reported buyer-consent exercise and subsequent local ledger reads do
+not establish response-loss recovery, refunds or unused-hold closure on this path.
+The final recorded take and judge-account setup remain outstanding.
 No gate after M0 is recorded as passed; M3 remains incomplete and M5 is planned.
 See `docs/backend-delivery-review.md` for the distinction between simulated execution,
 mocked contract coverage and manual account observations. The next PayPal evidence

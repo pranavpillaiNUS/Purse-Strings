@@ -32,7 +32,12 @@ Four levels appear below and must not be confused:
    ledger, operator hold commands and credential containment; that wiring alone
    is not account evidence. `docs/paypal-spike.md` separately records a Nov 7
    application capture on the earlier PR #17 tree plus the AUTHORIZE fix, and Nov 7–8 spike runs covering
-   captures, replay, concurrency and a partial refund. These are historical manual
+   captures, replay, concurrency and a partial refund. The
+   [Nov 9 application rehearsal](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09)
+   adds one reported normal sandbox authorization/capture at `17e917c`, with its
+   saved session and local ledger facts independently read back. That readback
+   made no fresh provider request; the shopper was scripted and supplier order fake.
+   These are recorded manual
    reports, not the automated reproduction commands below. The November 8 cleanup
    and dashboard checkpoint contacted no account. Current-path response-loss
    recovery, early-approval retry and unused-hold closure remain unverified on an
@@ -89,6 +94,11 @@ claimed beyond what those tests exercise.
   during the cleanup. Separate manual observations live in `docs/paypal-spike.md`
   and do not establish response-loss recovery, early-approval retry or unused-hold
   release. M3 remains incomplete. Real supplier quote APIs also remain unchecked.
+
+The [Nov 9 scripted application rehearsal](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09)
+records one normal sandbox authorization/capture with a fake supplier order. It adds
+account-path observation for that run, not account recovery, refund or unused-hold
+closure evidence, and does not change the offline checkpoint results above.
 
 ### Milestones M4/M5
 

@@ -5,7 +5,10 @@ minutes. This script targets 2:45, which leaves room for small overruns.
 
 **This cannot be submitted yet.** The hackathon requires PayPal, and the default scene 6
 still runs on fake providers. A sandbox PayPal variant of scene 6 exists
-(`--sandbox-paypal`, below); verify it against a live sandbox account before recording it.
+(`--sandbox-paypal`, below). One scripted Windows rehearsal at `17e917c` succeeded on
+Nov 9; it was not the recorded take and did not use `--live` or `--pause`.
+[Rehearsal evidence](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09).
+Rehearse the selected recording variant on its candidate revision before recording it.
 
 ## Before you record
 
@@ -122,8 +125,10 @@ fake providers. `npm run demo:flow -- --live --pause --sandbox-paypal` connects 
 payment to the configured PayPal sandbox gateway instead. The generated backend config gains
 `paymentProvider: "paypal-sandbox"` (through the strict config schema), and the supplier
 order stays simulated in every variant. The authorization and capture commands call the
-PayPal sandbox. Gateway wiring has fetch-mocked contract and crash-test coverage; the flow's
-sandbox variant still needs an account rehearsal.
+PayPal sandbox. Gateway wiring has fetch-mocked contract and crash-test coverage. The
+Nov 9 [account rehearsal](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09) exercised
+one normal authorization/capture with the scripted shopper on Windows; account recovery,
+refunds and unused-hold closure were not exercised.
 
 Before anything is reserved, the flow asks the backend to load its sandbox credential
 configuration using an id with no operation. That probe sends no PayPal request and creates
@@ -132,7 +137,9 @@ Without configured sandbox credentials in `.env` or the process environment, it 
 an instruction to add them, so the run never gets halfway through. Set them up as in the
 [spike](paypal-spike.md): `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`
 (`PAYPAL_ENV=sandbox` if used), from `cp .env.example .env`. Never point the demo at live
-keys, and rehearse once — this variant has not been verified against a live sandbox account.
+keys. The Nov 9 rehearsal omitted `--live` and `--pause`; the selected recording variant
+still needs its own rehearsal. Preserve `.runtime/demo-sandbox-rehearsal-1` and use a new
+directory for the next authorized take, such as `.runtime/demo-sandbox-recording-1`.
 
 Scene 6 then plays as a two-person scene:
 

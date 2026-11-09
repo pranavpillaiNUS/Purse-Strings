@@ -280,15 +280,18 @@ intact. Unit 4 added a separate PayPal gateway, since wired into execution
 ([docs/backend-api.md](docs/backend-api.md#paypal-gateway-unit-4-contract--unit-5-sandbox-additions))
 with capture/refund read-and-write contracts — sandbox host only, injected fetch,
 finite timeouts, `SGD`/minor-unit money at the edge — proven by fetch-mocked tests
-only. Unit 5 wires that gateway into the execution ledger behind the backend
+for that contract. Unit 5 wires that gateway into the execution ledger behind the backend
 config (`paymentProvider: "paypal-sandbox"`): operator-only hold commands
 (`operation-authorize`, `operation-complete-authorization`) place a sandbox hold
 on a reserved operation before `operation-run`, and the durable worker recovers
 crashes through sandbox reads. [Manual sandbox notes](docs/paypal-spike.md) record
-a Nov 7 application capture on the earlier PR #17 tree plus the AUTHORIZE fix, and separate Nov 7–8 spike
-runs. These limited historical observations do not validate the current recovery
-path, unused-hold release or real supplier ordering. This checkpoint ran offline;
-the supplier order stays fake in every configuration. [Delivery
+a Nov 7 application capture on the earlier PR #17 tree plus the AUTHORIZE fix,
+separate Nov 7–8 spike runs, and a Nov 9 scripted Windows demo rehearsal at `17e917c`.
+That [rehearsal](docs/paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09) records
+one buyer-approved sandbox authorization/capture for S$7,510.10, cross-checked against
+the local ledger. It omitted `--live` and `--pause`; it was not the final recorded take.
+It does not validate response-loss recovery, unused-hold release or real supplier
+ordering. The supplier order stays fake in every configuration. [Delivery
 evidence](docs/backend-delivery-review.md) distinguishes the automated evidence
 from those manual observations and remaining account exercises.
 

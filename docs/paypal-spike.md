@@ -3,6 +3,52 @@
 `services/checker/scripts/paypal-spike.ts` tests the PayPal behaviour the whole design depends on,
 against the real sandbox with hardcoded carts: one S$8,000 hold, three partial captures, then release the rest.
 
+## Demo-flow sandbox rehearsal (2026-11-09)
+
+Pranav reported one completed rehearsal of the demo flow's sandbox variant in
+[PR #26](https://github.com/pranavpillaiNUS/Splittap-pay/pull/26#issuecomment-6738320826).
+This was the application path, separate from the interactive spike below. The reported
+command was `npm run demo:flow -- --sandbox-paypal --dir .runtime/demo-sandbox-rehearsal-1`.
+The report identifies a clean `main` at `17e917c`, Windows 11, Node 26.13.0 and enabled
+backend folder checks; it records exit 0 after 3,318 seconds, mostly waiting for the buyer.
+The shopper was scripted, with neither `--live` nor `--pause`. Scene 3 therefore invoked
+the local confirmation command automatically, rather than waiting for a person to press Enter.
+
+**Provenance:** the original process exit, run revision and hosted-page buyer approval
+are the operator's report. A subsequent documentation check independently read the saved
+session and local backend `status`, `audit` and `shop status` output. Those reads confirmed
+the stored facts below without making a fresh PayPal request. They do not independently
+re-read the sandbox account or establish its current resource state.
+
+| Stored fact | Local readback |
+| --- | --- |
+| Session | Scripted; `paymentProvider: paypal-sandbox`; scene 6 finished with no failure; started `2026-11-09T08:32:14.831Z`, final session update `2026-11-09T09:27:33.144Z` |
+| Operation | `op-ad4ce834-7272-40b3-9d90-96cba6b39459`, store-a, SGD 751,010 minor units (S$7,510.10) |
+| PayPal references | Order `7PM55607UC388470N`; authorization `11C077066A694603P`; capture `72K10179MD737102M` |
+| Operation effects | `status: ordered`; reservation consumed; sandbox payment succeeded; simulated supplier order succeeded; refund not started; readiness not assessed |
+| Budget | S$8,000.00 total; S$7,510.10 committed; S$0 reserved; S$489.90 remaining |
+| Quantities | Five laptops and five monitors committed; no units reserved or remaining to purchase. This is not delivery or equipment readiness |
+
+The local audit records, in UTC: `operation_reserved` at `08:32:25.669`,
+`binding_created` at `08:32:26.660`, `binding_upgraded` at `09:27:21.694`,
+`capture_succeeded` at `09:27:31.231`, and `order_succeeded` at `09:27:31.252`.
+Pranav reports approving on PayPal's hosted sandbox page, then completing authorization
+before `operation-run` captured the reserved amount. The supplier order stayed fake;
+no real money or real supplier order was involved.
+
+**Observation for Danny:** the operator reports that the stored binding's `provider_state`
+still reads `authorization_held` after the capture effect succeeded. This records a local
+storage-field observation, not the current provider hold status or a confirmed defect.
+Its interpretation remains for Role A; this documentation makes no backend change.
+
+**Limits:** this is one normal authorization/capture rehearsal on one Windows machine,
+not the final recorded take. It establishes no crash/unknown-outcome recovery, refund,
+partial capture or unused-hold closure. The captured amount equalled the hold, so there
+was no unused remainder to release. It adds no live-model run and does not exercise the
+sandbox variant with `--live` or `--pause`, another platform, or judge credentials.
+The take directory is retained locally; a later authorized take must use a new directory.
+No acceptance gate is recorded as passed by this observation.
+
 ## Application path (exercised 2026-11-07, PR #17 tree + one live fix)
 
 The same evening, the wired application path ran end to end against the sandbox with the gateway
