@@ -1,7 +1,7 @@
 # Graph Report - Splittap-pay  (2026-11-10)
 
 ## Corpus Check
-- 145 files · ~200,812 words
+- 145 files · ~201,204 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 7 file(s) not represented in the graph (top: (none) 4, .tsv 1, .example 1)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `bda7db24`
+- Built from commit: `d9e2b6e4`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -125,10 +125,10 @@
   docs/architecture.md → packages/contracts/src/index.ts
 - `M0 — delivered by the scaffold` --references--> `BudgetSnapshot`  [INFERRED]
   docs/backend-delivery-review.md → packages/contracts/src/index.ts
+- `The contract mock, and why accepting a mock result proves nothing` --references--> `createMockBackend()`  [INFERRED]
+  docs/backend-api.md → packages/contracts/src/mock.ts
 - `Orchestrator closeout (2026-11-05)` --references--> `openLedgerStore()`  [INFERRED]
   .audit/backend-delivery/unit3-result.md → services/checker/src/ledger/store.ts
-- `Delivered` --references--> `runTransaction()`  [INFERRED]
-  .audit/backend-delivery/unit2-result.md → services/checker/src/ledger/store.ts
 
 ## Import Cycles
 - None detected.
@@ -489,17 +489,17 @@ Nodes (4): Acceptance, Interface, Output and authority, Saved shopper reviews
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Durable ledger (M2 slice — authority + reservations)` connect `README.md` to `fake.ts`, `execution/worker.test.ts`?**
-  _High betweenness centrality (0.065) - this node is a cross-community bridge._
+- **Why does `runTransaction()` connect `execution/worker.test.ts` to `authority.ts`, `paypal-provider.ts`, `createExecutionWorker`, `README.md`, `worker-paypal.test.ts`, `paypal-provider.test.ts`, `execution/worker.ts`, `Unit 2 result: trusted authority and SQLite atomic reservations`, `ledger/store.ts`, `application.ts`, `cli/src/backend.test.ts`?**
+  _High betweenness centrality (0.052) - this node is a cross-community bridge._
 - **Are the 4 inferred relationships involving `openLedgerStore()` (e.g. with `Change (exact)` and `Minors`) actually correct?**
   _`openLedgerStore()` has 4 INFERRED edges - model-reasoned connections that need verification._
 - **Should `paypal-spike.ts` be split into smaller, more focused modules?**
   _Cohesion score 0.1021021021021021 - nodes in this community are weakly interconnected._
-- **Why does `runTransaction()` connect `execution/worker.test.ts` to `authority.ts`, `paypal-provider.ts`, `createExecutionWorker`, `README.md`, `worker-paypal.test.ts`, `paypal-provider.test.ts`, `execution/worker.ts`, `Unit 2 result: trusted authority and SQLite atomic reservations`, `ledger/store.ts`, `application.ts`, `cli/src/backend.test.ts`?**
-  _High betweenness centrality (0.054) - this node is a cross-community bridge._
+- **Why does `Durable ledger (M2 slice — authority + reservations)` connect `README.md` to `fake.ts`, `execution/worker.test.ts`?**
+  _High betweenness centrality (0.050) - this node is a cross-community bridge._
 - **Should `gateway.test.ts` be split into smaller, more focused modules?**
   _Cohesion score 0.07682926829268293 - nodes in this community are weakly interconnected._
-- **Why does `Backend delivery design (accepted specification with implementation status)` connect `Backend delivery design (accepted specification with implementation status)` to `Detailed implementation decisions`, `README.md`?**
-  _High betweenness centrality (0.028) - this node is a cross-community bridge._
+- **Why does `BudgetSnapshot` connect `shopper.ts` to `index.ts`, `review.ts`, `CLI-first architecture`, `execution/worker.ts`, `application.ts`, `Acceptance evidence trail (offline, all reproducible below)`?**
+  _High betweenness centrality (0.034) - this node is a cross-community bridge._
 - **Should `package.json` be split into smaller, more focused modules?**
   _Cohesion score 0.09057971014492754 - nodes in this community are weakly interconnected._
