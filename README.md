@@ -26,8 +26,17 @@ npm run demo:flow
 ```
 
 It needs no API key or network. It runs six scenes, with every date generated from today: a control
-panel for two fake stores, a plain-English request, a person confirming it, a hostile listing, a store
-change that gets a cart rejected followed by recovery, and execution over fake providers.
+panel for two fake stores, a plain-English request, confirmation of the stored mandate, a hostile
+listing, a store change that gets a cart rejected followed by recovery, and execution over fake
+providers.
+
+This command confirms the mandate automatically, and says so on screen. To confirm it yourself as
+the operator, add `--pause`. The flow then waits for you to press Enter before confirming, and
+between scenes.
+
+```sh
+npm run demo:flow -- --pause
+```
 
 Verified on Nov 9: the scripted flow passes in [main CI at `17e917c`](https://github.com/pranavpillaiNUS/Splittap-pay/actions/runs/42517021199)
 on Linux (Node 24.15.0, 24 and 26), Windows (24.15.0 and 26), and macOS (26). Those jobs
