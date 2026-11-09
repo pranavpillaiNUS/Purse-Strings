@@ -134,6 +134,8 @@ export const DemoSessionSchema = z.object({
   waiting: z.enum(['next-scene', 'operator-confirm', 'sandbox-buyer']).nullable(),
   finished: z.boolean(),
   failure: z.string().max(2_000).nullable(),
+  /** Absent in sessions written before the flow recorded it; those read as no problems listed. */
+  unusable: z.array(z.string().max(500)).max(20).default([]),
 }).strict();
 
 export type DemoSession = z.infer<typeof DemoSessionSchema>;
@@ -278,6 +280,7 @@ export interface DashboardState {
     waiting: DemoSession['waiting'];
     finished: boolean;
     failure: string | null;
+    unusable: string[];
   };
   mandate: null | {
     id: string;
@@ -476,6 +479,7 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
     state.demo = {
       mode: value.mode, paymentProvider: value.paymentProvider, startedAt: value.startedAt, updatedAt: value.updatedAt,
       scenes: value.scenes, scene: value.scene, results: value.results, waiting: value.waiting, finished: value.finished, failure: value.failure,
+      unusable: value.unusable,
     };
     // Session metadata selects what to inspect; it cannot establish or suppress
     // the backend's confirmation facts, even while a demo scene is catching up.

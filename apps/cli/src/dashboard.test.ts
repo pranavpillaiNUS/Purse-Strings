@@ -192,7 +192,7 @@ function session(overrides: Partial<DemoSession> = {}): DemoSession {
     kind: 'splittap-demo-session', version: 1, mode: 'scripted', paymentProvider: 'paypal-sandbox',
     startedAt: NOW, updatedAt: NOW, scenes: [...DEMO_SCENES], scene: 6,
     mandate: { id: 'engineering-hires-demo', revision: 1, stored: true, confirmedAt: NOW },
-    operationIds: ['op-1'], results: ['Confirmation: refused until confirmed'], waiting: null, finished: false, failure: null,
+    operationIds: ['op-1'], results: ['Confirmation: refused until confirmed'], waiting: null, finished: false, failure: null, unusable: [],
     ...overrides,
   };
 }
@@ -280,6 +280,20 @@ test('a session file that is not exactly the recorded shape is reported, and non
     assert.deepEqual(calls, []);
     assert.match(state.problems.join(' '), /session file .* could not be read/);
     assert.equal(state.ledgerStatus, 'unavailable', 'invalid session metadata cannot establish an empty or unconfirmed ledger');
+  }
+});
+
+test('a finished take carries its unusable reasons, and a session from before they were recorded still reads', async (t) => {
+  const reasons = ['The model did not recover: nothing was reserved'];
+  const recorded = await buildDashboardState(demoDirectory(t, session({ finished: true, unusable: reasons })), fakeRunner().run);
+  assert.deepEqual(recorded.demo?.unusable, reasons);
+  const { unusable: _omitted, ...older } = session({ finished: true });
+  const earlier = await buildDashboardState(demoDirectory(t, JSON.stringify(older)), fakeRunner().run);
+  assert.deepEqual(earlier.problems, []);
+  assert.deepEqual(earlier.demo?.unusable, []);
+  for (const bad of [[''.padEnd(501, 'x')], Array.from({ length: 21 }, () => 'x'), 'not a list']) {
+    const state = await buildDashboardState(demoDirectory(t, JSON.stringify({ ...session(), unusable: bad })), fakeRunner().run);
+    assert.match(state.problems.join(' '), /session file .* could not be read/);
   }
 });
 

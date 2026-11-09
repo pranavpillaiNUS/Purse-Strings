@@ -228,7 +228,7 @@ test('the mandate card says why its details are missing, and never calls a store
       state.source.kind = kind;
       if (kind === 'demo') state.demo = {
         mode: 'scripted', paymentProvider: 'fake', startedAt: NOW, updatedAt: NOW, scenes: ['One', 'Two'], scene: 2,
-        results: [], waiting: 'next-scene', finished: false, failure: null,
+        results: [], waiting: 'next-scene', finished: false, failure: null, unusable: [],
       };
       state.mandate = null;
       state.mandateStatus = mandateStatus;
@@ -263,7 +263,7 @@ test('before a mandate exists, or while the backend refuses an unconfirmed one, 
     state.ledgerStatus = ledgerStatus;
     if (kind === 'demo') state.demo = {
       mode: 'scripted', paymentProvider: 'fake', startedAt: NOW, updatedAt: NOW, scenes: ['One', 'Two'], scene: 1,
-      results: [], waiting: null, finished: false, failure: null,
+      results: [], waiting: null, finished: false, failure: null, unusable: [],
     };
     else state.notices = ['The backend has no confirmed active revision for this mandate.'];
     const client = await renderClient(state);
@@ -298,12 +298,32 @@ test('failed operation reads are unavailable rather than no IDs or no operations
     state.problems = ['Operation op-1: the read failed'];
     if (demoMode) {
       state.source.kind = 'demo';
-      state.demo = { mode: 'scripted', paymentProvider: 'fake', startedAt: NOW, updatedAt: NOW, scenes: ['One'], scene: 1, results: [], waiting: null, finished: false, failure: null };
+      state.demo = { mode: 'scripted', paymentProvider: 'fake', startedAt: NOW, updatedAt: NOW, scenes: ['One'], scene: 1, results: [], waiting: null, finished: false, failure: null, unusable: [] };
     }
     const client = await renderClient(state);
     assert.match(client.app.textContent, /Operation details are unavailable/);
     assert.doesNotMatch(client.app.textContent, /No operation IDs were given|None yet/);
   }
+});
+
+test('a finished take that is not usable says why, and never shows the every-scene-ran line', async () => {
+  const state = stateWithRecord(NOW);
+  state.source.kind = 'demo';
+  const demo = {
+    mode: 'live' as const, paymentProvider: 'paypal-sandbox' as const, startedAt: NOW, updatedAt: NOW, scenes: ['One'], scene: 1,
+    results: ['Recovery: nothing was reserved', 'Execution: skipped, because nothing was reserved'], waiting: null, finished: true, failure: null,
+  };
+  state.demo = { ...demo, unusable: ['The model did not recover: nothing was reserved'] };
+  const unusable = await renderClient(state);
+  assert.match(unusable.app.textContent, /Finished: not a usable take/);
+  assert.match(unusable.app.textContent, /The model did not recover: nothing was reserved\./);
+  assert.match(unusable.app.textContent, /None\. Scene 5 reserved nothing, so scene 6 executed nothing\./);
+  assert.doesNotMatch(unusable.app.textContent, /Every scene ran|None yet/);
+
+  state.demo = { ...demo, unusable: [] };
+  const usable = await renderClient(state);
+  assert.match(usable.app.textContent, /Every scene ran/);
+  assert.doesNotMatch(usable.app.textContent, /not a usable take/);
 });
 
 test('the rendered mandate distinguishes trusted confirmation, refusal and unknown status in both dashboard modes', async () => {
@@ -315,7 +335,7 @@ test('the rendered mandate distinguishes trusted confirmation, refusal and unkno
       state.mandate!.confirmedAt = NOW;
       if (demoMode) state.demo = {
         mode: 'scripted', paymentProvider: 'fake', startedAt: NOW, updatedAt: NOW, scenes: [], scene: 0,
-        results: [], waiting: 'operator-confirm', finished: false, failure: null,
+        results: [], waiting: 'operator-confirm', finished: false, failure: null, unusable: [],
       };
       const client = await renderClient(state);
       const mandate = descendants(client.app, (node) => node.tagName === 'section')

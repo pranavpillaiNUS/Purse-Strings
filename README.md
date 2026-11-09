@@ -253,8 +253,8 @@ npm run dashboard -- --backend-db PATH --backend-config PATH --mandate-id ID --o
 
 It is a view, not a second ledger. It starts only read commands (backend `mandate-review`,
 `status` and `audit`, `shop status` and `store show`), each in its own process with no model key
-or PayPal detail, and `demo:flow` adds only the scene and result lines through
-`session.json` in its working directory. Confirmation comes from the backend's active
+or PayPal detail, and `demo:flow` adds only the scene, the result lines and, for a take that
+is not usable, the terminal's reasons through `session.json` in its working directory. Confirmation comes from the backend's active
 mandate revision; session metadata cannot confirm it. An unavailable or mismatched read
 is shown as unknown. Child reads run one at a time, and store freshness is compared with
 the exact age limit before rounding for display. The server listens on 127.0.0.1, answers only to

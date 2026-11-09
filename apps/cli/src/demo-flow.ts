@@ -259,6 +259,8 @@ export interface DemoSession {
   waiting: 'next-scene' | 'operator-confirm' | 'sandbox-buyer' | null;
   finished: boolean;
   failure: string | null;
+  /** Why a finished take is not usable (exit 2), as the terminal lists it. Empty for a usable take. */
+  unusable: string[];
 }
 
 export const DEMO_SESSION_FILE = 'session.json';
@@ -673,6 +675,7 @@ async function main(): Promise<void> {
     waiting: null,
     finished: false,
     failure: null,
+    unusable: [],
   };
   function record(change: Partial<DemoSession> = {}): void {
     Object.assign(session, change, { updatedAt: new Date().toISOString() });
@@ -916,7 +919,7 @@ async function main(): Promise<void> {
   if (values.pause) promptForEnter('Press Enter for the result');
 
   const seconds = Math.round((Date.now() - startedAt) / 1000);
-  record({ finished: true, waiting: null });
+  record({ finished: true, waiting: null, unusable: unusable.slice(0, 20).map((problem) => inert(problem).slice(0, 500)) });
   console.log('\n=== Result ===');
   for (const line of results) say(`  ${line}`);
   say(`Ran in ${seconds} seconds.${live ? ` Shopping used ${tokens.input} input and ${tokens.output} output tokens; drafting is on top of that.` : ''}`);

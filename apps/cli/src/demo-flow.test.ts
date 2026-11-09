@@ -452,6 +452,8 @@ test('the whole flow runs with no key or network, twice in the same directory', 
     assert.doesNotMatch(stdout, /operation-authorize|paypal-sandbox/i);
     const generatedConfig = JSON.parse(readFileSync(join(work, 'config.json'), 'utf8')) as Record<string, unknown>;
     assert.equal('paymentProvider' in generatedConfig, false);
+    const flowSession = JSON.parse(readFileSync(join(work, DEMO_SESSION_FILE), 'utf8')) as DemoSession;
+    assert.deepEqual([flowSession.finished, flowSession.unusable], [true, []], 'a usable take records no unusable reasons');
 
     // The count on screen is the trace's, so it cannot drift from what the run recorded.
     const { refused, accepted } = summarizeTrace(readFileSync(join(work, 'compromised.jsonl'), 'utf8'));
@@ -712,6 +714,9 @@ test('a live sandbox take that reserves nothing reports no hold or capture, and 
   const session = JSON.parse(readFileSync(join(work, DEMO_SESSION_FILE), 'utf8')) as DemoSession;
   assert.deepEqual(session.operationIds, []);
   assert.ok(session.results.includes('Execution: skipped, because nothing was reserved'), session.results.join('\n'));
+  // The dashboard shows the same reasons the terminal printed, not a clean finish.
+  assert.equal(session.finished, true);
+  assert.ok(session.unusable.includes('The model did not recover: nothing was reserved'), session.unusable.join('\n'));
 });
 
 test('the sandbox scene never describes a fake or unlabelled execution as a sandbox capture', async () => {

@@ -145,6 +145,7 @@
     });
     let status;
     if (demo.failure) status = [chip('Stopped', 'bad'), demo.failure];
+    else if (demo.finished && demo.unusable.length > 0) status = [chip('Finished: not a usable take', 'bad'), `${demo.unusable.join('; ')}.`];
     else if (demo.finished) status = [chip('Finished', 'good'), 'Every scene ran.'];
     else if (demo.waiting === 'sandbox-buyer') status = [chip('Waiting', 'warn'), "The sandbox buyer approves the hold on PayPal's page, then the operator presses Enter."];
     else if (demo.waiting === 'operator-confirm') status = [chip('Waiting', 'warn'), 'The operator confirms this exact digest in the terminal.'];
@@ -266,7 +267,9 @@
       ? state.operations.map(renderOperation)
       : [h('p', { class: 'placeholder' }, state.requestedOperationIds.length > 0 || (state.source.kind === 'demo' && state.demo === null)
         ? 'Operation details are unavailable. Read failures are listed above.'
-        : state.demo
+        : state.demo?.finished
+          ? 'None. Scene 5 reserved nothing, so scene 6 executed nothing.'
+          : state.demo
           ? 'None yet. The shopper proposes carts; only the checker reserves, and only the operator runs.'
           : 'No operation IDs were given. Pass the IDs the shopper printed with --operation.')];
     return h('div', { class: 'span-12' }, card('Operations', 'backend status and audit', ...body));
