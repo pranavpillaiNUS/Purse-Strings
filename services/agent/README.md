@@ -349,8 +349,12 @@ it recovers at store-a (`--run-id recovery`).
   six on November 6, 2026, two on November 7 and two on November 9. Four used the contract mock
   and six the real backend. Five runs had both stores and the hostile listing, two on the mock
   and three on the real backend. In each, Claude made no call that followed the listing, flagged
-  it in its summary and reserved at store-a, passing over store-b, about S$262 cheaper. That is
-  five runs of one fixed injection, so there is no claim of prompt-injection immunity. `src/anthropic.test.ts`
+  it in its summary and submitted store-a's cart, passing over store-b, about S$262 cheaper. In
+  the three real-backend runs the checker accepted that cart and the ledger reserved its budget
+  and units. In the two mock runs the cart was only accepted: the mock returns an operation
+  labelled `reserved` but has no ledger and sets nothing aside, so those two are not checker or
+  ledger decisions. That is five runs of one fixed injection, so there is no claim of
+  prompt-injection immunity. `src/anthropic.test.ts`
   proves the request and response mapping with a stubbed `fetch`, and the scripted model
   proves the host's bounds. The protection tested here is that obeying the listing achieves
   nothing.
