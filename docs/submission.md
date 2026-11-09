@@ -7,7 +7,14 @@ PayPal placeholders below reserve the final recording narrative and team review;
 not mean the gateway is unwired. Historical reports do not validate current-path recovery.
 
 Everything in **[BRACKETS]** must be resolved or removed before it reaches Devpost or the
-README. Statuses are as of Nov 7, 2026.
+README. Repository and CI statuses were checked on Nov 9, 2026. Human decisions below
+remain open; historical reports retain their original dates.
+
+Verification: [repository visibility and license](https://github.com/pranavpillaiNUS/Splittap-pay),
+[latest successful main CI at `17e917c`](https://github.com/pranavpillaiNUS/Splittap-pay/actions/runs/42517021199),
+and the [Nov 9 live-practice record in PR #25](https://github.com/pranavpillaiNUS/Splittap-pay/pull/25).
+That CI run used scripted stand-ins and fake providers; the live-practice record also used
+fake payment and supplier providers.
 
 ## Checklist
 
@@ -47,12 +54,12 @@ The rules do not require a separate AI tools list. We keep one below as accurate
 | Item | Owner | Status |
 | --- | --- | --- |
 | Register on Devpost and choose the Representative | Both | Not established from the repo. Confirm who enters the submission |
-| Repo made public | Both. Pranav changes the setting | Not done. The repo is private. A scan of its history on Nov 7 found no real secrets. It did find personal details you should both see first. The report is outside the repo. Scan again before the change, because commits are still landing |
-| License visible | Both | In place. `LICENSE` is MIT and GitHub detects it. The copyright line names only `pranavpillaiNUS`, so Danny should confirm that is fine. The public can see it only once the repo is public |
+| Repo made public | Both. Pranav changes the setting | Not done. GitHub confirms the repo is private on Nov 9. A scan of its history reported on Nov 7 found no real secrets. It did find personal details you should both see first. The report is outside the repo and was not rechecked for this refresh. Scan again before the change, because commits are still landing |
+| License visible | Both | Verified Nov 9: `LICENSE` is MIT and GitHub detects it. The copyright line names only `pranavpillaiNUS`, so Danny should confirm that is fine. The public can see it only once the repo is public |
 | Complete setup and run instructions | Pranav | Partly done. `README.md` has run commands. `docs/new-device-setup.md` is a team guide and still says the repo is private. The opening below is not pasted in yet |
-| Working demo instructions | Both | Scripted flow documented and passing CI on Linux and Windows with Node 24.15 and 26, and on macOS with Node 26. Default execution uses fake providers; `--sandbox-paypal` opts into sandbox payment with a simulated supplier. The final sandbox recording still needs to be made. The Nov 6 and 7 live Claude runs used temporary Windows copies with the backend's folder check skipped. A Nov 9 live practice take ran from the repository on Windows with the check on and exited 0 |
+| Working demo instructions | Both | Verified Nov 9: the latest main CI passes tests, typecheck, the offline demo and the scripted flow on Linux (Node 24.15.0, 24 and 26), Windows (24.15.0 and 26), and macOS (26). Default execution uses fake providers; `--sandbox-paypal` opts into sandbox payment with a simulated supplier. The final sandbox recording still needs to be made. The Nov 6 and 7 live Claude runs used temporary Windows copies with the backend's folder check skipped. PR #25 records a Nov 9 live practice take from the repository on Windows with the check on: exit 0, 66 seconds, about 53,600 tokens |
 | Judge access until judging ends on Dec 15, with any credentials they need | Both | Not done. The repo must stay public and the instructions must keep working. The scripted flow needs no key. `--live` needs an Anthropic key. **[PAYPAL, Danny and Pranav: decide how judges run the PayPal path, using sandbox details only and committing no secret to the repo. See the proposal below.]** |
-| Name the platform it runs on | Both | Not decided. The rules require consistent running on the intended platform. The tests and the scripted flow pass in CI on Linux, Windows and macOS. Name only platforms where the PayPal path has also run, because the rules hold us to what we name |
+| Name the platform it runs on | Both | Not decided. The rules require consistent running on the intended platform. The Nov 9 main CI check confirms tests and the scripted flow pass on Linux, Windows and macOS; it does not exercise PayPal. Name only platforms where the PayPal path has also run, because the rules hold us to what we name |
 | Video under 3 minutes, public on YouTube | Pranav, with Danny for scene 6 | Not done. `docs/demo-script.md` is the recording plan and targets 2:45. Scene 6 needs a final-tree sandbox recording with buyer consent; wiring alone does not supply that recording |
 | No copyrighted music or third-party trademarks | Pranav | Cannot be checked until a video exists. A search on Nov 7 found no common hardware brand names in the fixtures, examples, policy files or demo flow. SKUs are synthetic, such as `LAP-14-AIR`. The narration and screen name Claude, a third-party mark, and PayPal, the sponsor. Section 11 says to ask in writing if a term is ambiguous, so consider asking Devpost whether naming the AI tool you used is fine |
 | Devpost text | Both. Pranav drafts, Danny writes the PayPal parts | Draft below, with PayPal placeholders open. Nothing is entered on Devpost |
@@ -241,15 +248,15 @@ The checker, ledger and scripted stand-in use no AI.
 
 | Tool | What the repo shows | To confirm |
 | --- | --- | --- |
-| Claude Code | `CLAUDE.md`, `docs/new-device-setup.md`, and one commit carrying a Claude Opus 5.5 co-author line | **Pranav:** how it was used and which models. **Danny:** whether you used it too |
+| Claude Code | `CLAUDE.md`, `docs/new-device-setup.md`, and commits carrying Claude Opus 5.5 co-author lines | **Pranav:** how it was used and which models. **Danny:** whether you used it too |
 | Codex, in VS Code | Pranav used it on Nov 7 to finish the demo documentation, independently verify that work and run one live rehearsal. Commit history will not show this | **Pranav:** confirm, and add which models |
 | OpenCode | `.audit/backend-delivery/plan.md` names OpenCode v2.2.2 as the backend's implementation executor | **Danny:** which model or models it ran on |
 | Agent review roles | `.audit/backend-delivery/` records design and review roles, and review rounds | **Danny:** which tools and models ran them |
 | graphify | `AGENTS.md` and `graphify-out/` show coding agents using it as a code graph | **Both:** whether it counts. The repo does not establish whether it calls a model |
 
 **Both of you:** add anything else you used, such as chat assistants for research, or AI voice or
-editing tools for the video. Commit history cannot settle this list, because only one commit on a
-current branch carries an AI co-author line.
+editing tools for the video. Commit history cannot settle this list: co-author lines do not record
+every tool or model used.
 
 ## Judge-facing README opening
 
