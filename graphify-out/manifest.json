@@ -720,15 +720,15 @@
     "semantic_hash": ""
   },
   "apps/cli/src/demo-flow.test.ts": {
-    "mtime": 1794154516.6491892,
-    "seen": 1794199661.6352918,
-    "ast_hash": "332f51fecc61ad655a58c414a75bf515",
+    "mtime": 1794200537.6002,
+    "seen": 1794200647.9188404,
+    "ast_hash": "f11f075a4b2c6cb4afecff301a903472",
     "semantic_hash": ""
   },
   "apps/cli/src/demo-flow.ts": {
-    "mtime": 1794154516.6529868,
-    "seen": 1794199661.6352918,
-    "ast_hash": "bf52ba2b2a6cbaf8cb738f311a4218fe",
+    "mtime": 1794200517.0024943,
+    "seen": 1794200647.9188404,
+    "ast_hash": "fdd7160eedcfa03e979327126936d688",
     "semantic_hash": ""
   },
   "apps/cli/src/format.ts": {
@@ -798,9 +798,9 @@
     "semantic_hash": ""
   },
   "docs/demo-script.md": {
-    "mtime": 1794154516.6670384,
-    "seen": 1794199661.6352918,
-    "ast_hash": "b7558c2f10c76df2c35328947973e51e",
+    "mtime": 1794200554.5674915,
+    "seen": 1794200647.9188404,
+    "ast_hash": "4690f5f8c6743a11cc9c51421f453270",
     "semantic_hash": ""
   },
   "docs/new-device-setup.md": {
