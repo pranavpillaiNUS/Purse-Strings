@@ -33,8 +33,21 @@ are not identical: Claude picks its own mandate ID and words its own summaries.
 The flow uses `shop run --brief`, then closes with the read-only `shop status` dashboard. A brief
 review cuts Claude's long summary to its conclusion and its section on suspicious supplier data,
 and says how many lines it left out.
-For a scripted rehearsal, say "the scripted stand-in" wherever the narration below says
-"Claude", and omit the live-only part of scene 4 that starts "Now Claude".
+
+### Scripted takes, including a final recording
+
+Without `--live`, the draft and every shopper run are fixed scripts and no model is called.
+These changes apply to every scripted take, rehearsal or final recording:
+
+- Say "the scripted stand-in" wherever the narration below says "Claude".
+- In scene 4, omit the live-only part that starts "Now Claude". A scripted take does not run it.
+- In scene 5, say the stand-in recovers at store-a "as scripted". Its script tries store-b and
+  then store-a, so the recovery is not a decision.
+- On camera, say "the shopper proposes" where the dashboard section below says "the AI proposes".
+
+A scripted take shows no AI on screen. The hackathon requires meaningful use of AI, so weigh
+that when choosing the shopper in step 1 of the
+[freeze handoff](submission.md#freeze-and-recording-handoff).
 
 Each shopper run also saves `<runId>.review.json` in the take directory. To inspect
 scene 5 again without a model call or another submission:
@@ -66,13 +79,15 @@ so rehearse one first if you record on another machine.
 
 The page is read-only. Every action still happens in the terminal, which is the point to make
 on camera: the AI proposes, the checker decides, a person confirms, and the dashboard only
-shows what the ledger recorded.
+shows what the ledger recorded. In a scripted take, the shopper proposes; no AI is involved.
 
 ## The script
 
 The narration is about 350 words, which is about 2:20 at a normal pace, and the rest is time
-for viewers to read the screen. Cut waiting time in editing, especially during scenes 2, 4
-and 5, when Claude can take 10 to 20 seconds to answer. In a sandbox take, also cut scene 6's
+for viewers to read the screen. For a scripted take, apply the
+[changes above](#scripted-takes-including-a-final-recording) to every scene. Cut waiting time
+in editing, especially during scenes 2, 4 and 5 of a live take, when Claude can take 10 to 20
+seconds to answer. In a sandbox take, also cut scene 6's
 buyer step down to the approval click. The flow sets no time limit there, and the Nov 9
 rehearsal spent most of its 55 minutes waiting at that step.
 
