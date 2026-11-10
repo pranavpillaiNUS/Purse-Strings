@@ -1,7 +1,4 @@
-# Splittap
-
-**[NAME: Splittap is provisional, and `package.json` still says `purse-strings`. Pick one before
-submitting.]**
+# Purse Strings
 
 **The agent proposes, the rules decide.**
 
@@ -9,10 +6,12 @@ An AI purchasing agent for one job: equip new hires with approved laptops and mo
 start, within an all-in budget. Claude drafts the purchase mandate and does the shopping. It cannot
 pay or approve anything. Company policy, a person and a plain-code checker decide what happens.
 
-This is our entry for PayPal's Build What's Next with PayPal and AI hackathon. The name is provisional.
+This is our entry for PayPal's Build What's Next with PayPal and AI hackathon.
 
-**How PayPal is used:** [PAYPAL, after Danny's work lands: one or two sentences on what the purchase
-path does in the PayPal sandbox, from observed results only. Link to the recorded results.]
+**How PayPal is used:** with `--sandbox-paypal`, the demo's payment step runs in the PayPal sandbox.
+The checker's reserved total becomes a PayPal order, a sandbox buyer approves it on PayPal's page,
+and the operator's commands then authorize and capture exactly that amount. The supplier order
+stays simulated. The recorded sandbox results are in [`docs/paypal-spike.md`](docs/paypal-spike.md).
 
 **How AI is used:** Claude (`claude-opus-5-5` by default) turns a plain-English request into a draft
 mandate, and shops within that mandate using four bounded tools.
@@ -38,7 +37,7 @@ between scenes.
 npm run demo:flow -- --pause
 ```
 
-Verified on Nov 9: the scripted flow passes in [main CI at `17e917c`](https://github.com/pranavpillaiNUS/Splittap-pay/actions/runs/42517021199)
+Verified on Nov 9: the scripted flow passes in [main CI at `17e917c`](https://github.com/pranavpillaiNUS/Purse-Strings/actions/runs/42517021199)
 on Linux (Node 24.15.0, 24 and 26), Windows (24.15.0 and 26), and macOS (26). Those jobs
 use scripted stand-ins and fake providers; they do not verify the PayPal account path.
 
@@ -59,12 +58,14 @@ use scripted stand-ins and fake providers; they do not verify the PayPal account
   and SQLite backend. The six backend runs came from three live demo passes on Windows; the first
   two skipped the folder check in temporary copies, and the Nov 9 pass ran with the check on.
   These executions used fake payment and supplier providers. This small sample does not establish
-  how Claude will behave in another run. See the [live-practice record](https://github.com/pranavpillaiNUS/Splittap-pay/pull/25)
+  how Claude will behave in another run. See the [live-practice record](https://github.com/pranavpillaiNUS/Purse-Strings/pull/25)
   and `services/agent/README.md`.
 - **Anything about real money.** There are no real suppliers, payments or orders here. A reservation
   is not payment, and a fake provider's `ordered` is not an order.
-- **Anything about PayPal.** [PAYPAL, after Danny's work lands: replace this line with what the demo
-  shows in the sandbox and what it still does not show.]
+- **Anything about PayPal, in this default run.** It uses a fake payment provider. Adding
+  `--sandbox-paypal` uses the PayPal sandbox; it needs sandbox credentials in `.env` and a sandbox
+  buyer to approve. Even then the money is sandbox money, the supplier order is simulated, and
+  recovery after a lost PayPal response is tested only against simulated responses.
 - **Immunity to prompt injection.** It shows one fixed listing failing to achieve anything.
 - **Production authentication.** Confirmation is a local operator check.
 - **The whole product.** Stock reuse, delivery tracking, approvals and exceptions are not built. No
@@ -76,15 +77,16 @@ you. `docs/hackathon-plan.md` is a superseded plan and does not describe what is
 
 ---
 
-# Splittap — CLI-first equipment purchasing
+# Purse Strings — CLI-first equipment purchasing
 
 Help a small-company operations manager equip new hires on time, using approved
 hardware, suppliers and an all-in budget. The AI proposes; independent rules and
-human-confirmed authority govern execution. The name is provisional.
+human-confirmed authority govern execution.
 
-**Everything happens in the terminal.** Drafting, confirmation, authorization and execution
-are CLI commands. Stage two adds one [read-only dashboard](#dashboard) that shows what those
-commands report and can change nothing. The checker supports offline eligibility and
+**Everything runs through the same CLI commands.** Drafting, confirmation, authorization and
+execution are CLI commands. Stage two adds a [read-only dashboard](#dashboard) that shows what
+those commands report, and a [local app](#local-app) that runs the demo flow from a browser by
+answering its prompts. The checker supports offline eligibility and
 simulated payment execution using fake providers.
 
 ## Start here
@@ -141,8 +143,8 @@ npm run cli -- store reset --catalog services/suppliers/state/store-a.json
 
 `store reset --seed NAME` chooses the baseline: `store-a` (the default), `store-b`, or
 `store-b-hostile`, which is store-b with a prompt-injection listing. Add `--now
-ISO_TIMESTAMP` to re-date all of its evidence, which runs under the backend's real clock
-need. It keeps every status and source as written.
+ISO_TIMESTAMP` to re-date all of its evidence. Runs against the backend need this, because
+the backend uses the real clock. Re-dating keeps every status and source as written.
 
 `store set` accepts one or more of these changes:
 
@@ -293,7 +295,7 @@ panel, a plain-English request, confirmation, a hostile listing, a store change 
 cart rejected followed by recovery, and execution over fake providers. Add `--live` for Claude, which spends API credit, and `--pause` for recording. The
 scene-by-scene recording plan is in [the demo script](docs/demo-script.md).
 
-`--sandbox-paypal` connects scene 6's payment capture to the PayPal sandbox: the
+`--sandbox-paypal` connects scene 6's payment hold and capture to the PayPal sandbox: the
 generated backend config gains `paymentProvider: "paypal-sandbox"`, the flow needs
 sandbox credentials in `.env` (it stops before any reservation without them) and
 pauses while a sandbox buyer approves the hold in a browser. The supplier order stays
@@ -308,6 +310,29 @@ its original config/database with backend `status`, `audit` and
 The scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and on macOS with
 Node 26. Live Claude has run it three times, all on Windows: twice in temporary copies with the
 backend's folder check skipped, and once on Nov 9 from the repository with the check on.
+
+## Local app
+
+One page on your machine that runs the demo flow from a browser:
+
+```sh
+npm run app                             # serves http://127.0.0.1:7171
+```
+
+Type the manager's request (with Claude) or use the demo request (scripted stand-in), choose fake
+or PayPal sandbox payment, and press **Start run**. Each Enter press of `demo:flow --pause` becomes
+a button: **Next scene**, **Confirm this mandate**, **Buyer has approved**. The page shows the
+company policy, the mandate with its confirmation, a conversation labelled by who said or decided
+each thing (you, Claude, the scripted stand-in, the checker), and the ledger's budget and operations.
+
+It drives the same flow and backend commands as the terminal, so the checker, ledger and payment
+code are unchanged. Each take runs in a new folder under `.runtime/app`, one at a time. The server
+listens on 127.0.0.1 only and accepts three actions (start, continue, stop), each needing the
+launch token in the page and a matching Origin. Continue sends one Enter, only for the prompt the
+flow is waiting at; Stop works only while it waits, so no command is cut off. Claude mode spends
+API credit; PayPal mode needs sandbox credentials in `.env` and a sandbox buyer, as the terminal
+flow does. Other requests than the demo's may be refused by policy or end as unusable takes,
+because the later scenes are tuned to the demo request.
 
 ## Dashboard
 
@@ -331,8 +356,8 @@ npm run dashboard -- --backend-db PATH --backend-config PATH --mandate-id ID --o
 
 It is a view, not a second ledger. It starts only read commands (backend `mandate-review`,
 `status` and `audit`, `shop status` and `store show`), each in its own process with no model key
-or PayPal detail, and `demo:flow` adds only the scene and result lines through
-`session.json` in its working directory. Confirmation comes from the backend's active
+or PayPal detail, and `demo:flow` adds only the scene, the result lines and, for a take that
+is not usable, the terminal's reasons through `session.json` in its working directory. Confirmation comes from the backend's active
 mandate revision; session metadata cannot confirm it. An unavailable or mismatched read
 is shown as unknown. Child reads run one at a time, and store freshness is compared with
 the exact age limit before rounding for display. The server listens on 127.0.0.1, answers only to
@@ -358,23 +383,26 @@ intact. Unit 4 added a separate PayPal gateway, since wired into execution
 ([docs/backend-api.md](docs/backend-api.md#paypal-gateway-unit-4-contract--unit-5-sandbox-additions))
 with capture/refund read-and-write contracts — sandbox host only, injected fetch,
 finite timeouts, `SGD`/minor-unit money at the edge — proven by fetch-mocked tests
-only. Unit 5 wires that gateway into the execution ledger behind the backend
+for that contract. Unit 5 wires that gateway into the execution ledger behind the backend
 config (`paymentProvider: "paypal-sandbox"`): operator-only hold commands
 (`operation-authorize`, `operation-complete-authorization`) place a sandbox hold
 on a reserved operation before `operation-run`, and the durable worker recovers
 crashes through sandbox reads. [Manual sandbox notes](docs/paypal-spike.md) record
-a Nov 7 application capture on the earlier PR #17 tree plus the AUTHORIZE fix, and separate Nov 7–8 spike
-runs. These limited historical observations do not validate the current recovery
-path, unused-hold release or real supplier ordering. This checkpoint ran offline;
-the supplier order stays fake in every configuration. [Delivery
+a Nov 7 application capture on the earlier PR #17 tree plus the AUTHORIZE fix,
+separate Nov 7–8 spike runs, and a Nov 9 scripted Windows demo rehearsal at `17e917c`.
+That [rehearsal](docs/paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09) records
+one buyer-approved sandbox authorization/capture for S$7,510.10, cross-checked against
+the local ledger. It omitted `--live` and `--pause`; it was not the final recorded take.
+It does not validate response-loss recovery, unused-hold release or real supplier
+ordering. The supplier order stays fake in every configuration. [Delivery
 evidence](docs/backend-delivery-review.md) distinguishes the automated evidence
 from those manual observations and remaining account exercises.
 
 **Remaining:** stock assignment, authorized account exercises for current-path
 response-loss recovery and unused-hold closure (see `docs/paypal-spike.md`), real supplier
 execution, exceptions and equipment-readiness tracking. All will be tested through the
-CLI. The only page we serve is the read-only [dashboard](#dashboard), which no stage-one
-acceptance depends on. The only other browser page involved is PayPal's own hosted
+CLI. The pages we serve are the read-only [dashboard](#dashboard) and the [local app](#local-app),
+which only answers `demo:flow` prompts; no stage-one acceptance depends on either. The only other browser page involved is PayPal's own hosted
 buyer-consent screen during the sandbox hold steps or the optional spike.
 
 ## Separate PayPal feasibility spike

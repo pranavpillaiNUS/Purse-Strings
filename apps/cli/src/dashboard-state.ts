@@ -134,6 +134,12 @@ export const DemoSessionSchema = z.object({
   waiting: z.enum(['next-scene', 'operator-confirm', 'sandbox-buyer']).nullable(),
   finished: z.boolean(),
   failure: z.string().max(2_000).nullable(),
+  /** Absent in sessions written before the flow recorded it; those read as no problems listed. */
+  unusable: z.array(z.string().max(500)).max(20).default([]),
+  /** Only while waiting for the sandbox buyer; absent in older sessions. */
+  approvalUrl: z.string().max(2048).regex(/^https:\/\//).nullable().default(null),
+  /** Counts the flow's recorded waits; the local app answers each one once. */
+  waitId: z.number().int().min(0).max(1_000_000).optional(),
 }).strict();
 
 export type DemoSession = z.infer<typeof DemoSessionSchema>;
@@ -257,6 +263,8 @@ export interface DashboardStore {
   deliveryBy: string;
   /** The oldest record, which is what the policy's evidence age limit applies to. */
   oldestRecordAt: string;
+  /** The newest record, so any future-dated observation remains visible. */
+  newestRecordAt: string;
   recordStatuses: string[];
   products: Array<{ sku: string; unitPriceMinor: number; availableUnits: number }>;
 }
@@ -276,6 +284,9 @@ export interface DashboardState {
     waiting: DemoSession['waiting'];
     finished: boolean;
     failure: string | null;
+    unusable: string[];
+    /** Always set by buildDashboardState; optional so older fixtures still type-check. */
+    approvalUrl?: string | null;
   };
   mandate: null | {
     id: string;
@@ -293,6 +304,21 @@ export interface DashboardState {
     requirements: Array<{ id: string; role: string; quantity: number; allowedSkus: string[]; maxUnitPriceMinor: number; minWarrantyMonths: number }>;
     evidenceMaxAgeHours: number | null;
   };
+  /**
+   * Why `mandate` is or is not present. `not-stored`: no stored mandate is
+   * selected yet. `revision-unknown`: the backend holds the mandate but refused it
+   * as unconfirmed, and a followed backend learns the revision only from the
+   * confirmed ledger, so its details cannot be read. `unavailable`: a read failed
+   * or did not match. `read`: the backend's review of the revision.
+   */
+  mandateStatus: 'not-stored' | 'revision-unknown' | 'unavailable' | 'read';
+  /**
+   * Why `ledger` is or is not present. `no-mandate`: nothing was asked yet.
+   * `unconfirmed`: the backend's exact refusal for an unconfirmed revision.
+   * `unavailable`: the read failed or did not match, so reservations are unknown;
+   * the page must never describe that as an unconfirmed mandate or an empty ledger.
+   */
+  ledgerStatus: 'no-mandate' | 'unconfirmed' | 'unavailable' | 'read';
   /** From the ledger, through shop status. Absent until a revision is confirmed. */
   ledger: null | {
     mandateId: string;
@@ -301,6 +327,8 @@ export interface DashboardState {
     requirements: Array<{ requirementId: string; required: number; committedUnits: number; reservedUnits: number; remainingUnits: number }>;
   };
   stores: DashboardStore[];
+  /** IDs selected for reading, including ones whose facts are unavailable. */
+  requestedOperationIds: string[];
   operations: DashboardOperation[];
   /** Expected states, such as waiting for the demo to start. */
   notices: string[];
@@ -380,8 +408,8 @@ function readSession(directory: string): SessionRead {
   let text: string;
   try {
     text = readFileSync(path, 'utf8');
-  } catch {
-    return { kind: 'missing' };
+  } catch (error) {
+    return { kind: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid' };
   }
   try {
     const parsed = DemoSessionSchema.safeParse(JSON.parse(text));
@@ -394,11 +422,13 @@ function readSession(directory: string): SessionRead {
 function storeSummary(catalog: z.infer<typeof StoreShowSchema>['catalog']): DashboardStore {
   const records = [catalog.delivery.evidence, ...catalog.products.flatMap(({ productEvidence, stockEvidence }) => [productEvidence, stockEvidence])];
   const oldest = records.reduce((min, record) => (Date.parse(record.observedAt) < Date.parse(min) ? record.observedAt : min), records[0]!.observedAt);
+  const newest = records.reduce((max, record) => (Date.parse(record.observedAt) > Date.parse(max) ? record.observedAt : max), records[0]!.observedAt);
   return {
     supplierId: catalog.supplierId,
     shippingMinor: catalog.shippingMinor,
     deliveryBy: catalog.delivery.by,
     oldestRecordAt: oldest,
+    newestRecordAt: newest,
     recordStatuses: [...new Set(records.map(({ status }) => status))].sort(),
     products: catalog.products.map(({ sku, unitPriceMinor, availableUnits }) => ({ sku, unitPriceMinor, availableUnits })),
   };
@@ -415,8 +445,11 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
     source: { kind: source.kind, label },
     demo: null,
     mandate: null,
+    mandateStatus: 'not-stored',
+    ledgerStatus: 'no-mandate',
     ledger: null,
     stores: [],
+    requestedOperationIds: [],
     operations: [],
     notices: [],
     problems: [],
@@ -427,6 +460,9 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
   let confirmedAt: string | null = null;
   let confirmationStatus: 'confirmed' | 'unconfirmed' | 'unknown' = 'unknown';
   let operationIds: readonly string[];
+  // The demo records a drafted mandate before the backend stores it.
+  let sessionAwaitsStorage = false;
+  let backendHasNoMandate = false;
 
   if (source.kind === 'demo') {
     let session = readSession(source.directory);
@@ -440,6 +476,8 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
       return state;
     }
     if (session.kind === 'invalid') {
+      state.mandateStatus = 'unavailable';
+      state.ledgerStatus = 'unavailable';
       state.problems.push(`The demo session file in ${label} could not be read.`);
       return state;
     }
@@ -447,17 +485,20 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
     state.demo = {
       mode: value.mode, paymentProvider: value.paymentProvider, startedAt: value.startedAt, updatedAt: value.updatedAt,
       scenes: value.scenes, scene: value.scene, results: value.results, waiting: value.waiting, finished: value.finished, failure: value.failure,
+      unusable: value.unusable, approvalUrl: value.approvalUrl,
     };
     // Session metadata selects what to inspect; it cannot establish or suppress
     // the backend's confirmation facts, even while a demo scene is catching up.
     mandateId = value.mandate?.id ?? null;
     revision = value.mandate?.revision ?? null;
     operationIds = value.operationIds;
-    if (value.mandate !== null && !value.mandate.stored) state.notices.push('Demo scene: preparing the mandate for storage and confirmation.');
+    sessionAwaitsStorage = value.mandate !== null && !value.mandate.stored;
+    if (sessionAwaitsStorage) state.notices.push('Demo scene: preparing the mandate for storage and confirmation.');
   } else {
     mandateId = source.mandateId;
     operationIds = source.operationIds;
   }
+  state.requestedOperationIds = [...operationIds];
 
   const catalogPaths = readCatalogPaths(configPath);
   // A read command still opens SQLite and validates the database and sidecars.
@@ -484,18 +525,28 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
 
   if (shop !== null) {
     const parsed = parseJson(ShopStatusSchema, shop);
+    // Only the exact refusal or a matching read below may replace this.
+    state.ledgerStatus = 'unavailable';
     if (parsed === null) {
       // This is the exact trusted CLI refusal for mandate.get. Other failures,
       // including storage/ACL refusal, do not establish a confirmation state.
       if (shop.status === 1 && shop.stdout.trim() === ''
         && shop.stderr.trim() === 'shop: Mandate has no confirmed active revision') {
         confirmationStatus = 'unconfirmed';
+        state.ledgerStatus = 'unconfirmed';
         state.notices.push('The backend has no confirmed active revision for this mandate. The shopper is refused until a person confirms it.');
+      } else if (sessionAwaitsStorage && shop.status === 1 && shop.stdout.trim() === ''
+        && shop.stderr.trim() === 'shop: Mandate was not found') {
+        // The backend's own exact refusal agrees with the session: the mandate
+        // is not stored yet. The session alone could not establish this.
+        backendHasNoMandate = true;
+        state.ledgerStatus = 'no-mandate';
       } else state.problems.push(problemText('Ledger (shop status)', shop));
     } else if (parsed.mandateId !== mandateId || (revision !== null && parsed.mandateVersion !== revision)) {
       state.problems.push('Ledger (shop status): the confirmed mandate does not match the revision being reviewed.');
     } else {
       state.ledger = { mandateId: parsed.mandateId, mandateVersion: parsed.mandateVersion, budget: parsed.budget, requirements: parsed.requirements };
+      state.ledgerStatus = 'read';
       revision ??= parsed.mandateVersion;
       confirmedAt = parsed.confirmedAt;
       confirmationStatus = 'confirmed';
@@ -503,13 +554,20 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
   }
 
   // The backend mode only learns the revision from the ledger, so this read comes second.
-  if (mandateId !== null && revision !== null) {
+  if (mandateId !== null && revision === null) {
+    // Only the exact unconfirmed refusal shows the backend holds this mandate.
+    // Any other failure leaves its details unknown, not unstored.
+    state.mandateStatus = state.ledgerStatus === 'unconfirmed' ? 'revision-unknown' : 'unavailable';
+  }
+  if (mandateId !== null && revision !== null && !backendHasNoMandate) {
     const review = await run('backend', [...backendRoot, 'mandate-review', '--id', mandateId, '--revision', String(revision)]);
     const parsed = parseJson(MandateReviewSchema, review);
+    state.mandateStatus = 'unavailable';
     if (parsed === null) state.problems.push(problemText('Mandate', review));
     else if (parsed.mandateId !== mandateId || parsed.mandateVersion !== revision) {
       state.problems.push('Mandate: the backend review did not match the requested revision.');
     } else {
+      state.mandateStatus = 'read';
       state.mandate = {
         id: parsed.mandateId, revision: parsed.mandateVersion, digest: parsed.digest, confirmationStatus, confirmedAt,
         currency: parsed.draft.currency, budgetMinor: parsed.draft.budgetMinor, purchaseBy: parsed.draft.purchaseBy,

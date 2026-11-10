@@ -12,7 +12,7 @@ flowchart LR
   Checker -->|Approved catalogs, over rpc| Agent
   Checker -->|Trusted quotes / order status| Suppliers
   Checker --> Ledger[(Transactional SQLite ledger)]
-  Checker --> PayPal[PayPal sandbox: wired behind config opt-in; <br/>fetch-mocked + crash-tested, unverified against real PayPal]
+  Checker --> PayPal[PayPal sandbox: wired behind config opt-in; <br/>Nov 9 normal-path rehearsal; recovery: mocked crash-test evidence]
 ```
 
 M0 calls the pure checker and fixture supplier in-process. The separate backend CLI
@@ -38,7 +38,7 @@ sandbox spike.
 | `services/checker/src/rules/` | Pure eligibility functions | Implemented |
 | `services/checker/src/ledger/` | Mandate authority, atomic reservations and durable operations | Implemented |
 | `services/checker/src/execution/` | Durable effect worker and fake providers | Simulation only |
-| `services/checker/src/paypal/` | Trusted provider adapter | Existing sandbox client (spike); unit-4 gateway with mocked-fetch contract tests, unit-5 sandbox additions wired into execution behind config opt-in; unverified against real PayPal |
+| `services/checker/src/paypal/` | Trusted provider adapter | Existing sandbox client (spike); unit-4/5 gateway wired behind config opt-in with mocked-fetch contract/crash tests. One scripted Windows normal-path authorization/capture rehearsal at `17e917c` was reported Nov 9; account recovery and unused-hold closure remain unverified |
 | `services/suppliers/src/` | Supplier interface, fixture quotes and local catalog controls | Offline simulation implemented |
 | `services/suppliers/fixtures/` | Synthetic catalog and evidence | Demo data |
 | `services/agent/` | Mandate draft/review, written by hand or by a model from plain English; bounded shopper worker over the shared client | Implemented; ten live shopper runs, four against the contract mock and six against the real backend on Windows (four in temporary copies with the folder check skipped, two from the repository with it on), and five live drafting runs |
@@ -81,8 +81,10 @@ perform external work through a durable worker and reconcile its outcome.
 Policy -> human-confirmed mandate -> price-free cart -> trusted quote -> eligibility
 -> atomic reservation -> external execution -> reconciliation -> equipment readiness.
 
-Atomic reservation and execution exist only as a simulation over fake providers. Real
-external execution, provider reconciliation and equipment readiness are planned.
+Atomic reservations and supplier execution remain a simulation. Payment effects default
+to fake providers; the opt-in PayPal sandbox path has one reported Nov 9 normal-path
+rehearsal, [cross-checked against the local ledger](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09).
+Real purchasing, account response-loss recovery and equipment readiness remain unproven.
 `BudgetSnapshot` is an offline input, not a ledger. A real executor loads state from storage, not agent-supplied JSON. A
 mandate's `approvedBy` is descriptive fixture metadata, not authentication. The
 prototype identity model is a trusted local operator; do not assume it extends to

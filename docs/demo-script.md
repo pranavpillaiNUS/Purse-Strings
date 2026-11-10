@@ -5,13 +5,24 @@ minutes. This script targets 2:45, which leaves room for small overruns.
 
 **This cannot be submitted yet.** The hackathon requires PayPal, and the default scene 6
 still runs on fake providers. A sandbox PayPal variant of scene 6 exists
-(`--sandbox-paypal`, below); verify it against a live sandbox account before recording it.
+(`--sandbox-paypal`, below). One scripted Windows rehearsal at `17e917c` succeeded on
+Nov 9; it was not the recorded take and did not use `--live` or `--pause`.
+[Rehearsal evidence](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09).
+Rehearse the selected recording variant on its candidate revision before recording it.
 
 ## Before you record
 
 1. Rehearse for free with `npm run demo:flow`. It uses a scripted stand-in and no API key.
-2. Record with `npm run demo:flow -- --live --pause`. It waits for Enter between scenes, and
-   the operator presses Enter to confirm the mandate.
+2. Record with the sandbox variant. The video needs `--sandbox-paypal`: without it, scene 6
+   runs on fake providers and shows no PayPal. Decide the shopper before recording; neither
+   is the default for the final take:
+   - Live Claude: `npm run demo:flow -- --live --pause --sandbox-paypal --dir .runtime/demo-sandbox-take-1`
+   - Scripted stand-in: `npm run demo:flow -- --pause --sandbox-paypal --dir .runtime/demo-sandbox-take-1`
+
+   Rehearse the chosen command first in its own directory, as in step 2 of the
+   [freeze handoff](submission.md#freeze-and-recording-handoff), and give each take a new
+   directory. The flow waits for Enter between scenes, the operator presses Enter to confirm
+   the mandate, and scene 6 waits for the sandbox buyer.
 3. Check the exit code after each take. Exit 2 means Claude did something else, such as
    avoiding store-b, so that take is not usable. The Nov 7 live take used about 57,000 tokens,
    roughly 30 cents, and took 59 seconds. The Nov 9 practice take used about 53,600 tokens
@@ -22,8 +33,21 @@ are not identical: Claude picks its own mandate ID and words its own summaries.
 The flow uses `shop run --brief`, then closes with the read-only `shop status` dashboard. A brief
 review cuts Claude's long summary to its conclusion and its section on suspicious supplier data,
 and says how many lines it left out.
-For a scripted rehearsal, say "the scripted stand-in" wherever the narration below says
-"Claude", and omit the live-only part of scene 4 that starts "Now Claude".
+
+### Scripted takes, including a final recording
+
+Without `--live`, the draft and every shopper run are fixed scripts and no model is called.
+These changes apply to every scripted take, rehearsal or final recording:
+
+- Say "the scripted stand-in" wherever the narration below says "Claude".
+- In scene 4, omit the live-only part that starts "Now Claude". A scripted take does not run it.
+- In scene 5, say the stand-in recovers at store-a "as scripted". Its script tries store-b and
+  then store-a, so the recovery is not a decision.
+- On camera, say "the shopper proposes" where the dashboard section below says "the AI proposes".
+
+A scripted take shows no AI on screen. The hackathon requires meaningful use of AI, so weigh
+that when choosing the shopper in step 1 of the
+[freeze handoff](submission.md#freeze-and-recording-handoff).
 
 Each shopper run also saves `<runId>.review.json` in the take directory. To inspect
 scene 5 again without a model call or another submission:
@@ -55,13 +79,28 @@ so rehearse one first if you record on another machine.
 
 The page is read-only. Every action still happens in the terminal, which is the point to make
 on camera: the AI proposes, the checker decides, a person confirms, and the dashboard only
-shows what the ledger recorded.
+shows what the ledger recorded. In a scripted take, the shopper proposes; no AI is involved.
+
+### Recording from the local app
+
+`npm run app` runs the same six scenes from a browser at http://127.0.0.1:7171, with buttons in
+place of Enter: **Next scene**, **Confirm this mandate**, and in sandbox mode **Open PayPal approval
+page** then **Buyer has approved**. Choose the shopper (scripted stand-in or Claude) and payment
+(fake or PayPal sandbox) before **Start run**; each take gets a new folder under `.runtime/app`.
+The narration below is unchanged. On camera, the page shows who said or decided each thing, the
+policy and mandate beside the conversation, and the confirmation stamp. If the buyer has not
+approved yet when **Buyer has approved** is pressed, the run says so and waits again; nothing is
+charged. Rehearse once on the recording machine before the take.
 
 ## The script
 
 The narration is about 350 words, which is about 2:20 at a normal pace, and the rest is time
-for viewers to read the screen. Cut waiting time in editing, especially during scenes 2, 4
-and 5, when Claude can take 10 to 20 seconds to answer.
+for viewers to read the screen. For a scripted take, apply the
+[changes above](#scripted-takes-including-a-final-recording) to every scene. Cut waiting time
+in editing, especially during scenes 2, 4 and 5 of a live take, when Claude can take 10 to 20
+seconds to answer. In a sandbox take, also cut scene 6's
+buyer step down to the approval click. The flow sets no time limit there, and the Nov 9
+rehearsal spent most of its 55 minutes waiting at that step.
 
 | Scene | Target | Running total |
 | --- | --- | --- |
@@ -119,16 +158,24 @@ prevents automatic cleanup. This protects unknown captures and pending holds.
 
 The default flow stays the one CI and first runs rely on: no key, no network, scene 6 on
 fake providers. `npm run demo:flow -- --live --pause --sandbox-paypal` connects scene 6's
-payment to the verified PayPal path instead. The generated backend config gains
+payment to the configured PayPal sandbox gateway instead. The generated backend config gains
 `paymentProvider: "paypal-sandbox"` (through the strict config schema), and the supplier
-order stays simulated in every variant; only the payment capture is a real call.
+order stays simulated in every variant. The authorization and capture commands call the
+PayPal sandbox. Gateway wiring has fetch-mocked contract and crash-test coverage. The
+Nov 9 [account rehearsal](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09) exercised
+one normal authorization/capture with the scripted shopper on Windows; account recovery,
+refunds and unused-hold closure were not exercised.
 
-Before anything is reserved, the flow checks the credentials with a probe hold on an id
-that has no operation. Without sandbox credentials in `.env` it stops before scene 2 with
+Before anything is reserved, the flow asks the backend to load its sandbox credential
+configuration using an id with no operation. That probe sends no PayPal request and creates
+no hold; it checks local configuration, not whether PayPal accepts the credentials.
+Without configured sandbox credentials in `.env` or the process environment, it stops before scene 2 with
 an instruction to add them, so the run never gets halfway through. Set them up as in the
 [spike](paypal-spike.md): `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`
 (`PAYPAL_ENV=sandbox` if used), from `cp .env.example .env`. Never point the demo at live
-keys, and rehearse once — this variant has not been verified against a live sandbox account.
+keys. The Nov 9 rehearsal omitted `--live` and `--pause`; the selected recording variant
+still needs its own rehearsal. Preserve `.runtime/demo-sandbox-rehearsal-1` and use a new
+directory for the next authorized take, such as `.runtime/demo-sandbox-recording-1`.
 
 Scene 6 then plays as a two-person scene:
 
@@ -137,18 +184,41 @@ Scene 6 then plays as a two-person scene:
   signs in as the *personal* sandbox buyer on PayPal's hosted page and approves (like the
   spike's step 6).
 - Enter completes it: `operation-complete-authorization`, then the normal `operation-run`.
-  If the buyer pressed Enter without approving, the flow stops and prints the backend's
-  own message as-is, "The sandbox buyer has not approved this hold yet"; nothing executes.
-  Enter that closes without approval stops the flow, so nothing can confirm by itself.
+  If the buyer pressed Enter without approving, the flow prints the backend's own message
+  as-is, "The sandbox buyer has not approved this hold yet", and asks again; nothing
+  executes until PayPal records the approval. Input that closes stops the flow, so nothing
+  can confirm by itself.
 - Afterwards the screen shows `paymentProvider: paypal-sandbox` with the sandbox ids
   (`authorizationId`, `captureId`) a viewer can match in the sandbox's Activity page,
   next to the statement that the supplier order stayed simulated (fake).
+
+**Narration for a sandbox take.** This is a draft for Pranav and Danny to agree. It replaces
+the scene 6 narration above and claims only what the Nov 9 rehearsal showed:
+
+> **6. Execution, with PayPal.** Only the operator can execute this, never the shopper. The
+> operator asks the PayPal sandbox to hold the reserved S$7,510.10, and a sandbox buyer
+> approves it on PayPal's page. No real money: it's a sandbox. Then the operator completes
+> the hold, and PayPal captures it. These IDs come from PayPal. The supplier order is still
+> simulated, and readiness says not assessed: payment doesn't mean the equipment has arrived.
+
+Plan 0:35 for this scene, ten seconds more than the fake-provider version. That brings the
+total to 2:55, still under three minutes but with less slack. Show only the approval click
+from PayPal's page. That page shows the sandbox buyer's generated email and test funding
+sources. They are sandbox data, but check the frame before publishing, as in step 5 of the
+[freeze handoff](submission.md#freeze-and-recording-handoff).
 
 ## What not to say
 
 - Don't say a scripted run is Claude. The compromised model is always scripted.
 - Don't describe fake-provider results as real payments or orders, or a reservation as payment.
 - Don't call the ledger's allocation a PayPal hold, or allocated units delivered equipment.
-- Don't mention PayPal in the purchase path until it is there.
+- Don't say a default take used PayPal; the default run says on screen that PayPal is opt-in.
+  With `--sandbox-paypal`, PayPal handles the payment hold and capture, and the supplier order
+  stays simulated.
 - Don't claim prompt-injection immunity, production authentication or a passed gate.
 - Don't say stock reuse, delivery tracking, approvals or exceptions work. They aren't built.
+- Don't call the PayPal hold the budget limit. The ledger enforces the budget; a PayPal
+  authorization is not an exact ceiling.
+- Don't say recovery, refunds or releasing an unused hold work against PayPal through the
+  application. Only normal captures have run on that path; the spike's refund was a separate
+  script.

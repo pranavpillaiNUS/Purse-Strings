@@ -1,10 +1,13 @@
-# Splittap purchasing agent
+# Purse Strings purchasing agent
 
 ## Purpose and current scope
 
 Help the operations manager at a 10–50 person company equip new hires with approved
-laptops and monitors before their start date, within an all-in budget. The name is
-provisional. This is equipment procurement, not bill splitting.
+laptops and monitors before their start date, within an all-in budget. This is equipment
+procurement, not bill splitting. The project was called Splittap until Nov 10, when the
+repository became `Purse-Strings`. Internal identifiers such as the `splittap-demo-session`
+format and the `.splittap-demo*` work-folder markers keep the old prefix on purpose:
+renaming a marker would stop protecting earlier sandbox take folders.
 
 This is our entry for PayPal's "Build What's Next with PayPal and AI" hackathon.
 **Deadline: Nov 12, 2026, 3:00 PM US Eastern** (4:00 AM Nov 13 in Singapore). The
@@ -14,8 +17,11 @@ project must meaningfully use both PayPal (sandbox only) and AI.
 CLI commands prove contracts, policy decisions and durable execution. Both people
 agreed on Nov 8 to start stage two with a local, read-only dashboard; see
 `docs/project-scope.md`. It may display existing read-command results on 127.0.0.1.
-Confirmation, authorization and execution remain terminal commands. Any page that
-acts, or hosting beyond this machine, requires a separate scope agreed by both people.
+Both people agreed on Nov 10 to one local page that acts (`npm run app`): it starts a
+`demo:flow` take and answers its prompts with three fixed actions (start, continue,
+stop) on 127.0.0.1, so confirmation and execution still run through the same flow and
+backend commands. Any other page action, or hosting beyond this machine, requires a
+separate scope agreed by both people.
 
 Read `docs/project-scope.md` for outcomes and milestones, `docs/architecture.md` for
 boundaries/ownership and `README.md` for commands. `services/agent/README.md` covers the
@@ -34,6 +40,7 @@ Everything runnable is a simulation: no real money, suppliers or orders.
 | `npm run backend` | SQLite ledger with atomic budget and quantity reservations, local operator confirmation, and durable execution with crash recovery over **fake** payment and supplier providers; the backend config may additionally select `paymentProvider: "paypal-sandbox"` to route capture/refund effects through the sandbox gateway while the supplier order stays fake |
 | `npm run shop` | The bounded shopper (`run`): a model or a scripted stand-in proposes price-free carts through the shared client, and closes with a plain-language review; `--review-out` saves it. `review --file` replays an editable historical snapshot with no model/backend call or execution instructions. Mandate drafting (`draft`) produces a policy-checked draft. A read-only view (`status`) shows current ledger numbers and named operations, with no model or key |
 | `npm run demo:flow` | The whole story in one command, with dates generated from today: control panel, plain-English request, confirmation, hostile listing, store change, rejection and recovery, and execution over **fake** providers. `--live` uses Claude. `--sandbox-paypal` connects scene 6's payment capture to the PayPal sandbox (operator-only; needs sandbox credentials, aborts cleanly without them; the supplier order stays simulated). See `docs/demo-script.md` |
+| `npm run app` | Local page on 127.0.0.1 that starts one `demo:flow` take (scripted or Claude, fake or PayPal sandbox payment) and replaces each Enter press with a button; shows the policy, mandate, a labelled conversation and the ledger. Three fixed actions only, guarded by a launch token and an Origin check; no hosting or frontend dependencies |
 | `npm run dashboard` | Local read-only view of demo scenes, mandate confirmation, budget, operations, audit history and stores through existing read commands; no actions, keys, frontend dependencies or external hosting |
 | `npm run spike:paypal` | A separate, interactive PayPal sandbox spike connected to none of the above. `docs/paypal-spike.md` records Nov 7–8 manual observations; unused-hold void/final-capture closure remains unexercised |
 
@@ -42,8 +49,10 @@ and assignment, CLI approvals and exceptions, delivery and readiness tracking,
 production authentication. PayPal sandbox purchase-path wiring exists behind config opt-in
 (`paymentProvider`), with mocked-contract and crash-test evidence. `docs/paypal-spike.md`
 also records a Nov 7 application capture on the earlier PR #17 tree plus the AUTHORIZE
-fix, and separate Nov 7–8
-spike runs. Those historical observations do not validate recovery on the current tree,
+fix, separate Nov 7–8 spike runs, and a Nov 9 scripted Windows demo rehearsal at
+`17e917c`: one buyer-approved sandbox authorization/capture for S$7,510.10 with a fake
+supplier order. The Nov 9 take omitted `--live` and `--pause`; it was not the final
+recorded take. These normal-path observations do not validate recovery on the current tree,
 unused-hold closure or real purchasing. Do not describe the current recovery path as
 sandbox-account verified. Fake-provider results such as `ordered` are not real orders, and a reservation is not
 payment. No gate after M0 is recorded as passed; see `docs/project-scope.md`.
@@ -55,8 +64,8 @@ commands (`operation-authorize`, `operation-complete-authorization`) place a san
 reserved operation before `operation-run`; the durable worker resolves crashes through
 sandbox reads; sandbox credentials are read in-process only by the commands that call PayPal
 from the invocation directory `.env`/environment. Automated evidence for that path uses
-fetch-mocked tests and fake-fetch child-process crashes; the current cleanup ran no account
-exercise. Keep this separate from the limited historical manual observations above.
+fetch-mocked tests and fake-fetch child-process crashes; the Nov 8 cleanup ran no account
+exercise. Keep that recovery proof separate from the limited manual observations above.
 A unit-4 four-method capture/refund/refund-read contract remains intact.
 Reproduction commands and proof-class distinctions live in `docs/backend-delivery-review.md`.
 

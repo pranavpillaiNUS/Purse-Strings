@@ -69,7 +69,7 @@ const MAX_RPC_BYTES = 1_048_576;
 const MAX_FILE_BYTES = 1_048_576;
 const MAX_PATH_CHARS = 4096;
 
-const USAGE = `Splittap backend CLI (simulation)
+const USAGE = `Purse Strings backend CLI (simulation)
 
 Usage: npm run backend -- --db PATH --config PATH COMMAND [flags]
 

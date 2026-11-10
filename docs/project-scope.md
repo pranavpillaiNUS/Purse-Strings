@@ -84,11 +84,20 @@ serves one page on 127.0.0.1, needs no key, and adds no frontend dependency or b
 Confirmation is bound to the backend's active mandate revision, never the session file.
 Unavailable or mismatched confirmation reads remain unknown. Dashboard child reads run
 sequentially to avoid racing their SQLite validation, and evidence freshness uses exact
-elapsed time before rounding its display.
+elapsed time before rounding its display. A failed ledger read shows the budget as
+unavailable, never as an unconfirmed mandate, and a future-dated store record stays
+flagged even beside older evidence.
 Nothing in stage-one acceptance depends on it.
 
-Still deferred, each needing both people's agreement: any page that acts (mandate review and
-confirmation, approvals, exceptions, running or reconciling operations), progress and
+Both people agreed on Nov 10 to one local page that acts, `npm run app`
+(`apps/cli/src/app-server.ts`). It starts a `demo:flow` take and answers its prompts with three
+fixed actions (start, continue, stop) on 127.0.0.1, so it reuses the tested flow and backend
+commands; confirmation is still recorded by the backend for the OS user running it. It reads state
+through the dashboard's read commands and the take's own files. Nothing in stage-one acceptance
+depends on it.
+
+Still deferred, each needing both people's agreement: any other page action (mandate editing,
+approvals, exceptions, running or reconciling operations outside the demo flow), progress and
 readiness views beyond what the ledger records, and anything served beyond this machine. A
 page that acts must reuse the tested application core and persisted operations, and keep the
 same authority boundaries as the CLI.
@@ -175,8 +184,12 @@ the backend config `paymentProvider` and documented in `docs/backend-api.md`) wi
 fetch-mocked capture/refund/refund-read tests, operator hold commands and
 crash-recovery evidence through sandbox reads. `docs/paypal-spike.md` records limited
 historical manual observations: a Nov 7 application capture on the earlier PR #17 tree plus the AUTHORIZE fix,
-and separate Nov 7–8 spike captures and a refund. They do not establish response-loss
-recovery on the current tree or unused-hold closure. This checkpoint ran offline.
+and separate Nov 7–8 spike captures and a refund. A Nov 9 scripted Windows
+[demo rehearsal](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09) at `17e917c`
+records one normal sandbox authorization/capture for S$7,510.10; supplier ordering
+stayed fake. The reported buyer-consent exercise and subsequent local ledger reads do
+not establish response-loss recovery, refunds or unused-hold closure on this path.
+The final recorded take and judge-account setup remain outstanding.
 No gate after M0 is recorded as passed; M3 remains incomplete and M5 is planned.
 See `docs/backend-delivery-review.md` for the distinction between simulated execution,
 mocked contract coverage and manual account observations. The next PayPal evidence
