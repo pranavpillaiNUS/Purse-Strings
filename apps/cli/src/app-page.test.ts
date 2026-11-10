@@ -153,6 +153,20 @@ test('a stopped sandbox take with a PayPal order warns that a hold may exist', (
   assert.match(text(root), /A PayPal hold may exist\. It expires on its own; keep this take folder for status and operation-reconcile\./);
 });
 
+test('an unknown payment provider is never labelled as fake', () => {
+  const operation: DashboardState['operations'][number] = {
+    id: 'op-legacy', supplierId: 'store-a', cartId: 'c1', totalMinor: 751010, currency: 'SGD', status: 'ordered', reservationStatus: 'consumed',
+    paymentProvider: null, paymentStatus: 'succeeded', orderStatus: 'succeeded', refundStatus: 'not_started', readinessStatus: 'not_assessed',
+    createdAt: '2026-11-10T01:00:00.000Z', updatedAt: '2026-11-10T01:00:00.000Z', providerIds: {}, events: [],
+  };
+  const root = render(state({ dashboard: dashboard({}, [operation]) }));
+  const ledger = all(root, (node) => node.className === 'panel ledger')[0]!;
+  assert.match(text(ledger), /provider unknown, succeeded/);
+  assert.doesNotMatch(text(ledger), /fake/);
+  assert.match(text(ledger), /Supplier ordersimulated, succeeded/);
+  assert.match(text(ledger), /Readinessnot assessed/);
+});
+
 test('the scripted shopper shows the demo request read-only with its label', () => {
   const idle: AppState = { take: null, dashboard: null, conversation: [], terminal: [], approvalUrl: null, demoRequest: 'Equip five engineering hires.' };
   const root = render(idle);
@@ -168,6 +182,33 @@ test('the assets reference no external URL', () => {
   for (const [name, body] of Object.entries(assets)) assert.doesNotMatch(body, /https?:\/\/[a-z0-9-]+(\.[a-z0-9-]+)+/i, name);
   assert.doesNotMatch(assets.script, /attrs: \{ style:/, 'inline style attributes are blocked by the page CSP');
   assert.match(assets.html, /<meta name="splittap-token" content="\{\{TOKEN\}\}">/);
+});
+
+test('unavailable mandate reads stay unknown rather than looking unstored', () => {
+  const unavailable = { ...dashboard(), mandateStatus: 'unavailable' as const, ledgerStatus: 'unavailable' as const };
+  const failed = text(render(state({ dashboard: unavailable })));
+  assert.match(failed, /The mandate could not be read\. Its details and confirmation are unknown\./);
+  assert.doesNotMatch(failed, /Appears once the request is drafted and stored/);
+  assert.match(failed, /reservations are unknown/);
+  const revisionUnknown = text(render(state({ dashboard: { ...unavailable, mandateStatus: 'revision-unknown', ledgerStatus: 'unconfirmed' } })));
+  assert.match(revisionUnknown, /A mandate is stored, but its revision details are unavailable/);
+  assert.doesNotMatch(revisionUnknown, /Appears once the request is drafted and stored/);
+});
+
+test('the full mandate digest is available for review before confirmation', () => {
+  const current = dashboard();
+  const digest = '0123456789abcdef'.repeat(4);
+  current.mandateStatus = 'read';
+  current.mandate = {
+    id: 'engineering-hires-demo', revision: 1, digest, confirmationStatus: 'unconfirmed', confirmedAt: null,
+    currency: 'SGD', budgetMinor: 800000, purchaseBy: '2026-11-20T09:00:00.000Z', readyBy: '2026-11-23T09:00:00.000Z',
+    deliveryLocationId: 'singapore-office', allowedSuppliers: ['store-a'], requirements: [], evidenceMaxAgeHours: 72,
+  };
+  const root = render(state({ take: running('operator-confirm'), dashboard: current }));
+  assert.ok(text(root).includes(`Digest ${digest}`));
+  assert.match(text(root), /Not confirmed/);
+  assert.equal(all(root, (node) => node.className.includes('stamp')).length, 0);
+  assert.ok(buttons(root).includes('Confirm this mandate'));
 });
 
 test('a finished take found on disk after a restart reads as finished, not stopped', () => {
