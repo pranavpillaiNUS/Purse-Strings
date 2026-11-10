@@ -6,7 +6,7 @@ import { evaluatePurchase } from '../../../services/checker/src/rules/evaluate.t
 import { fromMinor } from '../../../services/checker/src/money.ts';
 import type { EligibilityResult } from '../../../packages/contracts/src/index.ts';
 
-const HELP = `Splittap — offline purchasing eligibility (no money moves)
+const HELP = `Purse Strings — offline purchasing eligibility (no money moves)
 
 Usage:
   npm run cli -- demo [--json]

@@ -12,9 +12,9 @@ Everything in **[BRACKETS]** must be resolved or removed before it reaches Devpo
 README. Repository and CI statuses were checked on Nov 9, 2026. Human decisions below
 remain open; historical reports retain their original dates.
 
-Verification: [repository visibility and license](https://github.com/pranavpillaiNUS/Splittap-pay),
-[latest successful main CI at `17e917c`](https://github.com/pranavpillaiNUS/Splittap-pay/actions/runs/42517021199),
-and the [Nov 9 live-practice record in PR #25](https://github.com/pranavpillaiNUS/Splittap-pay/pull/25).
+Verification: [repository visibility and license](https://github.com/pranavpillaiNUS/Purse-Strings),
+[latest successful main CI at `17e917c`](https://github.com/pranavpillaiNUS/Purse-Strings/actions/runs/42517021199),
+and the [Nov 9 live-practice record in PR #25](https://github.com/pranavpillaiNUS/Purse-Strings/pull/25).
 That CI run used scripted stand-ins and fake providers; the live-practice record also used
 fake payment and supplier providers.
 
@@ -77,15 +77,15 @@ the open checklist above; none records a decision or a passed gate.
 
 | Step | Owner | What to supply and what closes it |
 | --- | --- | --- |
-| 1. Confirm submission choices | Pranav and Danny | Agree the final name, Devpost Representative, intended platform, and whether the final take's shopper is live Claude or the scripted stand-in. Danny confirms license credit. Each person completes their tools/models disclosure. Written choices resolve these items; repository history cannot choose them. |
+| 1. Confirm submission choices | Pranav and Danny | The name is Purse Strings: Pranav renamed the repository to `Purse-Strings` on Nov 10, and Danny confirms it. Agree the Devpost Representative, intended platform, and whether the final take's shopper is live Claude or the scripted stand-in. Danny confirms license credit. Each person completes their tools/models disclosure. Written choices resolve these items; repository history cannot choose them. |
 | 2. Rehearse the recording variant | Danny and Pranav, with a sandbox buyer | One scripted Windows sandbox rehearsal at `17e917c` succeeded on Nov 9 without `--pause`; see the [recorded evidence](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09). Preserve its `.runtime/demo-sandbox-rehearsal-1` directory. On the candidate revision, rehearse the exact variant chosen in step 1 in a new directory: `npm run demo:flow -- --sandbox-paypal --pause --dir .runtime/demo-sandbox-recording-1` for the scripted stand-in, which spends no model credit, or the same with `--live` for Claude. Record buyer consent and the operation/provider references. A successful capture shows that take's scene 6 only; recovery and unused-hold closure need their own observations before either is claimed. |
 | 3. Set up judge access | Both | Agree how judges receive sandbox details privately, whether live Claude is offered, and how access remains available through judging. Run the selected path from a fresh clone with those judge details. The no-key scripted flow must remain available. Put no credential values in Git, PRs, screenshots or the public video. |
 | 4. Freeze the recording revision | Pranav, after both review | Record the revision, successful test/typecheck/demo results, scripted-flow result and applicable CI/fresh-install evidence. Recheck the README opening (PR #27, a draft until this step) against that revision, then mark it ready. Since Nov 10, GitHub Actions starts no jobs on this private repo: "recent account payments have failed or your spending limit needs to be increased". Until billing is fixed or the repo is public, new commits have local Windows results only, with no Linux or macOS CI. |
 | 5. Record and inspect the video | Pranav, with Danny for scene 6 | Follow the [six-scene script](demo-script.md) with the [recording command](demo-script.md#before-you-record) for the variant rehearsed in step 2: `--sandbox-paypal --pause`, plus `--live` only if live Claude was chosen. Without `--sandbox-paypal`, scene 6 shows no PayPal. Keep the final cut under three minutes. Use one new take directory, such as `.runtime/demo-sandbox-take-1`, and the same directory for its terminal and dashboard. Label scripted stand-ins and historical review replays; show only observed sandbox results, and record the take's operation id, `authorizationId` and `captureId` next to the video. Keep the supplier order visibly simulated. Inspect the terminal, browser, buyer-consent screens and audio for credentials, personal details and material requiring permission. |
 | 6. Finalize and submit | Pranav and the agreed Representative | Update live-run counts after recording, resolve every remaining submission bracket, and make the README, Devpost text and video agree. Both review repository history and authorize the visibility choice. Check the final repository/video links and judge instructions, then the Representative submits. |
 
-Preparation evidence from Nov 9: [combined build and dashboard rendering](https://github.com/pranavpillaiNUS/Splittap-pay/pull/24#issuecomment-6734790872)
-and [fresh clone/install with scripted story and review replay](https://github.com/pranavpillaiNUS/Splittap-pay/pull/26#issuecomment-6735113599).
+Preparation evidence from Nov 9: [combined build and dashboard rendering](https://github.com/pranavpillaiNUS/Purse-Strings/pull/24#issuecomment-6734790872)
+and [fresh clone/install with scripted story and review replay](https://github.com/pranavpillaiNUS/Purse-Strings/pull/26#issuecomment-6735113599).
 These checks establish the scripted Windows setup. The separate Nov 9
 [sandbox rehearsal](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09) establishes one
 reported normal authorization/capture, cross-checked against the local ledger. The final
@@ -115,9 +115,6 @@ Pranav and Danny still need to:
 
 Written for judges, who may include an automated reader, so it says plainly what is and is not
 in place.
-
-**[NAME: Splittap is provisional, and `package.json` still says `purse-strings`. Pick one before
-submitting.]**
 
 **The agent proposes, the rules decide.**
 
@@ -331,7 +328,7 @@ Paste this in at the top of `README.md` during the Nov 11 freeze, then resolve t
 against what `npm run demo:flow` does on that day.
 
 ~~~markdown
-# Splittap
+# Purse Strings
 
 **The agent proposes, the rules decide.**
 
@@ -339,7 +336,7 @@ An AI purchasing agent for one job: equip new hires with approved laptops and mo
 start, within an all-in budget. Claude drafts the purchase mandate and does the shopping. It cannot
 pay or approve anything. Company policy, a person and a plain-code checker decide what happens.
 
-This is our entry for PayPal's Build What's Next with PayPal and AI hackathon. The name is provisional.
+This is our entry for PayPal's Build What's Next with PayPal and AI hackathon.
 
 **How PayPal is used:** with `--sandbox-paypal`, the demo's payment step runs in the PayPal sandbox.
 The checker's reserved total becomes a PayPal order, a sandbox buyer approves it on PayPal's page,

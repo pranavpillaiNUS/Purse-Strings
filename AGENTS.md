@@ -1,10 +1,13 @@
-# Splittap purchasing agent
+# Purse Strings purchasing agent
 
 ## Purpose and current scope
 
 Help the operations manager at a 10–50 person company equip new hires with approved
-laptops and monitors before their start date, within an all-in budget. The name is
-provisional. This is equipment procurement, not bill splitting.
+laptops and monitors before their start date, within an all-in budget. This is equipment
+procurement, not bill splitting. The project was called Splittap until Nov 10, when the
+repository became `Purse-Strings`. Internal identifiers such as the `splittap-demo-session`
+format and the `.splittap-demo*` work-folder markers keep the old prefix on purpose:
+renaming a marker would stop protecting earlier sandbox take folders.
 
 This is our entry for PayPal's "Build What's Next with PayPal and AI" hackathon.
 **Deadline: Nov 12, 2026, 3:00 PM US Eastern** (4:00 AM Nov 13 in Singapore). The

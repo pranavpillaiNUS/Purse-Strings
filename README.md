@@ -1,8 +1,8 @@
-# Splittap — CLI-first equipment purchasing
+# Purse Strings — CLI-first equipment purchasing
 
 Help a small-company operations manager equip new hires on time, using approved
 hardware, suppliers and an all-in budget. The AI proposes; independent rules and
-human-confirmed authority govern execution. The name is provisional.
+human-confirmed authority govern execution.
 
 **Everything runs through the same CLI commands.** Drafting, confirmation, authorization and
 execution are CLI commands. Stage two adds a [read-only dashboard](#dashboard) that shows what
