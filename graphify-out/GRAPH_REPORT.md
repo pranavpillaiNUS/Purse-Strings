@@ -1,7 +1,7 @@
 # Graph Report - Purse-Strings  (2026-11-10)
 
 ## Corpus Check
-- 156 files · ~225,440 words
+- 156 files · ~225,772 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 8 file(s) not represented in the graph (top: (none) 4, .css 2, .tsv 1)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `66387f16`
+- Built from commit: `be21df68`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -123,8 +123,8 @@
 6. `confirmMandateRevision()` - 28 edges
 7. `main()` - 27 edges
 8. `createFixtureSupplier()` - 27 edges
-9. `runTransaction()` - 25 edges
-10. `renderRunReview()` - 25 edges
+9. `renderRunReview()` - 25 edges
+10. `runTransaction()` - 25 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `Task 6: The page` --references--> `AppState`  [INFERRED]
@@ -522,16 +522,16 @@ Nodes (7): CLI contract, Concrete storage, Detailed implementation decisions, Ex
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `Durable ledger (M2 slice — authority + reservations)` connect `confirmMandateRevision` to `README.md`, `canonicalize`?**
-  _High betweenness centrality (0.069) - this node is a cross-community bridge._
+  _High betweenness centrality (0.060) - this node is a cross-community bridge._
 - **Are the 4 inferred relationships involving `openLedgerStore()` (e.g. with `Change (exact)` and `Minors`) actually correct?**
   _`openLedgerStore()` has 4 INFERRED edges - model-reasoned connections that need verification._
 - **Should `authority.ts` be split into smaller, more focused modules?**
   _Cohesion score 0.11411411411411411 - nodes in this community are weakly interconnected._
 - **Why does `runTransaction()` connect `canonicalize` to `authority.ts`, `paypal-provider.ts`, `confirmMandateRevision`, `execution/worker.ts`, `worker-paypal.test.ts`, `execution/worker.test.ts`, `paypal-provider.test.ts`, `ledger/store.ts`, `application.ts`, `cli/src/backend.ts`, `application.ts`?**
-  _High betweenness centrality (0.057) - this node is a cross-community bridge._
+  _High betweenness centrality (0.048) - this node is a cross-community bridge._
 - **Should `paypal-spike.ts` be split into smaller, more focused modules?**
   _Cohesion score 0.11083743842364532 - nodes in this community are weakly interconnected._
 - **Why does `BudgetSnapshot` connect `application.ts` to `index.ts`, `review.ts`, `CLI-first architecture`, `execution/worker.ts`, `shopper.ts`, `Acceptance evidence trail (offline, all reproducible below)`?**
-  _High betweenness centrality (0.029) - this node is a cross-community bridge._
+  _High betweenness centrality (0.038) - this node is a cross-community bridge._
 - **Should `gateway.test.ts` be split into smaller, more focused modules?**
   _Cohesion score 0.07198228128460686 - nodes in this community are weakly interconnected._
