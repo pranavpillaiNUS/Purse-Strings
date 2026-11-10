@@ -90,7 +90,7 @@ export const SANDBOX_CREDENTIAL_PROBE_ID = 'demo-sandbox-credential-probe';
 const HELP = `Repeatable end-to-end demo (simulation; no real money, suppliers or orders; PayPal sandbox only with --sandbox-paypal)
 
 Usage:
-  npm run demo:flow -- [--live] [--pause] [--sandbox-paypal] [--dir PATH]
+  npm run demo:flow -- [--live] [--pause] [--sandbox-paypal] [--request-file FILE] [--dir PATH]
 
   --live    Claude drafts and shops, which spends API credit (about 57,000 tokens).
             Without it, a scripted stand-in plays Claude: no key or network.
@@ -102,6 +102,10 @@ Usage:
             reservation without them), the hold's approval link comes on screen, and a
             sandbox buyer must approve it in a browser before Enter continues. The
             supplier order stays simulated. Default off: no credentials, no network.
+  --request-file FILE
+            With --live only: the manager's own request (1 to 1,000 characters)
+            replaces the generated one. Other requests may be refused by policy or
+            end as an unusable take, because the later scenes are tuned to the demo.
   --dir     Working directory. Default .runtime/demo. Fake-only runs may reuse it;
             sandbox run state is preserved, so use a fresh directory for each run.
 
@@ -229,6 +233,25 @@ export function summarizeTrace(text: string): TraceSummary {
 
 class DemoFailure extends Error {}
 
+/** The longest request a person may type, counted in characters, not bytes. */
+export const MAX_REQUEST_CHARACTERS = 1000;
+
+/** A typed request, trimmed. Refused before anything is created when it cannot be used. */
+export function readRequestFile(path: string): string {
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    throw new DemoFailure(`The request file could not be read: ${path}`);
+  }
+  const trimmed = text.trim();
+  if (trimmed.length === 0) throw new DemoFailure('The request file is empty, so there is nothing to draft');
+  if ([...trimmed].length > MAX_REQUEST_CHARACTERS) {
+    throw new DemoFailure(`The request is longer than ${MAX_REQUEST_CHARACTERS.toLocaleString('en-US')} characters; shorten it and start again`);
+  }
+  return trimmed;
+}
+
 /** The scenes in order. The session file names the one on screen, so the dashboard can follow. */
 export const DEMO_SCENES = [
   'The control panel',
@@ -261,6 +284,10 @@ export interface DemoSession {
   failure: string | null;
   /** Why a finished take is not usable (exit 2), as the terminal lists it. Empty for a usable take. */
   unusable: string[];
+  /** PayPal's approval link while the flow waits for the sandbox buyer; null otherwise. */
+  approvalUrl?: string | null;
+  /** Counts every wait the flow records, so a reader answers each wait exactly once. */
+  waitId?: number;
 }
 
 export const DEMO_SESSION_FILE = 'session.json';
@@ -363,7 +390,7 @@ export interface SandboxPaymentInput {
   backend: SandboxPaymentBackend;
   operationId: string;
   /** Waits until the operator pressed Enter after the buyer approved on PayPal's hosted page. */
-  waitForBuyer: () => void | Promise<void>;
+  waitForBuyer: (approvalUrl: string) => void | Promise<void>;
   print: (line: string) => void;
 }
 
@@ -374,6 +401,9 @@ export interface SandboxPaymentResult {
   /** The one-line summary the Result section pushes. */
   summary: string;
 }
+
+/** The backend's message when completion runs before the buyer approved. The flow asks again. */
+export const BUYER_NOT_APPROVED = 'The sandbox buyer has not approved this hold yet';
 
 const stopText = (stderr: string): string => inert(stderr.trim()) || 'the command refused without a message';
 
@@ -396,13 +426,17 @@ export async function runSandboxPayment(input: SandboxPaymentInput): Promise<San
   print('');
   print('Approve the hold as the sandbox buyer in a browser (no real money), then return and press Enter:');
   print(approvalUrl);
-  await waitForBuyer();
-  const finished = await backend.complete(operationId);
-  if (!finished.ok) {
-    // The buyer may not have approved. The backend's closed message shows as-is.
+  let finished: SandboxCallResult;
+  for (;;) {
+    await waitForBuyer(approvalUrl);
+    finished = await backend.complete(operationId);
+    if (finished.ok) break;
+    // The backend's closed message shows as-is. Not approved yet: ask again;
+    // closed input still stops the flow inside waitForBuyer.
     print(stopText(finished.stderr));
     print('');
-    throw new DemoFailure(stopText(finished.stderr));
+    if (!finished.stderr.includes(BUYER_NOT_APPROVED)) throw new DemoFailure(stopText(finished.stderr));
+    print('Approve the hold on PayPal\'s page first, then press Enter again.');
   }
   const held = finished.data as { authorizationId?: unknown };
   const executed = await backend.execute(operationId);
@@ -622,6 +656,7 @@ async function main(): Promise<void> {
       pause: { type: 'boolean' },
       'sandbox-paypal': { type: 'boolean' },
       dir: { type: 'string' },
+      'request-file': { type: 'string' },
     },
   });
   if (values.help) {
@@ -630,6 +665,10 @@ async function main(): Promise<void> {
   }
 
   const live = values.live === true;
+  if (values['request-file'] !== undefined && !live) {
+    throw new DemoFailure('--request-file is only used with --live: the scripted stand-in always drafts the demo request');
+  }
+  const typedRequest = values['request-file'] === undefined ? null : readRequestFile(resolve(values['request-file']));
   const sandbox = values['sandbox-paypal'] === true;
   const directory = resolve(root, values.dir ?? '.runtime/demo');
   const local = (name: string): string => {
@@ -637,7 +676,8 @@ async function main(): Promise<void> {
     const fromRoot = relative(root, path);
     return fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot) ? path : fromRoot;
   };
-  const plan = demoPlan(new Date());
+  const generated = demoPlan(new Date());
+  const plan: DemoPlan = typedRequest === null ? generated : { ...generated, requestText: typedRequest };
   const startedAt = Date.now();
   const unusable: string[] = [];
   const results: string[] = [];
@@ -678,7 +718,8 @@ async function main(): Promise<void> {
     unusable: [],
   };
   function record(change: Partial<DemoSession> = {}): void {
-    Object.assign(session, change, { updatedAt: new Date().toISOString() });
+    const waitId = change.waiting ? (session.waitId ?? 0) + 1 : session.waitId;
+    Object.assign(session, change, { updatedAt: new Date().toISOString() }, waitId === undefined ? {} : { waitId });
     writeDemoSession(directory, session);
   }
   function addResult(line: string): void {
@@ -884,10 +925,10 @@ async function main(): Promise<void> {
         },
         operationId: reservation.operationId,
         // The approval cannot be skipped, so this waits even without --pause.
-        waitForBuyer: () => {
-          record({ waiting: 'sandbox-buyer' });
+        waitForBuyer: (approvalUrl) => {
+          record({ waiting: 'sandbox-buyer', approvalUrl });
           waitForEnter('The sandbox buyer has approved the hold; press Enter to complete it');
-          record({ waiting: null });
+          record({ waiting: null, approvalUrl: null });
         },
         print: (line) => console.log(line),
       });
@@ -916,7 +957,11 @@ async function main(): Promise<void> {
     addResult('Execution: skipped, because nothing was reserved');
   }
   // Everything has run by now, so closed input has nothing left to stop. It only skips the wait.
-  if (values.pause) promptForEnter('Press Enter for the result');
+  if (values.pause) {
+    record({ waiting: 'next-scene' });
+    promptForEnter('Press Enter for the result');
+    record({ waiting: null });
+  }
 
   const seconds = Math.round((Date.now() - startedAt) / 1000);
   record({ finished: true, waiting: null, unusable: unusable.slice(0, 20).map((problem) => inert(problem).slice(0, 500)) });

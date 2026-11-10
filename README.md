@@ -4,9 +4,10 @@ Help a small-company operations manager equip new hires on time, using approved
 hardware, suppliers and an all-in budget. The AI proposes; independent rules and
 human-confirmed authority govern execution. The name is provisional.
 
-**Everything happens in the terminal.** Drafting, confirmation, authorization and execution
-are CLI commands. Stage two adds one [read-only dashboard](#dashboard) that shows what those
-commands report and can change nothing. The checker supports offline eligibility and
+**Everything runs through the same CLI commands.** Drafting, confirmation, authorization and
+execution are CLI commands. Stage two adds a [read-only dashboard](#dashboard) that shows what
+those commands report, and a [local app](#local-app) that runs the demo flow from a browser by
+answering its prompts. The checker supports offline eligibility and
 simulated payment execution using fake providers.
 
 ## Start here
@@ -231,6 +232,29 @@ The scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and 
 Node 26. Live Claude has run it three times, all on Windows: twice in temporary copies with the
 backend's folder check skipped, and once on Nov 9 from the repository with the check on.
 
+## Local app
+
+One page on your machine that runs the demo flow from a browser:
+
+```sh
+npm run app                             # serves http://127.0.0.1:7171
+```
+
+Type the manager's request (with Claude) or use the demo request (scripted stand-in), choose fake
+or PayPal sandbox payment, and press **Start run**. Each Enter press of `demo:flow --pause` becomes
+a button: **Next scene**, **Confirm this mandate**, **Buyer has approved**. The page shows the
+company policy, the mandate with its confirmation, a conversation labelled by who said or decided
+each thing (you, Claude, the scripted stand-in, the checker), and the ledger's budget and operations.
+
+It drives the same flow and backend commands as the terminal, so the checker, ledger and payment
+code are unchanged. Each take runs in a new folder under `.runtime/app`, one at a time. The server
+listens on 127.0.0.1 only and accepts three actions (start, continue, stop), each needing the
+launch token in the page and a matching Origin. Continue sends one Enter, only for the prompt the
+flow is waiting at; Stop works only while it waits, so no command is cut off. Claude mode spends
+API credit; PayPal mode needs sandbox credentials in `.env` and a sandbox buyer, as the terminal
+flow does. Other requests than the demo's may be refused by policy or end as unusable takes,
+because the later scenes are tuned to the demo request.
+
 ## Dashboard
 
 A read-only page that follows `demo:flow` scene by scene. It needs no key, internet access
@@ -298,8 +322,8 @@ from those manual observations and remaining account exercises.
 **Remaining:** stock assignment, authorized account exercises for current-path
 response-loss recovery and unused-hold closure (see `docs/paypal-spike.md`), real supplier
 execution, exceptions and equipment-readiness tracking. All will be tested through the
-CLI. The only page we serve is the read-only [dashboard](#dashboard), which no stage-one
-acceptance depends on. The only other browser page involved is PayPal's own hosted
+CLI. The pages we serve are the read-only [dashboard](#dashboard) and the [local app](#local-app),
+which only answers `demo:flow` prompts; no stage-one acceptance depends on either. The only other browser page involved is PayPal's own hosted
 buyer-consent screen during the sandbox hold steps or the optional spike.
 
 ## Separate PayPal feasibility spike
