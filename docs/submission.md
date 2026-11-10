@@ -4,8 +4,9 @@
 manual observations, including the Nov 9 scripted account rehearsal, recorded in
 `docs/paypal-spike.md`. Submission still needs
 a final recorded sandbox demo, agreed judge access, and completion of the checklist below.**
-PayPal placeholders below reserve the final recording narrative and team review; they do
-not mean the gateway is unwired. Historical reports do not validate current-path recovery.
+Danny drafted the PayPal parts on Nov 10 from the results recorded in `docs/paypal-spike.md`.
+They need Pranav's review, and the final take's PayPal ids once it is recorded. Historical
+reports do not validate current-path recovery.
 
 Everything in **[BRACKETS]** must be resolved or removed before it reaches Devpost or the
 README. Repository and CI statuses were checked on Nov 9, 2026. Human decisions below
@@ -63,7 +64,7 @@ The rules do not require a separate AI tools list. We keep one below as accurate
 | Name the platform it runs on | Both | Not decided. The rules require consistent running on the intended platform. The Nov 9 main CI check confirms tests and the scripted flow pass on Linux, Windows and macOS; it does not exercise PayPal. Name only platforms where the PayPal path has also run, because the rules hold us to what we name |
 | Video under 3 minutes, public on YouTube | Pranav, with Danny for scene 6 | Not done. `docs/demo-script.md` is the recording plan and targets 2:45. Scene 6 needs a final-tree sandbox recording with buyer consent; wiring alone does not supply that recording |
 | No copyrighted music or third-party trademarks | Pranav | Cannot be checked until a video exists. A search on Nov 7 found no common hardware brand names in the fixtures, examples, policy files or demo flow. SKUs are synthetic, such as `LAP-14-AIR`. The narration and screen name Claude, a third-party mark, and PayPal, the sponsor. Section 11 says to ask in writing if a term is ambiguous, so consider asking Devpost whether naming the AI tool you used is fine |
-| Devpost text | Both. Pranav drafts, Danny writes the PayPal parts | Draft below, with PayPal placeholders open. Nothing is entered on Devpost |
+| Devpost text | Both. Pranav drafts, Danny writes the PayPal parts | Draft below. Danny drafted the PayPal parts on Nov 10; they await Pranav's review and the final take's ids. Nothing is entered on Devpost |
 | AI tools list | Both | Draft below, with items for each of you to confirm. Codex's summary says the rules do not explicitly require it. Keep it anyway, as accurate disclosure |
 | PayPal in the purchase path | Danny | Wired behind backend config `paymentProvider: "paypal-sandbox"`. `docs/paypal-spike.md` records the Nov 7 application capture and a Nov 9 scripted sandbox rehearsal at `17e917c`: one normal authorization/capture for S$7,510.10 with a fake supplier order. Current-path recovery remains backed by injected-fetch crash tests; the final recording, account recovery and unused-hold closure evidence remain outstanding |
 | Sandbox spike results recorded | Danny | Nov 7–8 manual runs are recorded in `docs/paypal-spike.md`, including captures, replay, concurrency, over-capture warnings and a partial refund. Unused-hold void and final-capture closure were not exercised |
@@ -148,11 +149,14 @@ suppliers or orders. All supplier data is synthetic.
    supplier data. It checks policy, evidence and deadlines, plus budget and quantities across all
    carts. It then reserves the money and units in one SQLite transaction. A reservation is not
    payment.
-6. **Only the operator executes.** The shopper cannot start this step. Today it runs against fake
-   payment and supplier providers, so its results are not real orders. Payment, order and
+6. **Only the operator executes.** The shopper cannot start this step. By default it runs against
+   fake payment and supplier providers, so anyone can run the demo with no keys. With the PayPal
+   option (`--sandbox-paypal`), payment goes through the PayPal sandbox. The operator creates a
+   PayPal order for exactly the checker's reserved total, and a sandbox buyer approves it on
+   PayPal's own page. Only then does the operator's run command capture that amount. The supplier
+   order stays simulated in every mode, so no result here is a real order. Payment, order and
    readiness are tracked separately, and readiness stays "not assessed", because paid does not
-   mean the equipment has arrived. **[PAYPAL, after Danny's work lands: say what this step now
-   does in the sandbox.]**
+   mean the equipment has arrived.
 
 The demo also shows two things going wrong:
 
@@ -190,20 +194,49 @@ these counts, if more live runs happen.]**
 
 ### How PayPal is used
 
-**[PAYPAL, after Danny's work lands: describe what actually happened in the sandbox. Say which
-PayPal APIs the purchase path calls, what the sandbox buyer approved, and what the sandbox recorded
-for each purchase. Use only observed results.]**
+PayPal is the payment step of the purchase path, in the sandbox only. The backend calls PayPal's
+Orders v2 and Payments v2 REST APIs itself. The shopper has no PayPal credentials and no route to
+them.
 
-**[PAYPAL, only if the sandbox results support it: how a hold, partial captures, release and refunds
-behaved, and whether the pitch can extend to "PayPal holds the money." If they do not support it,
-leave this out.]**
+1. Once the checker has reserved a cart, the operator runs `operation-authorize`. It creates a
+   PayPal order with intent `AUTHORIZE` for the reserved total in SGD, with the operation's id as
+   the invoice id and a stable `PayPal-Request-Id`, and prints PayPal's approval link.
+2. The sandbox buyer signs in on PayPal's hosted page and approves. Nothing in our code can approve
+   for the buyer. If the operator continues before the buyer approves, the backend says so and
+   nothing is charged.
+3. `operation-complete-authorization` authorizes the approved order, which places a hold for that
+   amount.
+4. `operation-run` captures the hold. Before recording the capture, the backend checks that PayPal's
+   amount, currency and invoice id match the reserved operation.
 
-The gateway is wired into execution behind backend config, with operator-only sandbox hold
-commands. `docs/paypal-spike.md` records the earlier application/spike observations and the
-Nov 9 scripted application rehearsal; the latter covers one normal sandbox capture only.
-Final submission wording must match the recorded demo and
-must not turn mocked recovery tests into account-verified recovery or a simulated supplier order
-into a real order.
+What the sandbox recorded:
+
+- **Nov 7:** the application path captured S$1,197.91 for one laptop (authorization
+  `0DY26454FF666080L`, capture `70023069VM754651G`, status `COMPLETED`).
+- **Nov 9:** Pranav ran the demo flow's PayPal option from a clean checkout of `main` on Windows. A
+  sandbox buyer approved, and PayPal captured S$7,510.10 for five laptops and five monitors
+  (authorization `11C077066A694603P`, capture `72K10179MD737102M`).
+- Both times, the ledger then showed the reservation consumed, the PayPal ids, and the supplier
+  order as simulated.
+- **[UPDATE after recording: add the final take's operation id, `authorizationId` and `captureId`.]**
+
+A separate script (`npm run spike:paypal`) tested how PayPal holds behave, on Nov 7 and 8. One buyer
+approval held S$8,000. Three partial captures against it all completed, including two sent at the
+same moment. Replaying a capture with the same `PayPal-Request-Id` returned the original capture,
+not a second one. A partial refund of S$100 completed. But on both runs PayPal also accepted a
+capture S$12 larger than what remained of the hold. So we do not pitch this as "PayPal holds the
+money". A PayPal hold is the buyer's consent to an amount, not a spending limit. Our own ledger
+enforces the budget.
+
+What this does not show:
+
+- **Recovery against the real sandbox.** If a PayPal response is lost, the backend reads the order,
+  authorization or capture back from PayPal instead of retrying blindly. That is tested against
+  simulated PayPal responses, not yet against the sandbox account.
+- **Releasing an unused hold.** Both purchase-path captures used the whole hold, and the spike's
+  release step was never reached.
+- **Refunds through the purchase path.** The refund ran in the separate script only.
+- **Real money or real orders.** Everything is sandbox, and the supplier order is always simulated.
 
 These boundaries exist today, whichever payment provider sits behind them:
 
@@ -243,13 +276,21 @@ These are design choices. We do not claim to be the first or the only project to
   stand-in to show what obeying the listing would do.
 - **Valid JSON is not authentication.** An `approvedBy` field or a digest identifies content. It does
   not prove who agreed.
-- **[PAYPAL, after Danny's work lands: what the sandbox taught us. Observed results only.]**
+- **Some mistakes only show up in the real sandbox.** Our mocked tests passed while the gateway sent
+  `intent: "AUTHORIZATION"`. PayPal expects `AUTHORIZE` and rejected the request on the first
+  sandbox run. The buyer's browser can also return before PayPal has recorded the approval, so
+  authorizing straight away can fail with `ORDER_NOT_APPROVED`.
+- **A PayPal hold is not a budget cap.** The sandbox accepted a capture larger than what remained
+  of the hold. That is why our ledger, not the payment provider, enforces the budget.
+- **Sandbox holds go stale.** A hold's honor period ends about three days after it is created, so
+  the demo creates its hold on recording day.
 
 ### What's next
 
 These are planned and not built:
 
-- **[PAYPAL: evidence still needed.]** Record the final sandbox demo and exercise current-path recovery and unused-hold closure with operator/buyer authorization.
+- Run the purchase path's recovery and unused-hold release against the PayPal sandbox account, not
+  only against simulated responses.
 - Reuse of existing stock before buying.
 - Command-line approvals, and one-time exceptions bound to an exact cart and amount.
 - Delivery and readiness tracking, so a request stays open until the equipment has arrived.
@@ -298,8 +339,10 @@ pay or approve anything. Company policy, a person and a plain-code checker decid
 
 This is our entry for PayPal's Build What's Next with PayPal and AI hackathon. The name is provisional.
 
-**How PayPal is used:** [PAYPAL, after Danny's work lands: one or two sentences on what the purchase
-path does in the PayPal sandbox, from observed results only. Link to the recorded results.]
+**How PayPal is used:** with `--sandbox-paypal`, the demo's payment step runs in the PayPal sandbox.
+The checker's reserved total becomes a PayPal order, a sandbox buyer approves it on PayPal's page,
+and the operator's commands then authorize and capture exactly that amount. The supplier order
+stays simulated. The recorded sandbox results are in [`docs/paypal-spike.md`](docs/paypal-spike.md).
 
 **How AI is used:** Claude (`claude-opus-5-5` by default) turns a plain-English request into a draft
 mandate, and shops within that mandate using four bounded tools.
@@ -334,8 +377,10 @@ macOS with Node 26. Update this, then state what you saw.]
   credit. Live testing so far is light; see `services/agent/README.md`.
 - **Anything about real money.** There are no real suppliers, payments or orders here. A reservation
   is not payment, and a fake provider's `ordered` is not an order.
-- **Anything about PayPal.** [PAYPAL, after Danny's work lands: replace this line with what the demo
-  shows in the sandbox and what it still does not show.]
+- **Anything about PayPal, in this default run.** It uses a fake payment provider. Adding
+  `--sandbox-paypal` uses the PayPal sandbox; it needs sandbox credentials in `.env` and a sandbox
+  buyer to approve. Even then the money is sandbox money, the supplier order is simulated, and
+  recovery after a lost PayPal response is tested only against simulated responses.
 - **Immunity to prompt injection.** It shows one fixed listing failing to achieve anything.
 - **Production authentication.** Confirmation is a local operator check.
 - **The whole product.** Stock reuse, delivery tracking, approvals and exceptions are not built. No
@@ -353,9 +398,9 @@ from the official rules. Ties go to the higher score on the first criterion, the
 
 | Criterion | What we show today | Still needed |
 | --- | --- | --- |
-| **Stage One, pass or fail:** reasonably fits the theme and reasonably applies the required APIs and SDKs | AI is in place: Claude drafts mandates and shops, with live runs recorded in `services/agent/README.md` | **[PAYPAL, after Danny's work lands: what the purchase path does in the sandbox.]** Without it, we expect to fail this stage |
-| **Technological Implementation:** "How thoroughly and skillfully does the project use PayPal Developer Platform and AI tool(s)? Does the project reflect genuine effort and a working, non-trivial implementation?" | A checker with behavior tests, a SQLite ledger with atomic reservations, durable execution with restart recovery over fake providers, and a shopper with no payment credentials | **[PAYPAL: real sandbox results.]** A clean run on the platform we name |
+| **Stage One, pass or fail:** reasonably fits the theme and reasonably applies the required APIs and SDKs | AI is in place: Claude drafts mandates and shops, with live runs recorded in `services/agent/README.md`. PayPal is in place: with `--sandbox-paypal`, the purchase path creates, authorizes and captures a PayPal payment in the sandbox after a buyer approves it, recorded on Nov 7 and 9 in `docs/paypal-spike.md` | Show the PayPal step in the final video. The default run uses fake payment, so the take must use `--sandbox-paypal` |
+| **Technological Implementation:** "How thoroughly and skillfully does the project use PayPal Developer Platform and AI tool(s)? Does the project reflect genuine effort and a working, non-trivial implementation?" | A checker with behavior tests, a SQLite ledger with atomic reservations, durable execution with restart recovery over fake providers, and a shopper with no payment credentials. PayPal Orders v2 authorize-and-capture with buyer approval, stable request ids, an invoice id bound to each operation, and amount checks on what PayPal returns | The final sandbox take in the video. A clean run on the platform we name |
 | **Design:** "Does the project deliver a complete, coherent product experience — not just a technical proof of concept?" | One complete terminal flow in six scenes, with a read-only local dashboard (`npm run dashboard`) that follows it scene by scene: mandate, ledger budget, operations, audit trail and stores. Facts come from the backend's read commands, and Claude's words are labelled as Claude's. Every action stays in the terminal, by decision | Record the rebuilt output. This is our weakest criterion to defend with a terminal, and the buyer's PayPal approval has to fit into the flow |
 | **Potential Impact:** "Does the project make a credible, specific case for solving a real problem for a real audience — and does the solution actually address that problem based on what's demonstrated?" | A real job for a defined user: equip hires on time, within budget, with a person accountable. All data is synthetic, and no outcome is measured | Nothing we can measure before the deadline. Do not invent numbers. Stock reuse is in the request but not built, and the demo says so |
-| **Innovation/Idea:** "How creative and novel is the concept and does the project differ from existing concepts?" | A confirmed mandate, an independent checker and price-free carts, in place of an agent with a payment button | **[PAYPAL: how the sandbox fits this design, if results support it.]** |
+| **Innovation/Idea:** "How creative and novel is the concept and does the project differ from existing concepts?" | A confirmed mandate, an independent checker and price-free carts, in place of an agent with a payment button. PayPal's hosted approval is the buyer's consent to one exact amount the checker priced, while the ledger, not the hold, caps the budget | Do not say PayPal enforces the budget: the sandbox accepted an over-capture |
 | **Presentation:** "Does the video clearly demonstrate the project working end-to-end? Does the pitch communicate what problem is solved, who it's for, and why it matters? Is the overall presentation easy to follow?" | `docs/demo-script.md`: six scenes at a 2:45 target, opening on the problem and the user | Record it, with a final scene 6 after PayPal lands. Publish it on YouTube |
