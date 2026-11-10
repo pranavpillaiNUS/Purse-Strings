@@ -252,12 +252,19 @@ function ledgerPanel(state) {
 }
 
 function entryNode(entry) {
-  const scene = entry.actor === 'system' && /^Scene \d+:/.test(entry.title);
-  const node = el('li', { className: `entry ${entry.actor} ${entry.tone}${scene ? ' scene' : ''}` }, [
+  // Scene breaks and the closing result are headings; their detail reads as narration.
+  const scene = entry.actor === 'system' && (/^Scene \d+:/.test(entry.title) || entry.scene === null);
+  const result = scene && entry.scene === null;
+  const node = el('li', { className: `entry ${entry.actor} ${entry.tone}${scene ? ' scene' : ''}${result ? ' result' : ''}` }, [
     el('span', { className: 'who', text: scene ? '' : ACTOR[entry.actor] || entry.actor }),
     el('div', { className: 'what' }, [
       el('p', { className: 'title', text: entry.title }),
       entry.detail && entry.detail.length > 0 ? el('ul', {}, entry.detail.map((line) => el('li', { text: line }))) : null,
+      // Untrusted text, such as a supplier listing: placed as text, styled as a quotation.
+      entry.quote ? el('blockquote', { className: 'untrusted' }, [
+        el('p', { className: 'quote-label', text: entry.quote.label }),
+        el('p', { text: entry.quote.text }),
+      ]) : null,
     ]),
   ]);
   return node;

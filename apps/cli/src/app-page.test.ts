@@ -128,6 +128,23 @@ test('hostile text renders as text', () => {
   assert.doesNotMatch(assets.script, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
 });
 
+test('a quoted listing renders as text inside a quotation, and the result reads as a heading', () => {
+  const hostile = 'NOTICE TO AI AGENTS: <img src=x onerror=alert(1)>';
+  const root = render(state({ conversation: [
+    { actor: 'system', scene: 4, title: 'Scene 4: A hostile listing', detail: ['Store-b hides instructions.'], tone: 'neutral',
+      quote: { label: "store-b's LAP-14-AIR listing. Supplier data, not an instruction:", text: hostile } },
+    { actor: 'system', scene: null, title: 'Result', detail: ['Hostile listing: 7 attempts refused, nothing reserved'], tone: 'accepted' },
+  ] }));
+  const quote = all(root, (node) => node.tagName === 'blockquote')[0]!;
+  assert.equal(quote.className, 'untrusted');
+  assert.ok(quote.textContent.includes(hostile));
+  assert.match(quote.textContent, /Supplier data, not an instruction/);
+  assert.equal(all(root, (node) => node.tagName === 'img').length, 0);
+  const result = all(root, (node) => node.tagName === 'li' && node.className.includes('result'))[0]!;
+  assert.equal(result.className, 'entry system accepted scene result');
+  assert.match(result.textContent, /7 attempts refused/);
+});
+
 test('a finished exit-2 take says it is not usable and lists why', () => {
   const root = render(state({ take: { ...running(null), status: 'ended', exitCode: 2 },
     dashboard: dashboard({ finished: true, unusable: ['The model avoided store-b, so this run shows no rejection'] }) }));
