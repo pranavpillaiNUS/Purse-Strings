@@ -6,7 +6,7 @@ against the real sandbox with hardcoded carts: one S$8,000 hold, three partial c
 ## Demo-flow sandbox rehearsal (2026-11-09)
 
 Pranav reported one completed rehearsal of the demo flow's sandbox variant in
-[PR #26](https://github.com/pranavpillaiNUS/Splittap-pay/pull/26#issuecomment-6738320826).
+[PR #26](https://github.com/pranavpillaiNUS/Purse-Strings/pull/26#issuecomment-6738320826).
 This was the application path, separate from the interactive spike below. The reported
 command was `npm run demo:flow -- --sandbox-paypal --dir .runtime/demo-sandbox-rehearsal-1`.
 The report identifies a clean `main` at `17e917c`, Windows 11, Node 26.13.0 and enabled
@@ -38,7 +38,7 @@ no real money or real supplier order was involved.
 
 **Binding state after capture:** the operator noticed that the stored binding's
 `provider_state` still reads `authorization_held` after the capture effect succeeded.
-Danny [confirmed](https://github.com/pranavpillaiNUS/Splittap-pay/pull/26#pullrequestreview-5826663514)
+Danny [confirmed](https://github.com/pranavpillaiNUS/Purse-Strings/pull/26#pullrequestreview-5826663514)
 this is the current design, not a defect. The ledger only upgrades a binding from
 `order_created` to `authorization_held`, and `worker-paypal.test.ts` expects it to stay in
 that state after a successful capture. The capture is tracked separately as an effect,

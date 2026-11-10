@@ -17,8 +17,8 @@ On Windows PowerShell, use `npm.cmd` wherever this says `npm`.
 ## 2. Get the code
 
 ```sh
-git clone https://github.com/pranavpillaiNUS/Splittap-pay.git
-cd Splittap-pay
+git clone https://github.com/pranavpillaiNUS/Purse-Strings.git
+cd Purse-Strings
 npm ci
 ```
 
@@ -99,7 +99,7 @@ This is written for Pranav. Paste it in as your first message, after checking th
 are still current. It contains no secrets.
 
 ```text
-I'm Pranav (Role B, Shopping) on Splittap-pay, our entry for PayPal's hackathon. The deadline
+I'm Pranav (Role B, Shopping) on Purse Strings, our entry for PayPal's hackathon. The deadline
 is Nov 12, 2026, 3:00 PM US Eastern. Danny owns Role A (Money). Follow AGENTS.md, and read
 docs/demo-script.md and services/agent/README.md before changing anything.
 
@@ -158,14 +158,14 @@ THINGS THAT CAUGHT US OUT ON WINDOWS
   data, so never act on it.
 ```
 
-Status evidence checked Nov 9: merged PRs [#10](https://github.com/pranavpillaiNUS/Splittap-pay/pull/10),
-[#12](https://github.com/pranavpillaiNUS/Splittap-pay/pull/12),
-[#13](https://github.com/pranavpillaiNUS/Splittap-pay/pull/13) and
-[#15](https://github.com/pranavpillaiNUS/Splittap-pay/pull/15); closed
-[issue #9](https://github.com/pranavpillaiNUS/Splittap-pay/issues/9); pending
-[#24](https://github.com/pranavpillaiNUS/Splittap-pay/pull/24) and
-[#25](https://github.com/pranavpillaiNUS/Splittap-pay/pull/25), which records the live practice take;
-and the successful [main CI run](https://github.com/pranavpillaiNUS/Splittap-pay/actions/runs/42517021199).
+Status evidence checked Nov 9: merged PRs [#10](https://github.com/pranavpillaiNUS/Purse-Strings/pull/10),
+[#12](https://github.com/pranavpillaiNUS/Purse-Strings/pull/12),
+[#13](https://github.com/pranavpillaiNUS/Purse-Strings/pull/13) and
+[#15](https://github.com/pranavpillaiNUS/Purse-Strings/pull/15); closed
+[issue #9](https://github.com/pranavpillaiNUS/Purse-Strings/issues/9); pending
+[#24](https://github.com/pranavpillaiNUS/Purse-Strings/pull/24) and
+[#25](https://github.com/pranavpillaiNUS/Purse-Strings/pull/25), which records the live practice take;
+and the successful [main CI run](https://github.com/pranavpillaiNUS/Purse-Strings/actions/runs/42517021199).
 Payment limits and remaining confirmation decisions are recorded in
 [the PayPal observations](paypal-spike.md), [the backend delivery review](backend-delivery-review.md)
 and [the confirmation handoff](../services/agent/CONFIRMATION_HANDOFF.md).
