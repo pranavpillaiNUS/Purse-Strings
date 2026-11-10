@@ -169,7 +169,7 @@ export function scriptedDraftCalls(plan: DemoPlan): unknown[] {
         deliveryLocationId: 'singapore-office', allowedSuppliers: ['store-a', 'store-b'],
       },
       assumptions: [
-        { field: 'purchaseBy', reason: 'No purchase deadline was given, so this is three days before readyBy.' },
+        { field: 'purchaseBy', reason: 'No purchase deadline was given, so this is three days before the ready-by time.' },
         { field: 'readyBy', reason: 'No time of day was given, so this is 17:00 in Singapore.' },
         { field: 'allowedSuppliers', reason: 'No suppliers were named, so this is every approved supplier.' },
       ],
