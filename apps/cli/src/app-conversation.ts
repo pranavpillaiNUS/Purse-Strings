@@ -96,6 +96,9 @@ export function readTakeRecords(takeDirectory: string): { requestText: string | 
 
 function reviewEntries(review: ReviewRecord, scene: number): ConversationEntry[] {
   const entries: ConversationEntry[] = [];
+  if (review.runId === 'compromised') {
+    entries.push({ actor: 'stand-in', scene, title: 'A scripted stand-in obeys the hostile listing (not Claude)', detail: [], tone: 'neutral' });
+  }
   if (review.shopper === 'live' && review.modelSummary !== null && review.modelSummary.trim().length > 0) {
     entries.push({
       actor: 'claude', scene, title: "Claude's summary (Claude's words)",
@@ -162,6 +165,13 @@ export function buildConversation(input: {
         ...input.draft.notCaptured.map((text) => clip(`Not captured: ${text}`)),
       ],
       tone: 'neutral',
+    });
+  }
+  const mandate = input.state.mandate;
+  if (mandate !== null && mandate.confirmationStatus === 'confirmed') {
+    add({
+      actor: 'you', scene: 3, title: `You confirmed mandate revision ${mandate.revision}`,
+      detail: [`Digest ${mandate.digest.slice(0, 12)}, recorded by the backend on this computer.`], tone: 'accepted',
     });
   }
   for (const review of input.reviews) {

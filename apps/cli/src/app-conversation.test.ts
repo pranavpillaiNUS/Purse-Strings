@@ -109,3 +109,27 @@ test('take records come from the files a real take writes, and broken files are 
   assert.deepEqual(records.draft, draft);
   assert.deepEqual(records.reviews, []);
 });
+
+test('the hostile run is introduced as the scripted stand-in obeying the listing, never as Claude', () => {
+  const compromised: ReviewRecord = { runId: 'compromised', shopper: 'scripted', refusals: 7, modelSummary: null, decisions: [] };
+  const entries = buildConversation({ mode: 'live', requestText: null, draft: null, reviews: [compromised], state: state(4) }).filter((entry) => entry.scene === 4);
+  assert.deepEqual(entries.slice(1).map((entry) => [entry.actor, entry.title]), [
+    ['stand-in', 'A scripted stand-in obeys the hostile listing (not Claude)'],
+    ['checker', 'Checker refused 7 attempts; nothing was reserved'],
+  ]);
+});
+
+test('a confirmed mandate shows your confirmation in scene 3, and only once confirmed', () => {
+  const confirmed = state(3);
+  confirmed.mandate = {
+    id: 'engineering-hires-demo', revision: 1, digest: 'c1393f9f21ef', confirmationStatus: 'confirmed', confirmedAt: '2026-11-10T06:09:00.000Z',
+    currency: 'SGD', budgetMinor: 800000, purchaseBy: '2026-11-20T09:00:00.000Z', readyBy: '2026-11-23T09:00:00.000Z',
+    deliveryLocationId: 'singapore-office', allowedSuppliers: ['store-a'], requirements: [], evidenceMaxAgeHours: 72,
+  };
+  const entries = buildConversation({ mode: 'scripted', requestText: null, draft: null, reviews: [], state: confirmed });
+  assert.deepEqual(entries.filter((entry) => entry.scene === 3).slice(1), [
+    { actor: 'you', scene: 3, title: 'You confirmed mandate revision 1', detail: ['Digest c1393f9f21ef, recorded by the backend on this computer.'], tone: 'accepted' },
+  ]);
+  confirmed.mandate.confirmationStatus = 'unconfirmed';
+  assert.equal(buildConversation({ mode: 'scripted', requestText: null, draft: null, reviews: [], state: confirmed }).filter((entry) => entry.scene === 3).length, 1);
+});
