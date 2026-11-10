@@ -30,6 +30,9 @@ replaces each Enter press with a button. Claude mode spends API credit; PayPal m
 needs sandbox credentials in .env, as the terminal flow does.
 `;
 
+/** Printed at startup. Ctrl+C reaches the flow too, exactly as in the terminal. */
+export const STARTUP_NOTE = 'Press Ctrl+C to stop the app. Ctrl+C also stops a take that is running, as it does in the terminal; its folder is kept for backend status and operation-reconcile.';
+
 const DEFAULT_PORT = 7171;
 const MAX_BODY_BYTES = 8_192;
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -243,7 +246,7 @@ async function main(): Promise<void> {
   }
   const { port: bound } = server.address() as AddressInfo;
   console.log(`Splittap app: http://127.0.0.1:${bound}`);
-  console.log('Press Ctrl+C to stop. A take that is running stops at its next prompt.');
+  console.log(STARTUP_NOTE);
 }
 
 if (import.meta.main) {

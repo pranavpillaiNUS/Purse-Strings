@@ -839,3 +839,15 @@ test('a live take writes the request file text to request.txt', (t) => {
   spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, entry, '--live', '--request-file', request, '--dir', work], { cwd: root, encoding: 'utf8', env, input: '' });
   assert.equal(readFileSync(join(work, 'request.txt'), 'utf8').trim(), 'Equip five engineering hires with approved laptops and monitors within S$8,000.');
 });
+
+test('every wait the flow records gets the next wait number, including the final result prompt', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'splittap-wait-ids-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const work = join(dir, 'work');
+  // Scripted, fake providers: five scene changes, the confirmation and the result.
+  const result = spawnSync(process.execPath, [entry, '--pause', '--dir', work], { cwd: root, encoding: 'utf8', input: '\n'.repeat(7) });
+  assert.equal(result.status, 0, result.stderr);
+  const session = JSON.parse(readFileSync(join(work, DEMO_SESSION_FILE), 'utf8')) as DemoSession;
+  assert.equal(session.waitId, 7);
+  assert.equal(session.waiting, null);
+});

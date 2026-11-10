@@ -286,6 +286,8 @@ export interface DemoSession {
   unusable: string[];
   /** PayPal's approval link while the flow waits for the sandbox buyer; null otherwise. */
   approvalUrl?: string | null;
+  /** Counts every wait the flow records, so a reader answers each wait exactly once. */
+  waitId?: number;
 }
 
 export const DEMO_SESSION_FILE = 'session.json';
@@ -716,7 +718,8 @@ async function main(): Promise<void> {
     unusable: [],
   };
   function record(change: Partial<DemoSession> = {}): void {
-    Object.assign(session, change, { updatedAt: new Date().toISOString() });
+    const waitId = change.waiting ? (session.waitId ?? 0) + 1 : session.waitId;
+    Object.assign(session, change, { updatedAt: new Date().toISOString() }, waitId === undefined ? {} : { waitId });
     writeDemoSession(directory, session);
   }
   function addResult(line: string): void {
@@ -954,7 +957,11 @@ async function main(): Promise<void> {
     addResult('Execution: skipped, because nothing was reserved');
   }
   // Everything has run by now, so closed input has nothing left to stop. It only skips the wait.
-  if (values.pause) promptForEnter('Press Enter for the result');
+  if (values.pause) {
+    record({ waiting: 'next-scene' });
+    promptForEnter('Press Enter for the result');
+    record({ waiting: null });
+  }
 
   const seconds = Math.round((Date.now() - startedAt) / 1000);
   record({ finished: true, waiting: null, unusable: unusable.slice(0, 20).map((problem) => inert(problem).slice(0, 500)) });

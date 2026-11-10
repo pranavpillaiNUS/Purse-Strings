@@ -138,6 +138,8 @@ export const DemoSessionSchema = z.object({
   unusable: z.array(z.string().max(500)).max(20).default([]),
   /** Only while waiting for the sandbox buyer; absent in older sessions. */
   approvalUrl: z.string().max(2048).regex(/^https:\/\//).nullable().default(null),
+  /** Counts the flow's recorded waits; the local app answers each one once. */
+  waitId: z.number().int().min(0).max(1_000_000).optional(),
 }).strict();
 
 export type DemoSession = z.infer<typeof DemoSessionSchema>;

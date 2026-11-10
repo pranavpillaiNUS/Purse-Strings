@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { request as httpRequest, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import test from 'node:test';
-import { createAppServer, type AppState } from './app-server.ts';
+import { createAppServer, STARTUP_NOTE, type AppState } from './app-server.ts';
 import type { Outcome, RunInput, TakeManager, WaitStep } from './app-takes.ts';
 import { SECURITY_HEADERS } from './dashboard.ts';
 
@@ -106,4 +106,10 @@ test('the policy file is served read-only', async (t) => {
   assert.deepEqual(JSON.parse((await send('GET', '/api/files')).body), { policy });
   assert.equal((await send('POST', '/api/files', { body: '{}', headers: good })).status, 405);
   assert.equal((await send('PUT', '/api/run', { body: runBody, headers: good })).status, 405);
+});
+
+test('the startup note says Ctrl+C also stops a running take, as in the terminal', () => {
+  assert.doesNotMatch(STARTUP_NOTE, /next prompt/);
+  assert.match(STARTUP_NOTE, /Ctrl\+C also stops a take that is running, as it does in the terminal/);
+  assert.match(STARTUP_NOTE, /operation-reconcile/);
 });

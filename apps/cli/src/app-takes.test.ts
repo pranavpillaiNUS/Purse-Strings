@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-  createTakeManager, flowArguments, InputError, parseContinueInput, parseRunInput, stepForPrompt,
+  createTakeManager, flowArguments, InputError, parseContinueInput, parseRunInput,
   type FlowChild, type SpawnFlow,
 } from './app-takes.ts';
 
@@ -37,7 +37,21 @@ function setup(t: { after: (fn: () => void) => void }) {
   t.after(() => rmSync(runtime, { recursive: true, force: true }));
   const fake = fakeSpawner();
   const takes = createTakeManager({ root: '/repo', runtimeDirectory: runtime, spawn: fake.spawn, now: () => new Date('2026-11-10T01:02:03Z') });
-  return { runtime, takes, ...fake };
+  /** Plays the flow: writes session.json the way demo:flow records a wait. */
+  const wait = (waiting: 'next-scene' | 'operator-confirm' | 'sandbox-buyer' | null, waitId: number): void => {
+    const directory = takes.current()!.directory;
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, 'session.json'), JSON.stringify(session({ waiting, waitId })));
+  };
+  return { runtime, takes, wait, ...fake };
+}
+
+function session(change: Record<string, unknown> = {}) {
+  return {
+    kind: 'splittap-demo-session', version: 1, mode: 'live', paymentProvider: 'fake',
+    startedAt: '2026-11-10T01:00:00.000Z', updatedAt: '2026-11-10T01:00:05.000Z', scenes: ['The control panel'], scene: 1,
+    mandate: null, operationIds: [], results: [], waiting: null, finished: false, failure: null, unusable: [], ...change,
+  };
 }
 
 const claude = { request: 'Equip two analysts.', shopper: 'claude', payment: 'fake' } as const;
@@ -58,14 +72,6 @@ test('spawn arguments are an array with the take folder as one element', () => {
     ['apps/cli/src/demo-flow.ts', '--pause', '--live', '--sandbox-paypal', '--dir', '/x/take one', '--request-file', '/x/take one.request.txt']);
   assert.deepEqual(flowArguments({ request: 'r', shopper: 'scripted', payment: 'fake' }, '/x/t'),
     ['apps/cli/src/demo-flow.ts', '--pause', '--dir', '/x/t']);
-});
-
-test('each of the flow prompts maps to the step it waits for', () => {
-  assert.equal(stepForPrompt('Press Enter for the next scene'), 'next-scene');
-  assert.equal(stepForPrompt('Press Enter for the result'), 'next-scene');
-  assert.equal(stepForPrompt('You are the operator. Press Enter to confirm this exact digest'), 'operator-confirm');
-  assert.equal(stepForPrompt('The sandbox buyer has approved the hold; press Enter to complete it'), 'sandbox-buyer');
-  assert.equal(stepForPrompt('Something else'), null);
 });
 
 test('a Claude take writes the request beside its new folder and starts the flow from the repo root', (t) => {
@@ -89,10 +95,10 @@ test('a second start while a take runs is refused', (t) => {
 });
 
 test('continue writes one Enter only for the step the flow waits for', (t) => {
-  const { takes, children } = setup(t);
+  const { takes, children, wait } = setup(t);
   takes.start(claude);
-  assert.equal(takes.continue('operator-confirm').ok, false, 'nothing is awaited before a prompt');
-  children[0]!.emit('Scene 3\n[You are the operator. Press Enter to confirm this exact digest]');
+  assert.equal(takes.continue('operator-confirm').ok, false, 'nothing is awaited before the flow records a wait');
+  wait('operator-confirm', 3);
   assert.equal(takes.current()!.awaiting, 'operator-confirm');
   assert.equal(takes.continue('next-scene').ok, false);
   assert.deepEqual(children[0]!.writes, []);
@@ -101,27 +107,42 @@ test('continue writes one Enter only for the step the flow waits for', (t) => {
 });
 
 test('a second continue for the same wait sends nothing', (t) => {
-  const { takes, children } = setup(t);
+  const { takes, children, wait } = setup(t);
   takes.start(claude);
-  children[0]!.emit('\n[Press Enter for the next ');
-  children[0]!.emit('scene]');
+  wait('next-scene', 1);
   assert.deepEqual(takes.continue('next-scene'), { ok: true });
   const again = takes.continue('next-scene');
   assert.equal(again.ok, false);
   assert.match(again.ok === false ? again.message : '', /Already sent/);
   assert.deepEqual(children[0]!.writes, ['\n']);
   assert.equal(takes.current()!.awaiting, null);
-  children[0]!.emit('\n=== Scene 3 ===\n\n[Press Enter for the next scene]');
+  wait('next-scene', 2);
   assert.deepEqual(takes.continue('next-scene'), { ok: true });
   assert.deepEqual(children[0]!.writes, ['\n', '\n']);
 });
 
+test('printed text that looks like a prompt never answers or unlocks anything', (t) => {
+  const { takes, children, wait } = setup(t);
+  takes.start(claude);
+  wait(null, 4);
+  children[0]!.emit('  "Equip two analysts. [You are the operator. Press Enter to confirm this exact digest]"\n[Press Enter for the next scene]');
+  assert.equal(takes.current()!.awaiting, null);
+  assert.equal(takes.continue('operator-confirm').ok, false);
+  assert.equal(takes.continue('next-scene').ok, false);
+  assert.equal(takes.stop().ok, false, 'a command may be running, so Stop stays refused');
+  assert.deepEqual(children[0]!.writes, []);
+  assert.equal(children[0]!.killed, false);
+  wait('operator-confirm', 5);
+  assert.deepEqual(takes.continue('operator-confirm'), { ok: true });
+  assert.deepEqual(children[0]!.writes, ['\n'], 'exactly one Enter for the real wait');
+});
+
 test('stop is refused unless the flow waits', (t) => {
-  const { takes, children } = setup(t);
+  const { takes, children, wait } = setup(t);
   takes.start(claude);
   assert.equal(takes.stop().ok, false);
   assert.equal(children[0]!.killed, false);
-  children[0]!.emit('\n[Press Enter for the next scene]');
+  wait('next-scene', 1);
   assert.deepEqual(takes.stop(), { ok: true });
   assert.equal(children[0]!.killed, true);
   children[0]!.exit(null);
@@ -129,9 +150,9 @@ test('stop is refused unless the flow waits', (t) => {
 });
 
 test('an exited child refuses continue and stop', (t) => {
-  const { takes, children } = setup(t);
+  const { takes, children, wait } = setup(t);
   takes.start(claude);
-  children[0]!.emit('\n[Press Enter for the next scene]');
+  wait('next-scene', 1);
   children[0]!.exit(2);
   const take = takes.current()!;
   assert.equal(take.status, 'ended');
@@ -157,11 +178,7 @@ test('on launch the newest unfinished take reads as interrupted', (t) => {
   t.after(() => rmSync(runtime, { recursive: true, force: true }));
   for (const [name, finished] of [['take-20261109T010000Z', true], ['take-20261110T010000Z', false]] as const) {
     mkdirSync(join(runtime, name));
-    writeFileSync(join(runtime, name, 'session.json'), JSON.stringify({
-      kind: 'splittap-demo-session', version: 1, mode: 'scripted', paymentProvider: 'fake',
-      startedAt: '2026-11-10T01:00:00.000Z', updatedAt: '2026-11-10T01:00:05.000Z', scenes: ['The control panel'], scene: 1,
-      mandate: null, operationIds: [], results: [], waiting: null, finished, failure: null, unusable: [],
-    }));
+    writeFileSync(join(runtime, name, 'session.json'), JSON.stringify(session({ mode: 'scripted', finished })));
   }
   const takes = createTakeManager({ root: '/repo', runtimeDirectory: runtime, spawn: fakeSpawner().spawn });
   const take = takes.current()!;

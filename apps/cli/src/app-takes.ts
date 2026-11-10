@@ -7,7 +7,9 @@ import { MAX_REQUEST_CHARACTERS } from './demo-flow.ts';
 
 /**
  * One demo:flow take at a time for the local app. The page never types into the flow
- * directly: each Enter is sent only for the prompt the flow has printed and only once.
+ * directly: each Enter is sent once per wait the flow recorded in session.json (its
+ * step and wait number), never because of text the flow printed. Printed text includes
+ * the typed request, model output and supplier listings, which are untrusted.
  */
 
 export type WaitStep = 'next-scene' | 'operator-confirm' | 'sandbox-buyer';
@@ -52,7 +54,7 @@ export interface TakeInfo {
   input: RunInput | null;
   status: 'running' | 'ended' | 'interrupted';
   exitCode: number | null;
-  /** The step the flow's latest unanswered prompt waits for; null when nothing waits. */
+  /** The step the flow's latest unanswered recorded wait is for; null when nothing waits. */
   awaiting: WaitStep | null;
 }
 
@@ -70,7 +72,6 @@ export type SpawnFlow = (args: readonly string[], cwd: string) => FlowChild;
 const FLOW_ENTRY = 'apps/cli/src/demo-flow.ts';
 const TERMINAL_LINES = 400;
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
-const PROMPT = /\[([^\]\n]*\bEnter\b[^\]\n]*)\]/gi;
 
 export function flowArguments(input: RunInput, takeDirectory: string): string[] {
   return [
@@ -80,14 +81,6 @@ export function flowArguments(input: RunInput, takeDirectory: string): string[] 
     '--dir', takeDirectory,
     ...(input.shopper === 'claude' ? ['--request-file', `${takeDirectory}.request.txt`] : []),
   ];
-}
-
-/** The step a printed demo:flow prompt waits for. */
-export function stepForPrompt(prompt: string): WaitStep | null {
-  if (/sandbox buyer/i.test(prompt)) return 'sandbox-buyer';
-  if (/confirm this exact digest/i.test(prompt)) return 'operator-confirm';
-  if (/Press Enter for the (next scene|result)/i.test(prompt)) return 'next-scene';
-  return null;
 }
 
 const refuse = (message: string): Outcome => ({ ok: false, status: 409, message });
@@ -154,17 +147,15 @@ export function createTakeManager(options: {
   let child: FlowChild | null = null;
   let lines: string[] = [];
   let partial = '';
-  let pendingText = '';
-  let promptsSeen: WaitStep[] = [];
-  let answered = 0;
+  /** The wait number last answered; each recorded wait gets one Enter at most. */
+  let answeredWaitId: number | null = null;
 
-  function pending(): WaitStep | null {
-    if (take?.status !== 'running' || answered >= promptsSeen.length) return null;
-    return promptsSeen[answered] ?? null;
-  }
-
-  function refresh(): void {
-    if (take !== null) take = { ...take, awaiting: pending() };
+  /** The recorded wait still unanswered, read from the flow's own session file. */
+  function pending(): { step: WaitStep; waitId: number } | null {
+    if (take?.status !== 'running') return null;
+    const session = readSessionIn(take.directory);
+    if (!session?.waiting || session.waitId === undefined || session.waitId === answeredWaitId) return null;
+    return { step: session.waiting, waitId: session.waitId };
   }
 
   function receive(text: string): void {
@@ -172,18 +163,6 @@ export function createTakeManager(options: {
     const parts = (partial + clean).split(/\r?\n/);
     partial = parts.pop() ?? '';
     lines = [...lines, ...parts].slice(-TERMINAL_LINES);
-    // Prompts can arrive split across chunks, so keep an unmatched tail.
-    pendingText += clean;
-    let match: RegExpExecArray | null;
-    let consumed = 0;
-    PROMPT.lastIndex = 0;
-    while ((match = PROMPT.exec(pendingText)) !== null) {
-      const step = stepForPrompt(match[1]!);
-      if (step !== null) promptsSeen.push(step);
-      consumed = PROMPT.lastIndex;
-    }
-    pendingText = pendingText.slice(consumed).slice(-200);
-    refresh();
   }
 
   return {
@@ -199,9 +178,7 @@ export function createTakeManager(options: {
       if (input.shopper === 'claude') writeFileSync(`${directory}.request.txt`, input.request);
       lines = [];
       partial = '';
-      pendingText = '';
-      promptsSeen = [];
-      answered = 0;
+      answeredWaitId = null;
       take = { directory, startedAt: now().toISOString(), input, status: 'running', exitCode: null, awaiting: null };
       const started = spawn(flowArguments(input, directory), options.root);
       child = started;
@@ -220,14 +197,14 @@ export function createTakeManager(options: {
       if (take?.status !== 'running' || child === null) return refuse('No run is going.');
       const awaited = pending();
       if (awaited === null) {
-        return answered > 0 && answered === promptsSeen.length
+        const session = readSessionIn(take.directory);
+        return session?.waiting && session.waitId === answeredWaitId
           ? refuse('Already sent; waiting for the flow.')
           : refuse('The run is not waiting for you yet.');
       }
-      if (awaited !== step) return refuse('The run is waiting for a different step. Reload the page.');
+      if (awaited.step !== step) return refuse('The run is waiting for a different step. Reload the page.');
       child.stdin.write('\n');
-      answered += 1;
-      refresh();
+      answeredWaitId = awaited.waitId;
       return { ok: true };
     },
 
@@ -240,7 +217,8 @@ export function createTakeManager(options: {
     },
 
     current(): TakeInfo | null {
-      return take;
+      if (take === null) return null;
+      return { ...take, awaiting: take.status === 'running' ? pending()?.step ?? null : null };
     },
 
     terminal(): string[] {

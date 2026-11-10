@@ -188,7 +188,7 @@ saying so. Every take folder is kept.
 | Buyer not approved yet | The flow's message; the button stays; press again after approving |
 | Stop pressed | Allowed only while waiting at a prompt. If a PayPal hold may exist, say so: it expires on its own; keep the folder for `status` and `operation-reconcile` |
 | Tab closed or reloaded | The run continues; reopening reconnects |
-| Server stops mid-run | Child input closes, so the flow stops at its next prompt (existing behaviour). Next launch shows the last take read-only as "Interrupted" |
+| Server stops mid-run | Ctrl+C reaches the flow too and stops it at once, as in the terminal; any other server exit closes its input, so it stops at its next prompt. Next launch shows the last take read-only as "Interrupted" |
 | Port in use | `npm run app` exits naming the port and `--port` |
 
 ## Verification
