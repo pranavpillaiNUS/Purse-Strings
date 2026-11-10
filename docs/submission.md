@@ -1,13 +1,21 @@
 # Submission pack
 
 **Status: working draft. PayPal sandbox is wired into the purchase path, with limited
-historical manual observations recorded in `docs/paypal-spike.md`. Submission still needs
+manual observations, including the Nov 9 scripted account rehearsal, recorded in
+`docs/paypal-spike.md`. Submission still needs
 a final recorded sandbox demo, agreed judge access, and completion of the checklist below.**
 PayPal placeholders below reserve the final recording narrative and team review; they do
 not mean the gateway is unwired. Historical reports do not validate current-path recovery.
 
 Everything in **[BRACKETS]** must be resolved or removed before it reaches Devpost or the
-README. Statuses are as of Nov 7, 2026.
+README. Repository and CI statuses were checked on Nov 9, 2026. Human decisions below
+remain open; historical reports retain their original dates.
+
+Verification: [repository visibility and license](https://github.com/pranavpillaiNUS/Splittap-pay),
+[latest successful main CI at `17e917c`](https://github.com/pranavpillaiNUS/Splittap-pay/actions/runs/42517021199),
+and the [Nov 9 live-practice record in PR #25](https://github.com/pranavpillaiNUS/Splittap-pay/pull/25).
+That CI run used scripted stand-ins and fake providers; the live-practice record also used
+fake payment and supplier providers.
 
 ## Checklist
 
@@ -47,18 +55,40 @@ The rules do not require a separate AI tools list. We keep one below as accurate
 | Item | Owner | Status |
 | --- | --- | --- |
 | Register on Devpost and choose the Representative | Both | Not established from the repo. Confirm who enters the submission |
-| Repo made public | Both. Pranav changes the setting | Not done. The repo is private. A scan of its history on Nov 7 found no real secrets. It did find personal details you should both see first. The report is outside the repo. Scan again before the change, because commits are still landing |
-| License visible | Both | In place. `LICENSE` is MIT and GitHub detects it. The copyright line names only `pranavpillaiNUS`, so Danny should confirm that is fine. The public can see it only once the repo is public |
+| Repo made public | Both. Pranav changes the setting | Not done. GitHub confirms the repo is private on Nov 9. A scan of its history reported on Nov 7 found no real secrets. It did find personal details you should both see first. A Nov 10 pattern rescan of all 157 commits on every branch (not a full secret scanner) found no secrets, no PayPal sandbox account emails or passwords, and no committed `.env`, key or database file. Its four secret-pattern hits were test strings and code that reads keys from the environment. What becomes public: both people's personal email addresses in commit author and committer fields, and a `/home/danny` path in `.audit/` and one design doc. Removing either means rewriting history, which needs both people. The rescan's report is outside the repo. Scan again just before the change, because commits are still landing. A public repo also gets free GitHub Actions runners again (see step 4) |
+| License visible | Both | Verified Nov 9: `LICENSE` is MIT and GitHub detects it. The copyright line names only `pranavpillaiNUS`, so Danny should confirm that is fine. The public can see it only once the repo is public |
 | Complete setup and run instructions | Pranav | Partly done. `README.md` has run commands. `docs/new-device-setup.md` is a team guide and still says the repo is private. The opening below is not pasted in yet |
-| Working demo instructions | Both | Scripted flow documented and passing CI on Linux and Windows with Node 24.15 and 26, and on macOS with Node 26. Default execution uses fake providers; `--sandbox-paypal` opts into sandbox payment with a simulated supplier. The final sandbox recording still needs to be made. The Nov 6 and 7 live Claude runs used temporary Windows copies with the backend's folder check skipped. A Nov 9 live practice take ran from the repository on Windows with the check on and exited 0 |
+| Working demo instructions | Both | Verified Nov 9: the latest main CI passes tests, typecheck, the offline demo and the scripted flow on Linux (Node 24.15.0, 24 and 26), Windows (24.15.0 and 26), and macOS (26). Default execution uses fake providers; `--sandbox-paypal` opts into sandbox payment with a simulated supplier. The final sandbox recording still needs to be made. The Nov 6 and 7 live Claude runs used temporary Windows copies with the backend's folder check skipped. PR #25 records a Nov 9 live practice take from the repository on Windows with the check on: exit 0, 66 seconds, about 53,600 tokens |
 | Judge access until judging ends on Dec 15, with any credentials they need | Both | Not done. The repo must stay public and the instructions must keep working. The scripted flow needs no key. `--live` needs an Anthropic key. **[PAYPAL, Danny and Pranav: decide how judges run the PayPal path, using sandbox details only and committing no secret to the repo. See the proposal below.]** |
-| Name the platform it runs on | Both | Not decided. The rules require consistent running on the intended platform. The tests and the scripted flow pass in CI on Linux, Windows and macOS. Name only platforms where the PayPal path has also run, because the rules hold us to what we name |
+| Name the platform it runs on | Both | Not decided. The rules require consistent running on the intended platform. The Nov 9 main CI check confirms tests and the scripted flow pass on Linux, Windows and macOS; it does not exercise PayPal. Name only platforms where the PayPal path has also run, because the rules hold us to what we name |
 | Video under 3 minutes, public on YouTube | Pranav, with Danny for scene 6 | Not done. `docs/demo-script.md` is the recording plan and targets 2:45. Scene 6 needs a final-tree sandbox recording with buyer consent; wiring alone does not supply that recording |
 | No copyrighted music or third-party trademarks | Pranav | Cannot be checked until a video exists. A search on Nov 7 found no common hardware brand names in the fixtures, examples, policy files or demo flow. SKUs are synthetic, such as `LAP-14-AIR`. The narration and screen name Claude, a third-party mark, and PayPal, the sponsor. Section 11 says to ask in writing if a term is ambiguous, so consider asking Devpost whether naming the AI tool you used is fine |
 | Devpost text | Both. Pranav drafts, Danny writes the PayPal parts | Draft below, with PayPal placeholders open. Nothing is entered on Devpost |
 | AI tools list | Both | Draft below, with items for each of you to confirm. Codex's summary says the rules do not explicitly require it. Keep it anyway, as accurate disclosure |
-| PayPal in the purchase path | Danny | Wired behind backend config `paymentProvider: "paypal-sandbox"`. `docs/paypal-spike.md` reports a Nov 7 application capture on the PR #17 tree plus the AUTHORIZE fix. Current-path recovery remains backed by injected-fetch crash tests; the final sandbox demo and account recovery evidence remain outstanding |
+| PayPal in the purchase path | Danny | Wired behind backend config `paymentProvider: "paypal-sandbox"`. `docs/paypal-spike.md` records the Nov 7 application capture and a Nov 9 scripted sandbox rehearsal at `17e917c`: one normal authorization/capture for S$7,510.10 with a fake supplier order. Current-path recovery remains backed by injected-fetch crash tests; the final recording, account recovery and unused-hold closure evidence remain outstanding |
 | Sandbox spike results recorded | Danny | Nov 7–8 manual runs are recorded in `docs/paypal-spike.md`, including captures, replay, concurrency, over-capture warnings and a partial refund. Unused-hold void and final-capture closure were not exercised |
+
+## Freeze and recording handoff
+
+Complete these in order. Record the chosen revision and evidence links; a scripted run,
+a sandbox capture and account recovery establish different things. These steps organize
+the open checklist above; none records a decision or a passed gate.
+
+| Step | Owner | What to supply and what closes it |
+| --- | --- | --- |
+| 1. Confirm submission choices | Pranav and Danny | Agree the final name, Devpost Representative, intended platform, and whether the final take's shopper is live Claude or the scripted stand-in. Danny confirms license credit. Each person completes their tools/models disclosure. Written choices resolve these items; repository history cannot choose them. |
+| 2. Rehearse the recording variant | Danny and Pranav, with a sandbox buyer | One scripted Windows sandbox rehearsal at `17e917c` succeeded on Nov 9 without `--pause`; see the [recorded evidence](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09). Preserve its `.runtime/demo-sandbox-rehearsal-1` directory. On the candidate revision, rehearse the exact variant chosen in step 1 in a new directory: `npm run demo:flow -- --sandbox-paypal --pause --dir .runtime/demo-sandbox-recording-1` for the scripted stand-in, which spends no model credit, or the same with `--live` for Claude. Record buyer consent and the operation/provider references. A successful capture shows that take's scene 6 only; recovery and unused-hold closure need their own observations before either is claimed. |
+| 3. Set up judge access | Both | Agree how judges receive sandbox details privately, whether live Claude is offered, and how access remains available through judging. Run the selected path from a fresh clone with those judge details. The no-key scripted flow must remain available. Put no credential values in Git, PRs, screenshots or the public video. |
+| 4. Freeze the recording revision | Pranav, after both review | Record the revision, successful test/typecheck/demo results, scripted-flow result and applicable CI/fresh-install evidence. Recheck the README opening (PR #27, a draft until this step) against that revision, then mark it ready. Since Nov 10, GitHub Actions starts no jobs on this private repo: "recent account payments have failed or your spending limit needs to be increased". Until billing is fixed or the repo is public, new commits have local Windows results only, with no Linux or macOS CI. |
+| 5. Record and inspect the video | Pranav, with Danny for scene 6 | Follow the [six-scene script](demo-script.md) with the [recording command](demo-script.md#before-you-record) for the variant rehearsed in step 2: `--sandbox-paypal --pause`, plus `--live` only if live Claude was chosen. Without `--sandbox-paypal`, scene 6 shows no PayPal. Keep the final cut under three minutes. Use one new take directory, such as `.runtime/demo-sandbox-take-1`, and the same directory for its terminal and dashboard. Label scripted stand-ins and historical review replays; show only observed sandbox results, and record the take's operation id, `authorizationId` and `captureId` next to the video. Keep the supplier order visibly simulated. Inspect the terminal, browser, buyer-consent screens and audio for credentials, personal details and material requiring permission. |
+| 6. Finalize and submit | Pranav and the agreed Representative | Update live-run counts after recording, resolve every remaining submission bracket, and make the README, Devpost text and video agree. Both review repository history and authorize the visibility choice. Check the final repository/video links and judge instructions, then the Representative submits. |
+
+Preparation evidence from Nov 9: [combined build and dashboard rendering](https://github.com/pranavpillaiNUS/Splittap-pay/pull/24#issuecomment-6734790872)
+and [fresh clone/install with scripted story and review replay](https://github.com/pranavpillaiNUS/Splittap-pay/pull/26#issuecomment-6735113599).
+These checks establish the scripted Windows setup. The separate Nov 9
+[sandbox rehearsal](paypal-spike.md#demo-flow-sandbox-rehearsal-2026-11-09) establishes one
+reported normal authorization/capture, cross-checked against the local ledger. The final
+recording, judge-account setup, account recovery and unused-hold closure remain open.
 
 ## Judge access: proposal
 
@@ -169,8 +199,9 @@ behaved, and whether the pitch can extend to "PayPal holds the money." If they d
 leave this out.]**
 
 The gateway is wired into execution behind backend config, with operator-only sandbox hold
-commands. `docs/paypal-spike.md` records earlier manual application/spike observations; this
-checkpoint did not reproduce them. Final submission wording must match the recorded demo and
+commands. `docs/paypal-spike.md` records the earlier application/spike observations and the
+Nov 9 scripted application rehearsal; the latter covers one normal sandbox capture only.
+Final submission wording must match the recorded demo and
 must not turn mocked recovery tests into account-verified recovery or a simulated supplier order
 into a real order.
 
@@ -241,15 +272,15 @@ The checker, ledger and scripted stand-in use no AI.
 
 | Tool | What the repo shows | To confirm |
 | --- | --- | --- |
-| Claude Code | `CLAUDE.md`, `docs/new-device-setup.md`, and one commit carrying a Claude Opus 5.5 co-author line | **Pranav:** how it was used and which models. **Danny:** whether you used it too |
+| Claude Code | `CLAUDE.md`, `docs/new-device-setup.md`, and commits carrying Claude Opus 5.5 co-author lines | **Pranav:** how it was used and which models. **Danny:** whether you used it too |
 | Codex, in VS Code | Pranav used it on Nov 7 to finish the demo documentation, independently verify that work and run one live rehearsal. Commit history will not show this | **Pranav:** confirm, and add which models |
 | OpenCode | `.audit/backend-delivery/plan.md` names OpenCode v2.2.2 as the backend's implementation executor | **Danny:** which model or models it ran on |
 | Agent review roles | `.audit/backend-delivery/` records design and review roles, and review rounds | **Danny:** which tools and models ran them |
 | graphify | `AGENTS.md` and `graphify-out/` show coding agents using it as a code graph | **Both:** whether it counts. The repo does not establish whether it calls a model |
 
 **Both of you:** add anything else you used, such as chat assistants for research, or AI voice or
-editing tools for the video. Commit history cannot settle this list, because only one commit on a
-current branch carries an AI co-author line.
+editing tools for the video. Commit history cannot settle this list: co-author lines do not record
+every tool or model used.
 
 ## Judge-facing README opening
 

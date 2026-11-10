@@ -42,8 +42,10 @@ and assignment, CLI approvals and exceptions, delivery and readiness tracking,
 production authentication. PayPal sandbox purchase-path wiring exists behind config opt-in
 (`paymentProvider`), with mocked-contract and crash-test evidence. `docs/paypal-spike.md`
 also records a Nov 7 application capture on the earlier PR #17 tree plus the AUTHORIZE
-fix, and separate Nov 7–8
-spike runs. Those historical observations do not validate recovery on the current tree,
+fix, separate Nov 7–8 spike runs, and a Nov 9 scripted Windows demo rehearsal at
+`17e917c`: one buyer-approved sandbox authorization/capture for S$7,510.10 with a fake
+supplier order. The Nov 9 take omitted `--live` and `--pause`; it was not the final
+recorded take. These normal-path observations do not validate recovery on the current tree,
 unused-hold closure or real purchasing. Do not describe the current recovery path as
 sandbox-account verified. Fake-provider results such as `ordered` are not real orders, and a reservation is not
 payment. No gate after M0 is recorded as passed; see `docs/project-scope.md`.
@@ -55,8 +57,8 @@ commands (`operation-authorize`, `operation-complete-authorization`) place a san
 reserved operation before `operation-run`; the durable worker resolves crashes through
 sandbox reads; sandbox credentials are read in-process only by the commands that call PayPal
 from the invocation directory `.env`/environment. Automated evidence for that path uses
-fetch-mocked tests and fake-fetch child-process crashes; the current cleanup ran no account
-exercise. Keep this separate from the limited historical manual observations above.
+fetch-mocked tests and fake-fetch child-process crashes; the Nov 8 cleanup ran no account
+exercise. Keep that recovery proof separate from the limited manual observations above.
 A unit-4 four-method capture/refund/refund-read contract remains intact.
 Reproduction commands and proof-class distinctions live in `docs/backend-delivery-review.md`.
 
