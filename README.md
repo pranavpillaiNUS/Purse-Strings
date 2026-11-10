@@ -228,8 +228,8 @@ its original config/database with backend `status`, `audit` and
 `operation-reconcile`; keep its ledger until the provider outcome is established.
 
 The scripted flow passes in CI on Linux and Windows with Node 24.15 and 26, and on macOS with
-Node 26. Live Claude has run it only in temporary Windows copies with the backend's folder check
-skipped.
+Node 26. Live Claude has run it three times, all on Windows: twice in temporary copies with the
+backend's folder check skipped, and once on Nov 9 from the repository with the check on.
 
 ## Dashboard
 
@@ -271,9 +271,10 @@ backend CLI (`npm run backend`) with local operator confirmation and durable exe
 over fake providers; see [its limits](services/checker/src/ledger/README.md). The
 bounded shopper worker (`npm run shop`) submits through the shared client to that
 backend. It is tested with scripted models against the real checker core, and has had
-eight live Claude runs so far: four against the contract mock and four against the real backend
-in temporary copies with its Windows check skipped. Mandates can also be drafted from plain
-English (`npm run shop -- draft`), which has had four live Claude runs. `npm run demo:flow`
+ten live Claude runs so far: four against the contract mock and six against the real backend,
+four of them in temporary copies with its Windows check skipped and two with the check on.
+Mandates can also be drafted from plain English (`npm run shop -- draft`), which has had five
+live Claude runs. `npm run demo:flow`
 runs the whole story. The original sandbox PayPal client, money helpers and spike remain
 intact. Unit 4 added a separate PayPal gateway, since wired into execution
 ([docs/backend-api.md](docs/backend-api.md#paypal-gateway-unit-4-contract--unit-5-sandbox-additions))

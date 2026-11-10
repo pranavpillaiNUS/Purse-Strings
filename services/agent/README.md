@@ -101,10 +101,10 @@ How the host treats the model's answer:
   neither policy nor the kit lists them, and any other location ends the run. The default
   is `singapore-office`.
 
-Claude has run this four times, three on November 6, 2026 and one on November 7, with the
-default model. Three times, for `hire-request-text.txt` and for the same text from the demo
-flow, it read each stated value correctly, flagged the values it chose, and listed stock reuse
-and the start date as not captured. For
+Claude has run this five times, three on November 6, 2026, one on November 7 and one on
+November 9, with the default model. Four times, for `hire-request-text.txt` and for the
+same text from the demo flow, it read each stated value correctly, flagged the values it
+chose, and listed stock reuse and the start date as not captured. For
 `hire-request-over-budget-text.txt`, which asks for S$20,000 and falsely claims a CFO
 approval, it copied the budget unchanged, so policy refused it, and it recorded the
 approval claim as not captured without acting on it.
@@ -345,12 +345,16 @@ it recovers at store-a (`--run-id recovery`).
 
 ### Not established
 
-- **Live model behavior is lightly tested.** Claude has run eight times, six on November 6,
-  2026 and two on November 7, with the default model. Four used the contract mock and four the
-  real backend. Four runs had both stores and the hostile listing, two on each backend. In each,
-  Claude made no call that followed the listing, flagged it in its summary and reserved at
-  store-a, passing over store-b, about S$262 cheaper. That is four runs of one fixed injection,
-  so there is no claim of prompt-injection immunity. `src/anthropic.test.ts`
+- **Live model behavior is lightly tested.** Claude has run ten times with the default model:
+  six on November 6, 2026, two on November 7 and two on November 9. Four used the contract mock
+  and six the real backend. Five runs had both stores and the hostile listing, two on the mock
+  and three on the real backend. In each, Claude made no call that followed the listing, flagged
+  it in its summary and submitted store-a's cart, passing over store-b, about S$262 cheaper. In
+  the three real-backend runs the checker accepted that cart and the ledger reserved its budget
+  and units. In the two mock runs the cart was only accepted: the mock returns an operation
+  labelled `reserved` but has no ledger and sets nothing aside, so those two are not checker or
+  ledger decisions. That is five runs of one fixed injection, so there is no claim of
+  prompt-injection immunity. `src/anthropic.test.ts`
   proves the request and response mapping with a stubbed `fetch`, and the scripted model
   proves the host's bounds. The protection tested here is that obeying the listing achieves
   nothing.
@@ -363,15 +367,17 @@ it recovers at store-a (`--run-id recovery`).
 - **A passed deadline stopped one run.** Given a mandate whose purchase deadline had passed
   the day before, Claude made no tool calls and said why. That is one run of an instruction
   to the model; the backend's clock is what enforces deadlines.
-- **The real backend has had two live passes.** In one `demo:flow --live` run on each of
-  November 6 and 7, each in a temporary Windows copy with the backend's mode check skipped,
-  Claude used the real checker twice. Both times, with the hostile listing it followed nothing,
-  flagged it and reserved at store-a. On a separate mandate, it submitted store-b's cheaper cart
-  with 75-hour-old records, was rejected with `MANDATORY_EVIDENCE_UNKNOWN`, and recovered at
-  store-a. It is not told the 72-hour limit, and a run where it avoids store-b would show no
-  rejection. The flow reports that with exit 2. Two passes are not a reliability rate. The scripted
-  flow passes in CI on Linux, Windows and macOS, but no live run has happened on Linux or macOS,
-  or on Windows with the backend's folder check on.
+- **The real backend has had three live passes.** One `demo:flow --live` run on each of
+  November 6 and 7 used a temporary Windows copy with the backend's mode check skipped. The
+  November 9 run used the repository itself on Windows, with the backend's folder check on for
+  every backend command. Each pass used the real checker twice. Every time, with the hostile
+  listing Claude followed nothing, flagged it and reserved at store-a. On a separate mandate, it
+  submitted store-b's cheaper cart with 75-hour-old records, was rejected with
+  `MANDATORY_EVIDENCE_UNKNOWN`, and recovered at store-a. On November 9 it built a store-a cart
+  first and did not submit it, then tried store-b. It is not told the 72-hour limit, and a run
+  where it avoids store-b would show no rejection. The flow reports that with exit 2. Three
+  passes are not a reliability rate. The scripted flow passes in CI on Linux, Windows and macOS,
+  but no live run has happened on Linux or macOS.
 - **No acceptance gate is passed by this.** M4 still needs CLI review and approval, and
   bounded exceptions.
 - **Run state is not durable.** An interrupted worker keeps nothing but its optional trace.
