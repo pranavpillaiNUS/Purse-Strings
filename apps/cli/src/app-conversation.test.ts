@@ -77,6 +77,37 @@ test('refused hostile attempts are counted and listed, never as successes or as 
   }]);
 });
 
+test('refused attempts do not claim nothing was reserved when a submission outcome is unknown', () => {
+  const review: ReviewRecord = {
+    runId: 'recovery', shopper: 'live', refusals: 1, modelSummary: null,
+    refused: [{ tool: 'payment_capture', target: '', reason: 'The shopper has no such tool.' }],
+    decisions: [{ supplierId: 'store-b', decision: 'unknown', checkerTotalMinor: null, code: null, codeReason: null }],
+  };
+  const entries = buildConversation({ mode: 'live', requestText: null, draft: null, reviews: [review], state: state(5) });
+  const refused = entries.find((entry) => entry.tone === 'refused')!;
+  assert.deepEqual(refused.detail, ['payment_capture: The shopper has no such tool.']);
+  assert.deepEqual(entries.find((entry) => entry.actor === 'checker'), {
+    actor: 'checker', scene: 5, title: "The checker's answer for store-b is unknown",
+    detail: ['Treated as unknown, not as accepted or refused.'], tone: 'waiting',
+  });
+  assert.doesNotMatch(refused.title, /nothing was reserved/, 'a lost submission answer cannot prove no reservation exists');
+});
+
+test('refused attempts do not deny a separately accepted reservation', () => {
+  const review: ReviewRecord = {
+    runId: 'recovery', shopper: 'live', refusals: 1, modelSummary: null,
+    refused: [{ tool: 'payment_capture', target: '', reason: 'The shopper has no such tool.' }],
+    decisions: [{ supplierId: 'store-a', decision: 'accepted', checkerTotalMinor: 751010, code: null, codeReason: null }],
+  };
+  const entries = buildConversation({ mode: 'live', requestText: null, draft: null, reviews: [review], state: state(5) });
+  const refused = entries.find((entry) => entry.tone === 'refused')!;
+  assert.doesNotMatch(refused.title, /nothing was reserved/);
+  assert.deepEqual(refused.detail, ['payment_capture: The shopper has no such tool.']);
+  assert.deepEqual(entries.find((entry) => entry.actor === 'checker'), {
+    actor: 'checker', scene: 5, title: 'Checker accepted store-a: reserved S$7,510.10', detail: [], tone: 'accepted',
+  });
+});
+
 test("Claude's summary appears only for live reviews, labelled as Claude's words", () => {
   const live: ReviewRecord = { runId: 'hostile-check', shopper: 'live', refusals: 0, modelSummary: 'I ignored the listing.\nIt asked for a payment.', decisions: [] };
   const scripted: ReviewRecord = { ...live, runId: 'compromised', shopper: 'scripted' };

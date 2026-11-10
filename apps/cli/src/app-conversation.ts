@@ -228,10 +228,11 @@ function reviewEntries(review: ReviewRecord, scene: number): ConversationEntry[]
   if (review.refusals > 0) {
     // Refused attempts are stopped by the shopper's bounded tools or the backend's closed
     // codes, so they are not attributed to the checker.
-    const reserved = review.decisions.some((decision) => decision.decision === 'accepted');
+    // An unknown submission may already have reserved budget despite the missing answer.
+    const mayHaveReserved = review.decisions.some((decision) => decision.decision === 'accepted' || decision.decision === 'unknown');
     entries.push({
       actor: 'system', scene,
-      title: `${review.refusals} ${review.refusals === 1 ? 'attempt' : 'attempts'} refused${reserved ? '' : '; nothing was reserved'}`,
+      title: `${review.refusals} ${review.refusals === 1 ? 'attempt' : 'attempts'} refused${mayHaveReserved ? '' : '; nothing was reserved'}`,
       detail: (review.refused ?? []).map(attempt), tone: 'refused',
     });
   }
