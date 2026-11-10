@@ -720,15 +720,15 @@
     "semantic_hash": ""
   },
   "apps/cli/src/demo-flow.test.ts": {
-    "mtime": 1794289930.0023413,
-    "seen": 1794291360.2145486,
-    "ast_hash": "ecf282a187c3fcc3bc34105699f743c0",
+    "mtime": 1794291780.83861,
+    "seen": 1794291989.0830512,
+    "ast_hash": "94d0247291efd2c56887ad9f9243dc0b",
     "semantic_hash": ""
   },
   "apps/cli/src/demo-flow.ts": {
-    "mtime": 1794289944.1543438,
-    "seen": 1794291360.2145498,
-    "ast_hash": "0f6579e25b729e4f3783bb297b8ce869",
+    "mtime": 1794291800.7151642,
+    "seen": 1794291989.0830526,
+    "ast_hash": "b0d0c9cb47dbf57b9b7d7a4744dad148",
     "semantic_hash": ""
   },
   "apps/cli/src/format.ts": {
@@ -816,9 +816,9 @@
     "semantic_hash": ""
   },
   "apps/cli/src/dashboard-state.ts": {
-    "mtime": 1794289953.9423428,
-    "seen": 1794291360.214545,
-    "ast_hash": "c63413aecf4a491ac501e74cde85f467",
+    "mtime": 1794291800.7151642,
+    "seen": 1794291989.083045,
+    "ast_hash": "75b0251213fbaf6d246fee12e31c6d4a",
     "semantic_hash": ""
   },
   "apps/cli/src/dashboard.test.ts": {
@@ -912,27 +912,27 @@
     "semantic_hash": ""
   },
   "apps/cli/src/app-server.test.ts": {
-    "mtime": 1794290697.6732366,
-    "seen": 1794291360.214534,
-    "ast_hash": "cd349cf14e53c1674700dbef4f31ce1c",
+    "mtime": 1794291829.3426204,
+    "seen": 1794291989.083026,
+    "ast_hash": "078d446afe88ce6271223850484e4137",
     "semantic_hash": ""
   },
   "apps/cli/src/app-server.ts": {
-    "mtime": 1794290741.9309268,
-    "seen": 1794291360.214535,
-    "ast_hash": "c893883d9c9b68f5b2390e5426860d7f",
+    "mtime": 1794291840.947272,
+    "seen": 1794291989.0830295,
+    "ast_hash": "42a8cb45ec04be9732c10949b3ba9bc4",
     "semantic_hash": ""
   },
   "apps/cli/src/app-takes.test.ts": {
-    "mtime": 1794290072.8983397,
-    "seen": 1794291360.2145355,
-    "ast_hash": "ba82b58f80e11174a9f95ab4edb19b4a",
+    "mtime": 1794291780.83861,
+    "seen": 1794291989.0830317,
+    "ast_hash": "edc2a22f7a14d1ca6523a456290c12a7",
     "semantic_hash": ""
   },
   "apps/cli/src/app-takes.ts": {
-    "mtime": 1794290105.3823206,
-    "seen": 1794291360.2145362,
-    "ast_hash": "dc251dbafd08bb4979ab14d1a5348139",
+    "mtime": 1794291819.946472,
+    "seen": 1794291989.0830333,
+    "ast_hash": "3ed6a6818d20658002d55ebf2bc50a7e",
     "semantic_hash": ""
   },
   "apps/cli/src/app/app.js": {
@@ -972,9 +972,9 @@
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-11-10-web-app-design.md": {
-    "mtime": 1794289417.2302208,
-    "seen": 1794291360.2146485,
-    "ast_hash": "be63c37b8a5f59e5f82fb628d11b23cd",
+    "mtime": 1794291840.947272,
+    "seen": 1794291989.0832317,
+    "ast_hash": "8224d1d4540cd9cc63bd308f3be68fa4",
     "semantic_hash": ""
   }
 }
