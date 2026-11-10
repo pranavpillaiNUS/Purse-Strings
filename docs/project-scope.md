@@ -84,7 +84,9 @@ serves one page on 127.0.0.1, needs no key, and adds no frontend dependency or b
 Confirmation is bound to the backend's active mandate revision, never the session file.
 Unavailable or mismatched confirmation reads remain unknown. Dashboard child reads run
 sequentially to avoid racing their SQLite validation, and evidence freshness uses exact
-elapsed time before rounding its display.
+elapsed time before rounding its display. A failed ledger read shows the budget as
+unavailable, never as an unconfirmed mandate, and a future-dated store record stays
+flagged even beside older evidence.
 Nothing in stage-one acceptance depends on it.
 
 Still deferred, each needing both people's agreement: any page that acts (mandate review and

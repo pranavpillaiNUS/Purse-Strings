@@ -63,8 +63,8 @@ npm run cli -- store reset --catalog services/suppliers/state/store-a.json
 
 `store reset --seed NAME` chooses the baseline: `store-a` (the default), `store-b`, or
 `store-b-hostile`, which is store-b with a prompt-injection listing. Add `--now
-ISO_TIMESTAMP` to re-date all of its evidence, which runs under the backend's real clock
-need. It keeps every status and source as written.
+ISO_TIMESTAMP` to re-date all of its evidence. Runs against the backend need this, because
+the backend uses the real clock. Re-dating keeps every status and source as written.
 
 `store set` accepts one or more of these changes:
 
@@ -215,7 +215,7 @@ panel, a plain-English request, confirmation, a hostile listing, a store change 
 cart rejected followed by recovery, and execution over fake providers. Add `--live` for Claude, which spends API credit, and `--pause` for recording. The
 scene-by-scene recording plan is in [the demo script](docs/demo-script.md).
 
-`--sandbox-paypal` connects scene 6's payment capture to the PayPal sandbox: the
+`--sandbox-paypal` connects scene 6's payment hold and capture to the PayPal sandbox: the
 generated backend config gains `paymentProvider: "paypal-sandbox"`, the flow needs
 sandbox credentials in `.env` (it stops before any reservation without them) and
 pauses while a sandbox buyer approves the hold in a browser. The supplier order stays
@@ -253,8 +253,8 @@ npm run dashboard -- --backend-db PATH --backend-config PATH --mandate-id ID --o
 
 It is a view, not a second ledger. It starts only read commands (backend `mandate-review`,
 `status` and `audit`, `shop status` and `store show`), each in its own process with no model key
-or PayPal detail, and `demo:flow` adds only the scene and result lines through
-`session.json` in its working directory. Confirmation comes from the backend's active
+or PayPal detail, and `demo:flow` adds only the scene, the result lines and, for a take that
+is not usable, the terminal's reasons through `session.json` in its working directory. Confirmation comes from the backend's active
 mandate revision; session metadata cannot confirm it. An unavailable or mismatched read
 is shown as unknown. Child reads run one at a time, and store freshness is compared with
 the exact age limit before rounding for display. The server listens on 127.0.0.1, answers only to

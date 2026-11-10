@@ -145,6 +145,7 @@
     });
     let status;
     if (demo.failure) status = [chip('Stopped', 'bad'), demo.failure];
+    else if (demo.finished && demo.unusable.length > 0) status = [chip('Finished: not a usable take', 'bad'), `${demo.unusable.join('; ')}.`];
     else if (demo.finished) status = [chip('Finished', 'good'), 'Every scene ran.'];
     else if (demo.waiting === 'sandbox-buyer') status = [chip('Waiting', 'warn'), "The sandbox buyer approves the hold on PayPal's page, then the operator presses Enter."];
     else if (demo.waiting === 'operator-confirm') status = [chip('Waiting', 'warn'), 'The operator confirms this exact digest in the terminal.'];
@@ -159,8 +160,13 @@
   function renderBudget(state) {
     const ledger = state.ledger;
     if (!ledger) {
+      // Only the server knows why the ledger is absent. Anything other than "not
+      // asked yet" or the backend's exact refusal means reservations are unknown.
+      const message = state.ledgerStatus === 'no-mandate' || state.ledgerStatus === 'unconfirmed'
+        ? 'Shown once a person confirms the mandate. Until then nothing can be reserved.'
+        : 'Budget and allocated units are unavailable. The ledger read did not succeed, so current reservations are unknown.';
       return card('Budget', 'from the ledger',
-        h('p', { class: 'placeholder' }, 'Shown once a person confirms the mandate. Until then nothing can be reserved.'));
+        h('p', { class: 'placeholder' }, message));
     }
     const { totalMinor, committedMinor, reservedMinor, remainingMinor } = ledger.budget;
     const roles = new Map((state.mandate?.requirements ?? []).map((item) => [item.id, item.role]));
@@ -190,7 +196,14 @@
   function renderMandate(state) {
     const mandate = state.mandate;
     if (!mandate) {
-      return card('Mandate', null, h('p', { class: 'placeholder' }, 'Appears once a drafted mandate is stored for confirmation.'));
+      // Only the server knows why the mandate is absent; "not stored" must never
+      // stand in for a stored mandate this view cannot read.
+      const message = state.mandateStatus === 'revision-unknown'
+        ? 'Mandate details are unavailable. The backend holds this mandate but has no confirmed revision, and a followed backend shows the revision only once a person confirms it.'
+        : state.mandateStatus === 'unavailable'
+          ? 'Mandate details are unavailable. The read did not succeed, so the stored revision cannot be shown.'
+          : 'Appears once a drafted mandate is stored for confirmation.';
+      return card('Mandate', null, h('p', { class: 'placeholder' }, message));
     }
     const confirmed = mandate.confirmationStatus === 'confirmed'
       ? chip(mandate.confirmedAt ? `Confirmed ${dateTime(mandate.confirmedAt)}` : 'Confirmed by the ledger', 'good')
@@ -252,9 +265,13 @@
   function renderOperations(state) {
     const body = state.operations.length > 0
       ? state.operations.map(renderOperation)
-      : [h('p', { class: 'placeholder' }, state.demo
-        ? 'None yet. The shopper proposes carts; only the checker reserves, and only the operator runs.'
-        : 'No operation IDs were given. Pass the IDs the shopper printed with --operation.')];
+      : [h('p', { class: 'placeholder' }, state.requestedOperationIds.length > 0 || (state.source.kind === 'demo' && state.demo === null)
+        ? 'Operation details are unavailable. Read failures are listed above.'
+        : state.demo?.finished
+          ? 'None. Scene 5 reserved nothing, so scene 6 executed nothing.'
+          : state.demo
+          ? 'None yet. The shopper proposes carts; only the checker reserves, and only the operator runs.'
+          : 'No operation IDs were given. Pass the IDs the shopper printed with --operation.')];
     return h('div', { class: 'span-12' }, card('Operations', 'backend status and audit', ...body));
   }
 
@@ -267,12 +284,13 @@
     const now = Date.now();
     const recordCells = stores.map((store) => {
       const ageMs = now - Date.parse(store.oldestRecordAt);
-      const future = ageMs < 0;
+      const future = Date.parse(store.newestRecordAt) > now;
       const stale = limit !== null && ageMs > limit * HOUR_MS;
       const age = Math.floor(Math.max(0, ageMs) / HOUR_MS);
-      const description = future
-        ? 'Future-dated record: not valid evidence'
-        : `${age} h old${stale ? `, past the ${limit} h policy limit` : ''}`;
+      const description = [
+        ageMs >= 0 ? `${age} h old${stale ? `, past the ${limit} h policy limit` : ''}` : null,
+        future ? 'Future-dated record: not valid evidence' : null,
+      ].filter(Boolean).join('; ');
       return h('td', { class: stale || future ? 'stale' : null }, description, h('br'), store.recordStatuses.join(' / '));
     });
     return h('div', { class: 'span-7' }, card('Stores', 'the control panel (synthetic)',
@@ -308,7 +326,8 @@
     renderBadges(state);
     updated.textContent = `Updated ${time(state.generatedAt)}`;
     updated.classList.remove('lost');
-    if (state.demo === null && state.mandate === null && state.ledger === null && state.problems.length === 0) {
+    // Only a demo that has not started yet is empty; a followed backend always has a mandate to show.
+    if (state.source.kind === 'demo' && state.demo === null && state.problems.length === 0) {
       app.replaceChildren(renderEmpty(state));
       return;
     }

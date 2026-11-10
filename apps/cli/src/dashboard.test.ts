@@ -100,7 +100,7 @@ test('the page writes every value as text, runs no inline code and loads nothing
 function emptyState(): DashboardState {
   return {
     version: 1, generatedAt: '2026-11-08T09:00:00.000Z', source: { kind: 'demo', label: '.runtime/demo' }, demo: null, mandate: null,
-    ledger: null, stores: [], operations: [], notices: ['Waiting'], problems: [],
+    mandateStatus: 'not-stored', ledgerStatus: 'no-mandate', ledger: null, stores: [], requestedOperationIds: [], operations: [], notices: ['Waiting'], problems: [],
   };
 }
 
@@ -192,7 +192,7 @@ function session(overrides: Partial<DemoSession> = {}): DemoSession {
     kind: 'splittap-demo-session', version: 1, mode: 'scripted', paymentProvider: 'paypal-sandbox',
     startedAt: NOW, updatedAt: NOW, scenes: [...DEMO_SCENES], scene: 6,
     mandate: { id: 'engineering-hires-demo', revision: 1, stored: true, confirmedAt: NOW },
-    operationIds: ['op-1'], results: ['Confirmation: refused until confirmed'], waiting: null, finished: false, failure: null,
+    operationIds: ['op-1'], results: ['Confirmation: refused until confirmed'], waiting: null, finished: false, failure: null, unusable: [],
     ...overrides,
   };
 }
@@ -279,7 +279,35 @@ test('a session file that is not exactly the recorded shape is reported, and non
     const state = await buildDashboardState(demoDirectory(t, bad), run);
     assert.deepEqual(calls, []);
     assert.match(state.problems.join(' '), /session file .* could not be read/);
+    assert.equal(state.ledgerStatus, 'unavailable', 'invalid session metadata cannot establish an empty or unconfirmed ledger');
   }
+});
+
+test('a finished take carries its unusable reasons, and a session from before they were recorded still reads', async (t) => {
+  const reasons = ['The model did not recover: nothing was reserved'];
+  const recorded = await buildDashboardState(demoDirectory(t, session({ finished: true, unusable: reasons })), fakeRunner().run);
+  assert.deepEqual(recorded.demo?.unusable, reasons);
+  const { unusable: _omitted, ...older } = session({ finished: true });
+  const earlier = await buildDashboardState(demoDirectory(t, JSON.stringify(older)), fakeRunner().run);
+  assert.deepEqual(earlier.problems, []);
+  assert.deepEqual(earlier.demo?.unusable, []);
+  for (const bad of [[''.padEnd(501, 'x')], Array.from({ length: 21 }, () => 'x'), 'not a list']) {
+    const state = await buildDashboardState(demoDirectory(t, JSON.stringify({ ...session(), unusable: bad })), fakeRunner().run);
+    assert.match(state.problems.join(' '), /session file .* could not be read/);
+  }
+});
+
+test('a session path that cannot be read as a file is unavailable rather than a missing demo', async (t) => {
+  const source = demoDirectory(t, null);
+  assert.equal(source.kind, 'demo');
+  if (source.kind !== 'demo') return;
+  mkdirSync(join(source.directory, 'session.json'));
+  const { run, calls } = fakeRunner();
+  const state = await buildDashboardState(source, run);
+  assert.deepEqual(calls, []);
+  assert.equal(state.ledgerStatus, 'unavailable');
+  assert.match(state.problems.join(' '), /session file .* could not be read/);
+  assert.deepEqual(state.notices, []);
 });
 
 test('a backend refusal establishes that there is no confirmed active revision', async (t) => {
@@ -290,6 +318,7 @@ test('a backend refusal establishes that there is no confirmed active revision',
   const state = await buildDashboardState(demoDirectory(t, unconfirmed), run);
   assert.deepEqual(calls.sort(), ['backend mandate-review', 'main store show', 'shop status']);
   assert.equal(state.ledger, null);
+  assert.equal(state.ledgerStatus, 'unconfirmed');
   assert.equal(state.mandate?.confirmationStatus, 'unconfirmed');
   assert.equal(state.mandate?.confirmedAt, null);
   assert.match(state.notices.join(' '), /backend has no confirmed active revision/);
@@ -314,6 +343,52 @@ test('session confirmation claims cannot replace a backend read or suppress one'
   assert.equal(forged.mandate?.confirmedAt, null, 'a session timestamp grants no authority');
 });
 
+const MANDATE_NOT_FOUND: CommandResult = { status: 1, stdout: '', stderr: 'shop: Mandate was not found\n' };
+const REVISION_NOT_FOUND: CommandResult = { status: 2, stdout: '', stderr: 'backend: Mandate revision was not found\n' };
+
+test('while the demo has not stored its draft, the backend refusal shows nothing stored rather than a failed read', async (t) => {
+  // The --pause wait between scenes 2 and 3 sits here, with the dashboard beside the terminal.
+  const { run, calls } = fakeRunner({ 'shop status': MANDATE_NOT_FOUND, 'backend mandate-review': REVISION_NOT_FOUND });
+  const drafted = session({
+    scene: 2, waiting: 'next-scene', operationIds: [], results: [],
+    mandate: { id: 'engineering-hires-demo', revision: 1, stored: false, confirmedAt: null },
+  });
+  const state = await buildDashboardState(demoDirectory(t, drafted), run);
+  assert.deepEqual(calls.sort(), ['main store show', 'shop status'], 'nothing is stored, so no review is attempted');
+  assert.deepEqual(state.problems, []);
+  assert.equal(state.ledgerStatus, 'no-mandate');
+  assert.equal(state.mandateStatus, 'not-stored');
+  assert.equal(state.mandate, null);
+  assert.match(state.notices.join(' '), /preparing the mandate/);
+});
+
+test('a not-found refusal is a failed read unless the session also awaits storage, and other failures stay failures', async (t) => {
+  const cases: Array<{ stored: boolean; result: CommandResult }> = [
+    { stored: true, result: MANDATE_NOT_FOUND },
+    { stored: false, result: { status: 1, stdout: '', stderr: 'shop: The application database could not be validated\n' } },
+    { stored: false, result: { ...MANDATE_NOT_FOUND, stdout: '{}' } },
+    { stored: false, result: { ...MANDATE_NOT_FOUND, status: 2 } },
+  ];
+  for (const { stored, result } of cases) {
+    const { run } = fakeRunner({ 'shop status': result, 'backend mandate-review': REVISION_NOT_FOUND });
+    const value = session({ operationIds: [], mandate: { id: 'engineering-hires-demo', revision: 1, stored, confirmedAt: null } });
+    const state = await buildDashboardState(demoDirectory(t, value), run);
+    const label = `${stored} ${JSON.stringify(result)}`;
+    assert.equal(state.ledgerStatus, 'unavailable', label);
+    assert.equal(state.mandateStatus, 'unavailable', label);
+    assert.ok(state.problems.some((problem) => problem.startsWith('Ledger (shop status)')), label);
+  }
+});
+
+test('a failed mandate review is unavailable, not unstored', async (t) => {
+  const { run } = fakeRunner({ 'backend mandate-review': REVISION_NOT_FOUND });
+  const state = await buildDashboardState(demoDirectory(t, session()), run);
+  assert.equal(state.mandate, null);
+  assert.equal(state.mandateStatus, 'unavailable');
+  assert.equal(state.ledgerStatus, 'read', 'the ledger read stands on its own');
+  assert.ok(state.problems.some((problem) => problem.startsWith('Mandate')));
+});
+
 test('a failed, malformed or mismatched confirmation read stays unknown despite session claims', async (t) => {
   const successful = outputs['shop status'] as Record<string, unknown>;
   const { confirmedAt: ignored, ...missingConfirmation } = successful;
@@ -332,8 +407,19 @@ test('a failed, malformed or mismatched confirmation read stays unknown despite 
     assert.equal(state.mandate?.confirmationStatus, 'unknown');
     assert.equal(state.mandate?.confirmedAt, null);
     assert.equal(state.ledger, null);
+    assert.equal(state.ledgerStatus, 'unavailable', 'a failed or mismatched read is not an unconfirmed mandate');
     assert.ok(state.problems.some((problem) => problem.startsWith('Ledger (shop status)')));
   }
+});
+
+test('before the demo stores a mandate, no ledger read runs and the ledger is not called unavailable', async (t) => {
+  const { run, calls } = fakeRunner();
+  const state = await buildDashboardState(demoDirectory(t, session({ scene: 1, mandate: null, operationIds: [] })), run);
+  assert.deepEqual(calls, ['main store show']);
+  assert.equal(state.ledgerStatus, 'no-mandate');
+  assert.equal(state.mandateStatus, 'not-stored');
+  assert.equal(state.ledger, null);
+  assert.deepEqual(state.problems, []);
 });
 
 test('every fact on the page comes from a read command, with payment, order and refund kept apart', async (t) => {
@@ -341,6 +427,7 @@ test('every fact on the page comes from a read command, with payment, order and 
   const state = await buildDashboardState(demoDirectory(t, session()), run, () => new Date(NOW));
   assert.deepEqual(calls.sort(), ['backend audit', 'backend mandate-review', 'backend status', 'main store show', 'shop status']);
   assert.deepEqual(state.problems, []);
+  assert.equal(state.ledgerStatus, 'read');
   assert.deepEqual(state.ledger?.budget, { totalMinor: 800000, committedMinor: 751010, reservedMinor: 0, remainingMinor: 48990 });
   assert.equal(state.mandate?.evidenceMaxAgeHours, 72);
   assert.equal(state.mandate?.confirmationStatus, 'confirmed');
@@ -355,7 +442,59 @@ test('every fact on the page comes from a read command, with payment, order and 
   assert.deepEqual(op?.providerIds, outputs['backend status'] && (outputs['backend status'] as { providerIds: unknown }).providerIds);
   assert.deepEqual(op?.events.map(({ kind }) => kind), ['operation_reserved', 'capture_succeeded']);
   assert.equal(state.stores[0]?.supplierId, 'store-a');
+  assert.equal(state.stores[0]?.oldestRecordAt, NOW);
+  assert.equal(state.stores[0]?.newestRecordAt, NOW);
   assert.deepEqual(state.demo?.results, ['Confirmation: refused until confirmed']);
+});
+
+test('store evidence keeps both time bounds when ordinary records use different offsets', async (t) => {
+  const deliveryAt = '2026-11-08T15:00:00+08:00'; // 07:00 UTC, before the other records.
+  const productAt = '2026-11-08T08:00:00.000Z';
+  const { run } = fakeRunner({
+    'main store show': {
+      status: 0, stderr: '', stdout: JSON.stringify({
+        catalog: {
+          supplierId: 'store-a', shippingMinor: 2500,
+          delivery: { by: NOW, evidence: { ...evidence, observedAt: deliveryAt } },
+          products: [{
+            sku: 'LAP-14-AIR', unitPriceMinor: 119900, availableUnits: 9,
+            productEvidence: { ...evidence, observedAt: productAt }, stockEvidence: evidence,
+          }],
+        },
+      }),
+    },
+  });
+  const state = await buildDashboardState(demoDirectory(t, session()), run, () => new Date(NOW));
+  assert.deepEqual(state.problems, []);
+  assert.equal(state.stores[0]?.oldestRecordAt, deliveryAt);
+  assert.equal(state.stores[0]?.newestRecordAt, NOW);
+});
+
+test('a future delivery, product or stock record stays visible alongside older evidence', async (t) => {
+  const older = '2026-11-08T08:00:00.000Z';
+  const future = '2026-11-08T09:00:00.001Z';
+  for (const record of ['delivery', 'product', 'stock', 'second-product'] as const) {
+    const at = (kind: 'delivery' | 'product' | 'stock') => ({ ...evidence, observedAt: record === kind ? future : older });
+    const products = [{
+      sku: 'LAP-14-AIR', unitPriceMinor: 119900, availableUnits: 9,
+      productEvidence: at('product'), stockEvidence: at('stock'),
+    }];
+    if (record === 'second-product') products.push({
+      sku: 'MON-27-QHD', unitPriceMinor: 24500, availableUnits: 9,
+      productEvidence: { ...evidence, observedAt: future }, stockEvidence: { ...evidence, observedAt: older },
+    });
+    const { run } = fakeRunner({
+      'main store show': {
+        status: 0, stderr: '', stdout: JSON.stringify({
+          catalog: { supplierId: 'store-a', shippingMinor: 2500, delivery: { by: NOW, evidence: at('delivery') }, products },
+        }),
+      },
+    });
+    const state = await buildDashboardState(demoDirectory(t, session()), run, () => new Date(NOW));
+    assert.deepEqual(state.problems, [], record);
+    assert.equal(state.stores[0]?.oldestRecordAt, older, record);
+    assert.equal(state.stores[0]?.newestRecordAt, future, record);
+  }
 });
 
 test('a failed read shows its own short, inert message and the rest of the page still renders', async (t) => {
@@ -365,6 +504,7 @@ test('a failed read shows its own short, inert message and the rest of the page 
   });
   const state = await buildDashboardState(demoDirectory(t, session()), run);
   assert.equal(state.ledger, null);
+  assert.equal(state.ledgerStatus, 'unavailable');
   assert.equal(state.operations.length, 1, 'the operation still shows');
   assert.deepEqual(state.operations[0]?.events, []);
   const shopProblem = state.problems.find((line) => line.startsWith('Ledger (shop status)'));
@@ -388,7 +528,36 @@ test('a backend that is followed directly reads the revision the ledger confirms
   assert.equal(state.mandate?.revision, 1);
   assert.equal(state.mandate?.confirmationStatus, 'confirmed');
   assert.equal(state.mandate?.confirmedAt, NOW, 'direct backend mode gets the confirmation from mandate.get');
+  assert.equal(state.mandateStatus, 'read');
   assert.equal(state.operations[0]?.id, 'op-1');
+});
+
+test('a followed backend with an unconfirmed mandate calls its details unavailable, not unstored', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'splittap-dashboard-backend-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  writeFileSync(join(directory, 'config.json'), JSON.stringify({ catalogFiles: [] }));
+  const source: DashboardSource = {
+    kind: 'backend', root, databasePath: join(directory, 'app.db'), configPath: join(directory, 'config.json'),
+    mandateId: 'engineering-hires-demo', operationIds: [],
+  };
+  const { run, calls } = fakeRunner({
+    'shop status': { status: 1, stdout: '', stderr: 'shop: Mandate has no confirmed active revision\n' },
+  });
+  const state = await buildDashboardState(source, run);
+  assert.deepEqual(calls, ['shop status'], 'the revision is unknown, so no review can run');
+  assert.equal(state.mandate, null);
+  assert.equal(state.mandateStatus, 'revision-unknown');
+  assert.equal(state.ledgerStatus, 'unconfirmed');
+  assert.deepEqual(state.problems, []);
+
+  // Without a session awaiting storage, not-found is a failure like any other.
+  for (const failure of [MANDATE_NOT_FOUND, { status: 1, stdout: '', stderr: 'shop: The application database could not be validated\n' }]) {
+    const { run: failing } = fakeRunner({ 'shop status': failure });
+    const failed = await buildDashboardState(source, failing);
+    assert.equal(failed.mandateStatus, 'unavailable', failure.stderr);
+    assert.equal(failed.ledgerStatus, 'unavailable', failure.stderr);
+    assert.ok(failed.problems.some((problem) => problem.startsWith('Ledger (shop status)')), failure.stderr);
+  }
 });
 
 test('a missing operation cannot hide the confirmed mandate and ledger', async (t) => {
@@ -402,6 +571,7 @@ test('a missing operation cannot hide the confirmed mandate and ledger', async (
   assert.equal(state.mandate?.confirmationStatus, 'confirmed');
   assert.ok(state.ledger);
   assert.deepEqual(state.operations, []);
+  assert.deepEqual(state.requestedOperationIds, ['op-1'], 'a failed read does not erase the requested IDs');
   assert.ok(state.problems.some((problem) => problem.startsWith('Operation op-1')));
 });
 
