@@ -211,11 +211,13 @@ them.
 
 What the sandbox recorded:
 
-- **Nov 7:** the application path captured S$1,197.91 for one laptop (authorization
-  `0DY26454FF666080L`, capture `70023069VM754651G`, status `COMPLETED`).
-- **Nov 9:** Pranav ran the demo flow's PayPal option from a clean checkout of `main` on Windows. A
-  sandbox buyer approved, and PayPal captured S$7,510.10 for five laptops and five monitors
-  (authorization `11C077066A694603P`, capture `72K10179MD737102M`).
+- **Nov 7:** an earlier revision of the purchase path (PR #17, plus the `AUTHORIZE` fix below)
+  captured S$1,197.91 for one laptop (authorization `0DY26454FF666080L`, capture
+  `70023069VM754651G`, status `COMPLETED`).
+- **Nov 9:** Pranav ran the demo flow's PayPal option from a clean checkout of `main` (`17e917c`)
+  on Windows, with the scripted stand-in as the shopper. A sandbox buyer approved, and PayPal
+  captured S$7,510.10 for five laptops and five monitors (authorization `11C077066A694603P`,
+  capture `72K10179MD737102M`).
 - Both times, the ledger then showed the reservation consumed, the PayPal ids, and the supplier
   order as simulated.
 - **[UPDATE after recording: add the final take's operation id, `authorizationId` and `captureId`.]**
