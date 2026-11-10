@@ -89,8 +89,15 @@ unavailable, never as an unconfirmed mandate, and a future-dated store record st
 flagged even beside older evidence.
 Nothing in stage-one acceptance depends on it.
 
-Still deferred, each needing both people's agreement: any page that acts (mandate review and
-confirmation, approvals, exceptions, running or reconciling operations), progress and
+Both people agreed on Nov 10 to one local page that acts, `npm run app`
+(`apps/cli/src/app-server.ts`). It starts a `demo:flow` take and answers its prompts with three
+fixed actions (start, continue, stop) on 127.0.0.1, so it reuses the tested flow and backend
+commands; confirmation is still recorded by the backend for the OS user running it. It reads state
+through the dashboard's read commands and the take's own files. Nothing in stage-one acceptance
+depends on it.
+
+Still deferred, each needing both people's agreement: any other page action (mandate editing,
+approvals, exceptions, running or reconciling operations outside the demo flow), progress and
 readiness views beyond what the ledger records, and anything served beyond this machine. A
 page that acts must reuse the tested application core and persisted operations, and keep the
 same authority boundaries as the CLI.

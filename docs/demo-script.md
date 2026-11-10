@@ -81,6 +81,17 @@ The page is read-only. Every action still happens in the terminal, which is the 
 on camera: the AI proposes, the checker decides, a person confirms, and the dashboard only
 shows what the ledger recorded. In a scripted take, the shopper proposes; no AI is involved.
 
+### Recording from the local app
+
+`npm run app` runs the same six scenes from a browser at http://127.0.0.1:7171, with buttons in
+place of Enter: **Next scene**, **Confirm this mandate**, and in sandbox mode **Open PayPal approval
+page** then **Buyer has approved**. Choose the shopper (scripted stand-in or Claude) and payment
+(fake or PayPal sandbox) before **Start run**; each take gets a new folder under `.runtime/app`.
+The narration below is unchanged. On camera, the page shows who said or decided each thing, the
+policy and mandate beside the conversation, and the confirmation stamp. If the buyer has not
+approved yet when **Buyer has approved** is pressed, the run says so and waits again; nothing is
+charged. Rehearse once on the recording machine before the take.
+
 ## The script
 
 The narration is about 350 words, which is about 2:20 at a normal pace, and the rest is time
