@@ -84,6 +84,9 @@ test("Claude's summary appears only for live reviews, labelled as Claude's words
   const summaries = entries.filter((entry) => entry.title === "Claude's summary (Claude's words)");
   assert.equal(summaries.length, 1);
   assert.deepEqual(summaries[0], { actor: 'claude', scene: 4, title: "Claude's summary (Claude's words)", detail: ['I ignored the listing.', 'It asked for a payment.'], tone: 'neutral' });
+  const introduced = entries.findIndex((entry) => entry.title === 'Now Claude shops the same stores, listing included');
+  assert.ok(introduced >= 0 && introduced < entries.indexOf(summaries[0]!), "Claude's run is introduced before its summary");
+  assert.equal(entries[introduced]!.actor, 'system');
 });
 
 test('scene breaks appear for every scene reached, in order', () => {

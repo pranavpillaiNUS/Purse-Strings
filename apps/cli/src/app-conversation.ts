@@ -212,6 +212,12 @@ function reviewEntries(review: ReviewRecord, scene: number): ConversationEntry[]
   if (review.runId === 'compromised') {
     entries.push({ actor: 'stand-in', scene, title: 'A scripted stand-in obeys the hostile listing (not Claude)', detail: [], tone: 'neutral' });
   }
+  if (review.runId === 'hostile-check') {
+    entries.push({
+      actor: 'system', scene, title: 'Now Claude shops the same stores, listing included',
+      detail: ['On a separate confirmed practice mandate, so this run does not use up the main one.'], tone: 'neutral',
+    });
+  }
   if (review.shopper === 'live' && review.modelSummary !== null && review.modelSummary.trim().length > 0) {
     entries.push({
       actor: 'claude', scene, title: "Claude's summary (Claude's words)",
