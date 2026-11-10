@@ -81,6 +81,17 @@ The page is read-only. Every action still happens in the terminal, which is the 
 on camera: the AI proposes, the checker decides, a person confirms, and the dashboard only
 shows what the ledger recorded. In a scripted take, the shopper proposes; no AI is involved.
 
+### Recording from the local app
+
+`npm run app` runs the same six scenes from a browser at http://127.0.0.1:7171, with buttons in
+place of Enter: **Next scene**, **Confirm this mandate**, and in sandbox mode **Open PayPal approval
+page** then **Buyer has approved**. Choose the shopper (scripted stand-in or Claude) and payment
+(fake or PayPal sandbox) before **Start run**; each take gets a new folder under `.runtime/app`.
+The narration below is unchanged. On camera, the page shows who said or decided each thing, the
+policy and mandate beside the conversation, and the confirmation stamp. If the buyer has not
+approved yet when **Buyer has approved** is pressed, the run says so and waits again; nothing is
+charged. Rehearse once on the recording machine before the take.
+
 ## The script
 
 The narration is about 350 words, which is about 2:20 at a normal pace, and the rest is time
@@ -173,9 +184,10 @@ Scene 6 then plays as a two-person scene:
   signs in as the *personal* sandbox buyer on PayPal's hosted page and approves (like the
   spike's step 6).
 - Enter completes it: `operation-complete-authorization`, then the normal `operation-run`.
-  If the buyer pressed Enter without approving, the flow stops and prints the backend's
-  own message as-is, "The sandbox buyer has not approved this hold yet"; nothing executes.
-  Enter that closes without approval stops the flow, so nothing can confirm by itself.
+  If the buyer pressed Enter without approving, the flow prints the backend's own message
+  as-is, "The sandbox buyer has not approved this hold yet", and asks again; nothing
+  executes until PayPal records the approval. Input that closes stops the flow, so nothing
+  can confirm by itself.
 - Afterwards the screen shows `paymentProvider: paypal-sandbox` with the sandbox ids
   (`authorizationId`, `captureId`) a viewer can match in the sandbox's Activity page,
   next to the statement that the supplier order stayed simulated (fake).

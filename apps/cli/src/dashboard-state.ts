@@ -136,6 +136,10 @@ export const DemoSessionSchema = z.object({
   failure: z.string().max(2_000).nullable(),
   /** Absent in sessions written before the flow recorded it; those read as no problems listed. */
   unusable: z.array(z.string().max(500)).max(20).default([]),
+  /** Only while waiting for the sandbox buyer; absent in older sessions. */
+  approvalUrl: z.string().max(2048).regex(/^https:\/\//).nullable().default(null),
+  /** Counts the flow's recorded waits; the local app answers each one once. */
+  waitId: z.number().int().min(0).max(1_000_000).optional(),
 }).strict();
 
 export type DemoSession = z.infer<typeof DemoSessionSchema>;
@@ -281,6 +285,8 @@ export interface DashboardState {
     finished: boolean;
     failure: string | null;
     unusable: string[];
+    /** Always set by buildDashboardState; optional so older fixtures still type-check. */
+    approvalUrl?: string | null;
   };
   mandate: null | {
     id: string;
@@ -479,7 +485,7 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
     state.demo = {
       mode: value.mode, paymentProvider: value.paymentProvider, startedAt: value.startedAt, updatedAt: value.updatedAt,
       scenes: value.scenes, scene: value.scene, results: value.results, waiting: value.waiting, finished: value.finished, failure: value.failure,
-      unusable: value.unusable,
+      unusable: value.unusable, approvalUrl: value.approvalUrl,
     };
     // Session metadata selects what to inspect; it cannot establish or suppress
     // the backend's confirmation facts, even while a demo scene is catching up.
