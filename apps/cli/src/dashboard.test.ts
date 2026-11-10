@@ -297,6 +297,19 @@ test('a finished take carries its unusable reasons, and a session from before th
   }
 });
 
+test('the session approval link reaches the state only as an https link', async (t) => {
+  const link = 'https://www.sandbox.paypal.com/checkoutnow?token=T';
+  const shown = await buildDashboardState(demoDirectory(t, JSON.stringify({ ...session(), waiting: 'sandbox-buyer', approvalUrl: link })), fakeRunner().run);
+  assert.equal(shown.demo?.approvalUrl, link);
+  for (const bad of ['javascript:alert(1)', 'http://www.sandbox.paypal.com/x']) {
+    const state = await buildDashboardState(demoDirectory(t, JSON.stringify({ ...session(), approvalUrl: bad })), fakeRunner().run);
+    assert.match(state.problems.join(' '), /session file .* could not be read/);
+    assert.equal(state.demo, null);
+  }
+  const older = await buildDashboardState(demoDirectory(t, session()), fakeRunner().run);
+  assert.equal(older.demo?.approvalUrl, null);
+});
+
 test('a session path that cannot be read as a file is unavailable rather than a missing demo', async (t) => {
   const source = demoDirectory(t, null);
   assert.equal(source.kind, 'demo');

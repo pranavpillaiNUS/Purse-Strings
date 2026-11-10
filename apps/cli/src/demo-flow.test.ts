@@ -9,7 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createMandateDraft } from '../../../services/agent/src/mandate.ts';
 import { parseSavedReview } from '../../../services/agent/src/saved-review.ts';
 import {
-  awaitEnter, checkSummary, childEnvironment, closingStatement, DEFAULT_MODE_STATEMENT, DEMO_SESSION_FILE, demoBackendConfig, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor, MAX_REQUEST_CHARACTERS, readRequestFile,
+  awaitEnter, checkSummary, childEnvironment, closingStatement, DEFAULT_MODE_STATEMENT, DEMO_SESSION_FILE, demoBackendConfig, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor, MAX_REQUEST_CHARACTERS, readRequestFile, BUYER_NOT_APPROVED,
   revisionSummary, runSandboxPayment, sandboxCredentialRefusal, scriptedDraftCalls, SANDBOX_CREDENTIAL_PROBE_ID, STALE_HOURS,
   storeTable, summarizeTrace, wrapCommand, wrapLine, type DemoSession, type SandboxPaymentBackend, type StoreView,
 } from './demo-flow.ts';
@@ -561,31 +561,43 @@ test('(offline fake runner) the sandbox scene runs hold, buyer wait, completion,
   assert.match(screen, /never real money/);
 });
 
-test('(offline fake runner) an unapproved buyer prints the backend message as-is and nothing executes', async () => {
+test('(offline fake runner) an unapproved buyer is told so and asked again; nothing executes until completion succeeds', async () => {
   const order: string[] = [];
   const output: string[] = [];
-  const refused = {
-    ok: false as const,
-    stderr: 'backend: The sandbox buyer has not approved this hold yet',
-  };
-  let conclusion: unknown;
-  try {
-    await runSandboxPayment({
-      backend: fakeBackend(
-        async () => { order.push('authorize'); return { ok: true as const, data: { approvalUrl: 'https://www.sandbox.paypal.com/mock/approve' } }; },
-        async () => { order.push('complete'); return refused; },
-        async () => { order.push('execute'); return { ok: true as const, data: {} }; },
-      ),
-      operationId: 'op-demo-2',
-      waitForBuyer: () => { order.push('buyer'); },
-      print: (line) => output.push(line),
-    });
-  } catch (error) { conclusion = error; }
-  assert.ok(conclusion instanceof Error);
-  assert.ok((conclusion as Error).message.includes('The sandbox buyer has not approved this hold yet'),
-    (conclusion as Error).message);
+  let completes = 0;
+  const result = await runSandboxPayment({
+    backend: fakeBackend(
+      async () => { order.push('authorize'); return { ok: true as const, data: { approvalUrl: 'https://www.sandbox.paypal.com/mock/approve' } }; },
+      async () => {
+        order.push('complete');
+        completes += 1;
+        return completes === 1 ? { ok: false as const, stderr: `backend: ${BUYER_NOT_APPROVED}` } : { ok: true as const, data: { authorizationId: 'AUTH1' } };
+      },
+      async () => { order.push('execute'); return { ok: true as const, data: { paymentProvider: 'paypal-sandbox', operation: { status: 'ordered' }, providerIds: { captureId: 'CAP1' } } }; },
+    ),
+    operationId: 'op-demo-2',
+    waitForBuyer: (url) => { order.push(`buyer:${url}`); },
+    print: (line) => output.push(line),
+  });
+  assert.deepEqual(order, ['authorize', 'buyer:https://www.sandbox.paypal.com/mock/approve', 'complete',
+    'buyer:https://www.sandbox.paypal.com/mock/approve', 'complete', 'execute']);
+  assert.match(output.join('\n'), new RegExp(BUYER_NOT_APPROVED));
+  assert.equal(result.captureId, 'CAP1');
+});
+
+test('(offline fake runner) any other completion refusal still stops the flow', async () => {
+  const order: string[] = [];
+  await assert.rejects(runSandboxPayment({
+    backend: fakeBackend(
+      async () => { order.push('authorize'); return { ok: true as const, data: { approvalUrl: 'https://www.sandbox.paypal.com/mock/approve' } }; },
+      async () => { order.push('complete'); return { ok: false as const, stderr: 'backend: The order was voided' }; },
+      async () => { order.push('execute'); return { ok: true as const, data: {} }; },
+    ),
+    operationId: 'op-demo-3',
+    waitForBuyer: () => { order.push('buyer'); },
+    print: () => {},
+  }), /The order was voided/);
   assert.deepEqual(order, ['authorize', 'buyer', 'complete']);
-  assert.match(output.join('\n'), /The sandbox buyer has not approved this hold yet/);
 });
 
 test('(offline fake runner) the flow stops loudly when the operation does not end ordered', async () => {

@@ -284,6 +284,8 @@ export interface DemoSession {
   failure: string | null;
   /** Why a finished take is not usable (exit 2), as the terminal lists it. Empty for a usable take. */
   unusable: string[];
+  /** PayPal's approval link while the flow waits for the sandbox buyer; null otherwise. */
+  approvalUrl?: string | null;
 }
 
 export const DEMO_SESSION_FILE = 'session.json';
@@ -386,7 +388,7 @@ export interface SandboxPaymentInput {
   backend: SandboxPaymentBackend;
   operationId: string;
   /** Waits until the operator pressed Enter after the buyer approved on PayPal's hosted page. */
-  waitForBuyer: () => void | Promise<void>;
+  waitForBuyer: (approvalUrl: string) => void | Promise<void>;
   print: (line: string) => void;
 }
 
@@ -397,6 +399,9 @@ export interface SandboxPaymentResult {
   /** The one-line summary the Result section pushes. */
   summary: string;
 }
+
+/** The backend's message when completion runs before the buyer approved. The flow asks again. */
+export const BUYER_NOT_APPROVED = 'The sandbox buyer has not approved this hold yet';
 
 const stopText = (stderr: string): string => inert(stderr.trim()) || 'the command refused without a message';
 
@@ -419,13 +424,17 @@ export async function runSandboxPayment(input: SandboxPaymentInput): Promise<San
   print('');
   print('Approve the hold as the sandbox buyer in a browser (no real money), then return and press Enter:');
   print(approvalUrl);
-  await waitForBuyer();
-  const finished = await backend.complete(operationId);
-  if (!finished.ok) {
-    // The buyer may not have approved. The backend's closed message shows as-is.
+  let finished: SandboxCallResult;
+  for (;;) {
+    await waitForBuyer(approvalUrl);
+    finished = await backend.complete(operationId);
+    if (finished.ok) break;
+    // The backend's closed message shows as-is. Not approved yet: ask again;
+    // closed input still stops the flow inside waitForBuyer.
     print(stopText(finished.stderr));
     print('');
-    throw new DemoFailure(stopText(finished.stderr));
+    if (!finished.stderr.includes(BUYER_NOT_APPROVED)) throw new DemoFailure(stopText(finished.stderr));
+    print('Approve the hold on PayPal\'s page first, then press Enter again.');
   }
   const held = finished.data as { authorizationId?: unknown };
   const executed = await backend.execute(operationId);
@@ -913,10 +922,10 @@ async function main(): Promise<void> {
         },
         operationId: reservation.operationId,
         // The approval cannot be skipped, so this waits even without --pause.
-        waitForBuyer: () => {
-          record({ waiting: 'sandbox-buyer' });
+        waitForBuyer: (approvalUrl) => {
+          record({ waiting: 'sandbox-buyer', approvalUrl });
           waitForEnter('The sandbox buyer has approved the hold; press Enter to complete it');
-          record({ waiting: null });
+          record({ waiting: null, approvalUrl: null });
         },
         print: (line) => console.log(line),
       });
