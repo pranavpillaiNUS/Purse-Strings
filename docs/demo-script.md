@@ -184,9 +184,10 @@ Scene 6 then plays as a two-person scene:
   signs in as the *personal* sandbox buyer on PayPal's hosted page and approves (like the
   spike's step 6).
 - Enter completes it: `operation-complete-authorization`, then the normal `operation-run`.
-  If the buyer pressed Enter without approving, the flow stops and prints the backend's
-  own message as-is, "The sandbox buyer has not approved this hold yet"; nothing executes.
-  Enter that closes without approval stops the flow, so nothing can confirm by itself.
+  If the buyer pressed Enter without approving, the flow prints the backend's own message
+  as-is, "The sandbox buyer has not approved this hold yet", and asks again; nothing
+  executes until PayPal records the approval. Input that closes stops the flow, so nothing
+  can confirm by itself.
 - Afterwards the screen shows `paymentProvider: paypal-sandbox` with the sandbox ids
   (`authorizationId`, `captureId`) a viewer can match in the sandbox's Activity page,
   next to the statement that the supplier order stayed simulated (fake).

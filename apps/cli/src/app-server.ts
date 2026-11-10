@@ -245,7 +245,7 @@ async function main(): Promise<void> {
     throw error;
   }
   const { port: bound } = server.address() as AddressInfo;
-  console.log(`Splittap app: http://127.0.0.1:${bound}`);
+  console.log(`Purse Strings app: http://127.0.0.1:${bound}`);
   console.log(STARTUP_NOTE);
 }
 
