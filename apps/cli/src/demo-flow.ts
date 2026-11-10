@@ -90,7 +90,7 @@ export const SANDBOX_CREDENTIAL_PROBE_ID = 'demo-sandbox-credential-probe';
 const HELP = `Repeatable end-to-end demo (simulation; no real money, suppliers or orders; PayPal sandbox only with --sandbox-paypal)
 
 Usage:
-  npm run demo:flow -- [--live] [--pause] [--sandbox-paypal] [--dir PATH]
+  npm run demo:flow -- [--live] [--pause] [--sandbox-paypal] [--request-file FILE] [--dir PATH]
 
   --live    Claude drafts and shops, which spends API credit (about 57,000 tokens).
             Without it, a scripted stand-in plays Claude: no key or network.
@@ -102,6 +102,10 @@ Usage:
             reservation without them), the hold's approval link comes on screen, and a
             sandbox buyer must approve it in a browser before Enter continues. The
             supplier order stays simulated. Default off: no credentials, no network.
+  --request-file FILE
+            With --live only: the manager's own request (1 to 1,000 characters)
+            replaces the generated one. Other requests may be refused by policy or
+            end as an unusable take, because the later scenes are tuned to the demo.
   --dir     Working directory. Default .runtime/demo. Fake-only runs may reuse it;
             sandbox run state is preserved, so use a fresh directory for each run.
 
@@ -228,6 +232,25 @@ export function summarizeTrace(text: string): TraceSummary {
 }
 
 class DemoFailure extends Error {}
+
+/** The longest request a person may type, counted in characters, not bytes. */
+export const MAX_REQUEST_CHARACTERS = 1000;
+
+/** A typed request, trimmed. Refused before anything is created when it cannot be used. */
+export function readRequestFile(path: string): string {
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    throw new DemoFailure(`The request file could not be read: ${path}`);
+  }
+  const trimmed = text.trim();
+  if (trimmed.length === 0) throw new DemoFailure('The request file is empty, so there is nothing to draft');
+  if ([...trimmed].length > MAX_REQUEST_CHARACTERS) {
+    throw new DemoFailure(`The request is longer than ${MAX_REQUEST_CHARACTERS.toLocaleString('en-US')} characters; shorten it and start again`);
+  }
+  return trimmed;
+}
 
 /** The scenes in order. The session file names the one on screen, so the dashboard can follow. */
 export const DEMO_SCENES = [
@@ -622,6 +645,7 @@ async function main(): Promise<void> {
       pause: { type: 'boolean' },
       'sandbox-paypal': { type: 'boolean' },
       dir: { type: 'string' },
+      'request-file': { type: 'string' },
     },
   });
   if (values.help) {
@@ -630,6 +654,10 @@ async function main(): Promise<void> {
   }
 
   const live = values.live === true;
+  if (values['request-file'] !== undefined && !live) {
+    throw new DemoFailure('--request-file is only used with --live: the scripted stand-in always drafts the demo request');
+  }
+  const typedRequest = values['request-file'] === undefined ? null : readRequestFile(resolve(values['request-file']));
   const sandbox = values['sandbox-paypal'] === true;
   const directory = resolve(root, values.dir ?? '.runtime/demo');
   const local = (name: string): string => {
@@ -637,7 +665,8 @@ async function main(): Promise<void> {
     const fromRoot = relative(root, path);
     return fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot) ? path : fromRoot;
   };
-  const plan = demoPlan(new Date());
+  const generated = demoPlan(new Date());
+  const plan: DemoPlan = typedRequest === null ? generated : { ...generated, requestText: typedRequest };
   const startedAt = Date.now();
   const unusable: string[] = [];
   const results: string[] = [];

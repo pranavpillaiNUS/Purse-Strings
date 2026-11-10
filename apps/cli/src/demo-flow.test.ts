@@ -9,7 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createMandateDraft } from '../../../services/agent/src/mandate.ts';
 import { parseSavedReview } from '../../../services/agent/src/saved-review.ts';
 import {
-  awaitEnter, checkSummary, childEnvironment, closingStatement, DEFAULT_MODE_STATEMENT, DEMO_SESSION_FILE, demoBackendConfig, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor,
+  awaitEnter, checkSummary, childEnvironment, closingStatement, DEFAULT_MODE_STATEMENT, DEMO_SESSION_FILE, demoBackendConfig, demoPlan, dropEchoedRequest, EXECUTION_PROVIDER, formatMinor, MAX_REQUEST_CHARACTERS, readRequestFile,
   revisionSummary, runSandboxPayment, sandboxCredentialRefusal, scriptedDraftCalls, SANDBOX_CREDENTIAL_PROBE_ID, STALE_HOURS,
   storeTable, summarizeTrace, wrapCommand, wrapLine, type DemoSession, type SandboxPaymentBackend, type StoreView,
 } from './demo-flow.ts';
@@ -786,4 +786,44 @@ test('the sandbox scene never describes a fake or unlabelled execution as a sand
     }), /did not report paypal-sandbox/);
     assert.doesNotMatch(output.join('\n'), /real PayPal SANDBOX capture/);
   }
+});
+
+test('a request file gives its trimmed text, and refuses empty, oversized or missing files', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'splittap-request-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = (name: string, text: string): string => { const path = join(dir, name); writeFileSync(path, text); return path; };
+  assert.equal(readRequestFile(file('ok.txt', '  Equip three designers.\r\n')), 'Equip three designers.');
+  assert.throws(() => readRequestFile(file('empty.txt', ' \n ')), /empty/);
+  assert.throws(() => readRequestFile(file('long.txt', 'x'.repeat(MAX_REQUEST_CHARACTERS + 1))), /1,000 characters/);
+  assert.equal([...readRequestFile(file('max.txt', 'é'.repeat(MAX_REQUEST_CHARACTERS)))].length, MAX_REQUEST_CHARACTERS);
+  assert.throws(() => readRequestFile(join(dir, 'missing.txt')), /could not be read/);
+});
+
+test('--request-file without --live stops before anything is created', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'splittap-request-scripted-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const request = join(dir, 'request.txt');
+  writeFileSync(request, 'Equip two analysts.');
+  const work = join(dir, 'work');
+  const result = spawnSync(process.execPath, [entry, '--request-file', request, '--dir', work], { cwd: root, encoding: 'utf8', input: '' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /only used with --live/);
+  assert.equal(existsSync(work), false);
+});
+
+test('a live take writes the request file text to request.txt', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'splittap-request-live-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const preload = join(dir, 'stub.mjs');
+  writeFileSync(preload, PAYMENT_STUB_PRELOAD);
+  const recovery = read('services/agent/fixtures/recovery-shopping-calls.json') as Array<{ tool: string }>;
+  const scripts = { 'hostile-check': join(dir, 'hostile-check.json'), recovery: join(root, 'services/agent/fixtures/recovery-shopping-calls.json') };
+  writeFileSync(scripts['hostile-check'], JSON.stringify(recovery.slice(0, 1)));
+  const request = join(dir, 'typed.txt');
+  writeFileSync(request, '  Equip five engineering hires with approved laptops and monitors within S$8,000.  \n');
+  const env: NodeJS.ProcessEnv = { ...process.env, SPLITTAP_TEST_FLOW_STUB: JSON.stringify({ probeId: SANDBOX_CREDENTIAL_PROBE_ID, paymentLog: join(dir, 'payments.log'), scripts }) };
+  delete env.ANTHROPIC_API_KEY;
+  const work = join(dir, 'take');
+  spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, entry, '--live', '--request-file', request, '--dir', work], { cwd: root, encoding: 'utf8', env, input: '' });
+  assert.equal(readFileSync(join(work, 'request.txt'), 'utf8').trim(), 'Equip five engineering hires with approved laptops and monitors within S$8,000.');
 });
