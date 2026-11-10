@@ -44,6 +44,8 @@ function render(state: AppState): Node {
   const root = new Node('main');
   const sandbox: Record<string, unknown> = {
     document: { createElement: (tag: string) => new Node(tag), createTextNode: (text: string) => new Node(null, text) },
+    // Browsers have the WHATWG URL parser, and Node's is the same standard.
+    URL,
   };
   runInNewContext(assets.script, sandbox, { filename: 'app/app.js', timeout: 1000 });
   const renderApp = (sandbox as { renderApp?: (state: AppState, files: unknown, root: Node) => void }).renderApp;
@@ -79,6 +81,16 @@ const buttons = (root: Node): string[] => all(root, (node) => node.tagName === '
 const text = (root: Node): string => root.textContent;
 const running = (awaiting: 'next-scene' | 'operator-confirm' | 'sandbox-buyer' | null) => ({ ...state().take!, awaiting });
 
+test('the wait after scene 6 is labelled as the result, not a next scene', () => {
+  const last = render(state({ take: running('next-scene'), dashboard: dashboard({ scene: DEMO_SCENES.length, waiting: 'next-scene' }) }));
+  assert.ok(buttons(last).includes('Show the result'));
+  assert.ok(!buttons(last).includes('Next scene'));
+  assert.match(text(last), /Waiting for you: the result/);
+  const earlier = render(state({ take: running('next-scene'), dashboard: dashboard({ scene: DEMO_SCENES.length - 1, waiting: 'next-scene' }) }));
+  assert.ok(buttons(earlier).includes('Next scene'));
+  assert.ok(!buttons(earlier).includes('Show the result'));
+});
+
 test('the action button names exactly the awaited step', () => {
   assert.ok(buttons(render(state({ take: running('next-scene') }))).includes('Next scene'));
   assert.ok(buttons(render(state({ take: running('operator-confirm') }))).includes('Confirm this mandate'));
@@ -88,8 +100,12 @@ test('the action button names exactly the awaited step', () => {
   assert.equal(link.getAttribute('href'), 'https://www.sandbox.paypal.com/checkoutnow?token=T');
   assert.equal(link.getAttribute('target'), '_blank');
   assert.equal(link.getAttribute('rel'), 'noopener noreferrer');
-  const unsafe = render(state({ take: running('sandbox-buyer'), approvalUrl: 'javascript:alert(1)' }));
-  assert.equal(all(unsafe, (node) => node.tagName === 'a' && node.textContent === 'Open PayPal approval page').length, 0);
+  // Only the gateway's sandbox consent hosts: the buyer signs in to PayPal on this page.
+  for (const approvalUrl of ['javascript:alert(1)', 'https://evil.example/checkoutnow', 'https://www.paypal.com/checkoutnow?token=T',
+    'https://sandbox.paypal.com.evil.example/x', 'http://www.sandbox.paypal.com/checkoutnow']) {
+    const unsafe = render(state({ take: running('sandbox-buyer'), approvalUrl }));
+    assert.equal(all(unsafe, (node) => node.tagName === 'a' && node.textContent === 'Open PayPal approval page').length, 0, approvalUrl);
+  }
   const idle = buttons(render(state({ take: running(null) })));
   for (const label of ['Next scene', 'Confirm this mandate', 'Buyer has approved', 'Stop run']) assert.ok(!idle.includes(label), label);
 });

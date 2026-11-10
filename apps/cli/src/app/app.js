@@ -53,8 +53,14 @@ function when(iso) {
   return date.toLocaleString('en-SG', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
+/** The buyer signs in to PayPal here, so only the gateway's own sandbox consent hosts are linked. */
 function safeLink(url) {
-  return typeof url === 'string' && url.startsWith('https://') && url.length <= 2048 ? url : null;
+  if (typeof url !== 'string' || url.length > 2048) return null;
+  let parsed;
+  try { parsed = new URL(url); } catch { return null; }
+  const host = parsed.hostname;
+  const sandbox = host === 'www.sandbox.paypal.com' || host.endsWith('.sandbox.paypal.com');
+  return parsed.protocol === 'https:' && sandbox ? url : null;
 }
 
 function shopperOf(state) {
@@ -92,14 +98,20 @@ function runStatus(state) {
     if (demo && demo.failure) return { text: 'Stopped by a failure', tone: 'refused' };
     return { text: 'Stopped', tone: 'refused' };
   }
-  if (take.awaiting) return { text: STEP_STATUS[take.awaiting], tone: 'waiting' };
+  if (take.awaiting) return { text: atResult(state) ? 'Waiting for you: the result' : STEP_STATUS[take.awaiting], tone: 'waiting' };
   return { text: 'Running', tone: '' };
+}
+
+/** The flow's last wait comes after scene 6, before its result, so "next scene" would mislead. */
+function atResult(state) {
+  const demo = state.dashboard && state.dashboard.demo;
+  return state.take.awaiting === 'next-scene' && Boolean(demo) && demo.scene >= demo.scenes.length;
 }
 
 function statusLine(state) {
   const status = runStatus(state);
   return el('header', { className: 'status' }, [
-    el('span', { className: 'brand', text: 'Splittap' }),
+    el('span', { className: 'brand', text: 'Purse Strings' }),
     el('span', { className: 'fact' }, [document.createTextNode('Shopper: '), el('strong', { text: shopperOf(state) })]),
     el('span', { className: 'fact' }, [document.createTextNode('Payment: '), el('strong', { text: paymentOf(state) })]),
     el('span', { className: `pill ${status.tone}`, text: status.text }),
@@ -278,7 +290,7 @@ function actionArea(state) {
     const row = el('div', { className: 'buttons' });
     const link = take.awaiting === 'sandbox-buyer' ? safeLink(state.approvalUrl) : null;
     if (link) row.appendChild(el('a', { className: 'button-link', text: 'Open PayPal approval page', attrs: { href: link, target: '_blank', rel: 'noopener noreferrer' } }));
-    row.appendChild(button(STEP_BUTTON[take.awaiting], () => actions.continue(take.awaiting)));
+    row.appendChild(button(atResult(state) ? 'Show the result' : STEP_BUTTON[take.awaiting], () => actions.continue(take.awaiting)));
     row.appendChild(button('Stop run', () => actions.stop(), true));
     parts.push(row);
     if (ui.error) parts.push(el('p', { className: 'error', text: ui.error }));
