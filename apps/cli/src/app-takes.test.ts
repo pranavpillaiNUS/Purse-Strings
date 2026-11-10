@@ -163,6 +163,19 @@ test('an exited child refuses continue and stop', (t) => {
   assert.deepEqual(takes.start(claude), { ok: true }, 'an ended take does not block the next one');
 });
 
+test('a flow process that cannot start ends the take and says why, instead of crashing the app', async (t) => {
+  const runtime = mkdtempSync(join(tmpdir(), 'splittap-app-spawn-'));
+  t.after(() => rmSync(runtime, { recursive: true, force: true }));
+  // The real spawner, from a working folder that does not exist: 'error', perhaps no 'exit'.
+  const takes = createTakeManager({ root: join(runtime, 'missing-root'), runtimeDirectory: join(runtime, 'app') });
+  assert.deepEqual(takes.start({ request: 'Equip five engineering hires.', shopper: 'scripted', payment: 'fake' }), { ok: true });
+  for (let i = 0; i < 100 && takes.current()?.status === 'running'; i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(takes.current()?.status, 'ended');
+  assert.equal(takes.current()?.exitCode, null);
+  assert.match(takes.terminal().join('\n'), /the demo flow process failed/);
+  assert.deepEqual(takes.continue('next-scene'), { ok: false, status: 409, message: 'No run is going.' });
+});
+
 test('terminal keeps the last 400 lines with ANSI escapes removed', (t) => {
   const { takes, children } = setup(t);
   takes.start(claude);

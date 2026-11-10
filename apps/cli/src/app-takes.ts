@@ -85,17 +85,36 @@ export function flowArguments(input: RunInput, takeDirectory: string): string[] 
 
 const refuse = (message: string): Outcome => ({ ok: false, status: 409, message });
 
-function defaultSpawn(args: readonly string[], cwd: string): FlowChild {
+export function defaultSpawn(args: readonly string[], cwd: string): FlowChild {
   const child = spawnProcess(process.execPath, [...args], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
   // A flow that already exited closes its input; a late write must not crash the server.
   child.stdin.on('error', () => {});
+  const output: Array<(text: string) => void> = [];
+  const exits: Array<(code: number | null) => void> = [];
+  let ended: { code: number | null } | null = null;
+  const end = (code: number | null): void => {
+    if (ended !== null) return;
+    ended = { code };
+    for (const listener of exits) listener(code);
+  };
+  child.on('exit', (code) => end(code));
+  // A flow that cannot start emits 'error', and may never emit 'exit'. Unhandled, that
+  // would end the whole app and leave the take running forever, so it ends the take.
+  child.on('error', (error) => {
+    for (const listener of output) listener(`app: the demo flow process failed: ${error.message}\n`);
+    end(null);
+  });
   return {
     stdin: { write: (text) => child.stdin.write(text), end: () => child.stdin.end() },
     onOutput: (listener) => {
+      output.push(listener);
       child.stdout.setEncoding('utf8').on('data', listener);
       child.stderr.setEncoding('utf8').on('data', listener);
     },
-    onExit: (listener) => { child.on('exit', (code) => listener(code)); },
+    onExit: (listener) => {
+      exits.push(listener);
+      if (ended !== null) listener(ended.code);
+    },
     kill: () => { child.kill(); },
   };
 }
