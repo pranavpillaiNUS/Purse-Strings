@@ -900,45 +900,45 @@
     "semantic_hash": ""
   },
   "apps/cli/src/app-e2e.test.ts": {
-    "mtime": 1794309927.484835,
-    "seen": 1794348765.3255813,
-    "ast_hash": "8452681d987607a6da2b03af3371673a",
+    "mtime": 1794400412.0916793,
+    "seen": 1794401091.8945613,
+    "ast_hash": "c96f06f5b36181cf0808a28b8c4791ec",
     "semantic_hash": ""
   },
   "apps/cli/src/app-page.test.ts": {
-    "mtime": 1794348881.8204963,
-    "seen": 1794349241.4301617,
-    "ast_hash": "4e22cf9c0b80da33f76b0dcaf0feed86",
+    "mtime": 1794400440.8002102,
+    "seen": 1794401091.8945613,
+    "ast_hash": "deb0505fd63f659fb1d81e862c1dfd62",
     "semantic_hash": ""
   },
   "apps/cli/src/app-server.test.ts": {
-    "mtime": 1794309927.484835,
-    "seen": 1794348765.3255813,
-    "ast_hash": "03f20b1c4cf84b0f72e504359535192c",
+    "mtime": 1794400633.058591,
+    "seen": 1794401091.8945613,
+    "ast_hash": "458918094f5e418a6225a75dc1bd25a5",
     "semantic_hash": ""
   },
   "apps/cli/src/app-server.ts": {
-    "mtime": 1794309927.484835,
-    "seen": 1794348765.3255813,
-    "ast_hash": "4dda6cdf4498b94e36925d9093e59866",
+    "mtime": 1794400386.286637,
+    "seen": 1794401091.8945613,
+    "ast_hash": "20d60a7badf3674b66b02e3e80d99cdc",
     "semantic_hash": ""
   },
   "apps/cli/src/app-takes.test.ts": {
-    "mtime": 1794309927.484835,
-    "seen": 1794348765.3255813,
-    "ast_hash": "204d37d282c8d5c102cc9a10236a406a",
+    "mtime": 1794400627.6263225,
+    "seen": 1794401091.8945613,
+    "ast_hash": "c6706587b06c762163577c8b22e05d17",
     "semantic_hash": ""
   },
   "apps/cli/src/app-takes.ts": {
-    "mtime": 1794309927.484835,
-    "seen": 1794348765.3255813,
-    "ast_hash": "371a975a18f819046a0ac14da799e79e",
+    "mtime": 1794400653.7585943,
+    "seen": 1794401091.8945613,
+    "ast_hash": "373afd92b6b3f49151de08b94c879d18",
     "semantic_hash": ""
   },
   "apps/cli/src/app/app.js": {
-    "mtime": 1794348989.2068465,
-    "seen": 1794349241.4301617,
-    "ast_hash": "d98fff2f33028ae2af0dda78538d47f8",
+    "mtime": 1794400386.286637,
+    "seen": 1794401091.8945613,
+    "ast_hash": "b76235364c241229506080ade1b1947f",
     "semantic_hash": ""
   },
   "apps/cli/src/app/index.html": {
@@ -960,9 +960,9 @@
     "semantic_hash": ""
   },
   "apps/cli/src/app-client.test.ts": {
-    "mtime": 1794348668.0034251,
-    "seen": 1794348765.3255813,
-    "ast_hash": "dfbb1db4753765f1cd2a48620caee5f0",
+    "mtime": 1794400440.8002102,
+    "seen": 1794401091.8945613,
+    "ast_hash": "01c91bc3645eb1b14750c765ce02353b",
     "semantic_hash": ""
   },
   "package-lock.json": {
