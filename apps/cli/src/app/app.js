@@ -296,6 +296,10 @@ function actionArea(state) {
   const demo = state.dashboard && state.dashboard.demo;
   if (take.status === 'running') {
     if (!take.awaiting) return el('div', { className: 'action' }, [el('p', { text: 'Working. The next step appears here when the run needs you.' })]);
+    if (!Number.isSafeInteger(take.waitId) || take.waitId < 0) {
+      return el('div', { className: 'action' }, [el('p', { text: 'The current prompt could not be read. Waiting for a fresh state.' })]);
+    }
+    const binding = { takeDirectory: take.directory, waitId: take.waitId };
     const parts = [];
     if (take.awaiting === 'sandbox-buyer') {
       parts.push(el('p', { text: 'The sandbox buyer approves the hold on PayPal\'s own page. Press the button only after they approve; if you press early, the run tells you and asks again.' }));
@@ -305,8 +309,8 @@ function actionArea(state) {
     const row = el('div', { className: 'buttons' });
     const link = take.awaiting === 'sandbox-buyer' ? safeLink(state.approvalUrl) : null;
     if (link) row.appendChild(el('a', { className: 'button-link', text: 'Open PayPal approval page', attrs: { href: link, target: '_blank', rel: 'noopener noreferrer', 'data-focus-key': 'paypal-approval' } }));
-    row.appendChild(button(atResult(state) ? 'Show the result' : STEP_BUTTON[take.awaiting], () => actions.continue(take.awaiting), false, true));
-    row.appendChild(button('Stop run', () => actions.stop(), true, true));
+    row.appendChild(button(atResult(state) ? 'Show the result' : STEP_BUTTON[take.awaiting], () => actions.continue({ ...binding, step: take.awaiting }), false, true));
+    row.appendChild(button('Stop run', () => actions.stop(binding), true, true));
     parts.push(row);
     if (ui.error) parts.push(el('p', { className: 'error', text: ui.error }));
     return el('div', { className: 'action' }, parts);
@@ -478,8 +482,8 @@ if (typeof window !== 'undefined' && typeof fetch === 'function') {
   };
 
   actions.start = async (input) => { if (await post('/api/run', input)) ui.showForm = false; };
-  actions.continue = (step) => post('/api/continue', { step });
-  actions.stop = () => post('/api/stop', {});
+  actions.continue = (input) => post('/api/continue', input);
+  actions.stop = (input) => post('/api/stop', input);
   actions.newRun = () => { ui.showForm = true; ui.error = ''; draw(); };
   actions.rerender = draw;
 

@@ -5,9 +5,8 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { z } from 'zod';
 import { buildConversation, readTakeRecords, type ConversationEntry } from './app-conversation.ts';
-import { createTakeManager, InputError, parseContinueInput, parseRunInput, type Outcome, type TakeInfo, type TakeManager } from './app-takes.ts';
+import { createTakeManager, InputError, parseContinueInput, parseRunInput, parseStopInput, type Outcome, type TakeInfo, type TakeManager } from './app-takes.ts';
 import { SECURITY_HEADERS } from './dashboard.ts';
 import { createDashboardReader, createProcessRunner, type CommandRunner, type DashboardReader, type DashboardState } from './dashboard-state.ts';
 import { demoPlan } from './demo-flow.ts';
@@ -75,7 +74,6 @@ export function createAppStateReader(options: { root: string; takes: TakeManager
   };
 }
 
-const StopInputSchema = z.object({}).strict();
 const POST_PATHS = new Set(['/api/run', '/api/continue', '/api/stop']);
 
 function sameToken(given: string | string[] | undefined, expected: string): boolean {
@@ -165,11 +163,8 @@ export function createAppServer(options: {
       readBody(request).then((body) => {
         let outcome: Outcome;
         if (path === '/api/run') outcome = options.takes.start(parseRunInput(body));
-        else if (path === '/api/continue') outcome = options.takes.continue(parseContinueInput(body).step);
-        else {
-          if (!StopInputSchema.safeParse(body).success) throw new InputError('The stop request could not be read.');
-          outcome = options.takes.stop();
-        }
+        else if (path === '/api/continue') outcome = options.takes.continue(parseContinueInput(body));
+        else outcome = options.takes.stop(parseStopInput(body));
         if (outcome.ok) json(200, { ok: true });
         else json(outcome.status, { error: outcome.message });
       }).catch((error: unknown) => {

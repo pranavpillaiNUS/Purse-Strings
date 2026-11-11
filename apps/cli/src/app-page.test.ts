@@ -72,14 +72,14 @@ function dashboard(change: Partial<NonNullable<DashboardState['demo']>> = {}, op
 function state(change: Partial<AppState> = {}): AppState {
   return {
     take: { directory: '/x/take', startedAt: '2026-11-10T01:00:00.000Z', input: { request: 'Equip two analysts.', shopper: 'claude', payment: 'paypal-sandbox' },
-      status: 'running', exitCode: null, awaiting: null },
+      status: 'running', exitCode: null, awaiting: null, waitId: null },
     dashboard: dashboard(), conversation: [], terminal: [], approvalUrl: null, demoRequest: 'Equip five engineering hires.', ...change,
   };
 }
 
 const buttons = (root: Node): string[] => all(root, (node) => node.tagName === 'button').map((node) => node.textContent);
 const text = (root: Node): string => root.textContent;
-const running = (awaiting: 'next-scene' | 'operator-confirm' | 'sandbox-buyer' | null) => ({ ...state().take!, awaiting });
+const running = (awaiting: 'next-scene' | 'operator-confirm' | 'sandbox-buyer' | null) => ({ ...state().take!, awaiting, waitId: awaiting === null ? null : 3 });
 
 test('the wait after scene 6 is labelled as the result, not a next scene', () => {
   const last = render(state({ take: running('next-scene'), dashboard: dashboard({ scene: DEMO_SCENES.length, waiting: 'next-scene' }) }));
@@ -118,6 +118,13 @@ test('the status line says who shops and how payment runs', () => {
   const scripted = text(render(state({ take: { ...running(null), input: { request: 'r', shopper: 'scripted', payment: 'fake' } }, dashboard: dashboard({ mode: 'scripted', paymentProvider: 'fake' }) })));
   assert.match(scripted, /Shopper: scripted stand-in/);
   assert.match(scripted, /Payment: fake/);
+});
+
+test('an unreadable prompt identity offers no Continue or Stop action', () => {
+  const root = render(state({ take: { ...running('operator-confirm'), waitId: null } }));
+  assert.match(text(root), /The current prompt could not be read/);
+  assert.ok(!buttons(root).includes('Confirm this mandate'));
+  assert.ok(!buttons(root).includes('Stop run'));
 });
 
 test('hostile text renders as text', () => {

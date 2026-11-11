@@ -76,7 +76,7 @@ function state(takeStatus: 'idle' | 'working' | 'waiting' | 'ended' = 'idle'): A
   if (takeStatus === 'idle') return { take: null, dashboard: null, conversation: [], terminal: [], approvalUrl: null, demoRequest: 'Equip five engineering hires.' };
   return {
     take: { directory: '/test/take', startedAt: '2026-11-11T01:00:00.000Z', input: { request: 'Equip five engineering hires.', shopper: 'scripted', payment: 'fake' },
-      status: takeStatus === 'ended' ? 'ended' : 'running', exitCode: takeStatus === 'ended' ? 1 : null, awaiting: takeStatus === 'waiting' ? 'next-scene' : null },
+      status: takeStatus === 'ended' ? 'ended' : 'running', exitCode: takeStatus === 'ended' ? 1 : null, awaiting: takeStatus === 'waiting' ? 'next-scene' : null, waitId: takeStatus === 'waiting' ? 1 : null },
     dashboard: {
       version: 1, generatedAt: '2026-11-11T01:00:00.000Z', source: { kind: 'demo', label: '<test>' },
       demo: { mode: 'scripted', paymentProvider: 'fake', startedAt: '2026-11-11T01:00:00.000Z', updatedAt: '2026-11-11T01:00:00.000Z', scenes: [...DEMO_SCENES], scene: 1,
@@ -92,15 +92,15 @@ function client(initial: AppState | Promise<AppState> = state()) {
   const document = new ClientDocument();
   const states: Array<AppState | Error | Promise<AppState>> = [initial];
   const posts: Array<PostReply | Promise<PostReply>> = [];
-  const requests: Array<{ path: string; method: string }> = [];
+  const requests: Array<{ path: string; method: string; body?: unknown }> = [];
   let lastState = state();
   let interval: (() => void) | undefined;
   runInNewContext(loadAppAssets().script, {
     window: {}, document, URL,
     setInterval: (callback: () => void) => { interval = callback; return 1; },
-    fetch: async (path: string, options?: { method?: string }) => {
+    fetch: async (path: string, options?: { method?: string; body?: string }) => {
       const method = options?.method ?? 'GET';
-      requests.push({ path, method });
+      requests.push({ path, method, ...(options?.body === undefined ? {} : { body: JSON.parse(options.body) as unknown }) });
       if (path === '/api/files') return reply({ policy: null });
       if (path === '/api/state') {
         const next = states.shift() ?? lastState;
@@ -266,4 +266,38 @@ test('Terminal stays open when new state and output arrive', async () => {
   const updated = page.node((node) => node.tagName === 'details');
   assert.equal(updated.open, true);
   assert.match(updated.textContent, /Another synthetic line/);
+});
+
+test('a confirmation click keeps the take and prompt that its button displayed', async () => {
+  const displayed = state('waiting');
+  displayed.take!.directory = '/test/take-a';
+  displayed.take!.awaiting = 'operator-confirm';
+  displayed.take!.waitId = 3;
+  const page = client(displayed);
+  await flush();
+  const oldButton = page.button('Confirm this mandate');
+  const nextTake = structuredClone(displayed);
+  nextTake.take!.directory = '/test/take-b';
+  await page.poll(nextTake);
+  // A queued click must not silently acquire the newly displayed take's authority.
+  oldButton.dispatch('click');
+  await flush();
+  assert.deepEqual(page.requests.find((request) => request.path === '/api/continue')?.body, {
+    takeDirectory: '/test/take-a', waitId: 3, step: 'operator-confirm',
+  });
+});
+
+test('a stop click keeps the recorded wait shown before the next prompt arrived', async () => {
+  const displayed = state('waiting');
+  const page = client(displayed);
+  await flush();
+  const oldButton = page.button('Stop run');
+  const nextWait = structuredClone(displayed);
+  nextWait.take!.waitId = 2;
+  await page.poll(nextWait);
+  oldButton.dispatch('click');
+  await flush();
+  assert.deepEqual(page.requests.find((request) => request.path === '/api/stop')?.body, {
+    takeDirectory: '/test/take', waitId: 1,
+  });
 });
