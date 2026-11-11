@@ -8,6 +8,7 @@ const ui = {
   showForm: false,
   error: '',
   connectionError: '',
+  policyError: '',
   busy: false,
   stampedDigest: null,
   terminalOpen: false,
@@ -136,9 +137,11 @@ function rows(pairs) {
   return list;
 }
 
-function policySheet(policy) {
-  if (!policy || typeof policy !== 'object') return el('section', { className: 'sheet' }, [el('p', { className: 'note', text: 'The policy file could not be read.' })]);
-  const sheet = el('section', { className: 'sheet' }, [el('h3', { text: `Company policy, version ${policy.version}` })]);
+function policySheet(policy, context) {
+  if (!policy || typeof policy !== 'object') return el('section', { className: 'sheet' }, [
+    el('h3', { text: context.title }), el('p', { className: 'note', text: context.missing }),
+  ]);
+  const sheet = el('section', { className: 'sheet' }, [el('h3', { text: `${context.title}, version ${policy.version}` }), el('p', { className: 'note', text: context.note })]);
   sheet.appendChild(rows([
     ['Budget cap', money(policy.maxBudgetMinor)],
     ['Suppliers', Array.isArray(policy.allowedSuppliers) ? policy.allowedSuppliers.join(', ') : 'unknown'],
@@ -210,16 +213,29 @@ function storesSheet(state) {
 }
 
 function filesPanel(state, files) {
-  return el('aside', { className: 'panel files', attrs: { 'aria-label': 'Company files' } }, [
-    el('h2', { text: 'Company files' }),
-    policySheet(files && files.policy),
-    mandateSheet(state),
-    storesSheet(state),
-  ]);
+  const previous = Boolean(state.take && showingForm(state));
+  const dashboard = state.dashboard;
+  const stored = dashboard && (dashboard.mandate || dashboard.mandateStatus !== 'not-stored');
+  const parts = [el('h2', { text: 'Company files' })];
+  if (!stored || previous) parts.push(policySheet(files && files.policy, {
+    title: 'Company policy file',
+    note: 'For preparing a request. Stored mandates retain their own policy snapshot.',
+    missing: ui.policyError || 'Loading the company policy file…',
+  }));
+  if (previous) parts.push(el('h2', { text: 'Previous run company files' }));
+  if (stored) parts.push(policySheet(dashboard.policy, {
+    title: previous ? 'Previous run policy snapshot' : 'Mandate policy snapshot',
+    note: 'Read from the backend record for this exact mandate revision.',
+    missing: 'The policy snapshot for this mandate is unavailable.',
+  }));
+  parts.push(mandateSheet(state), storesSheet(state));
+  return el('aside', { className: 'panel files', attrs: { 'aria-label': 'Company files' } }, parts);
 }
 
 function ledgerPanel(state) {
-  const panel = el('aside', { className: 'panel ledger', attrs: { 'aria-label': 'Budget and operations' } }, [el('h2', { text: 'Budget' })]);
+  const previous = Boolean(state.take && showingForm(state));
+  const panel = el('aside', { className: 'panel ledger', attrs: { 'aria-label': 'Budget and operations' } }, [el('h2', { text: previous ? 'Previous run budget' : 'Budget' })]);
+  if (previous) panel.appendChild(el('p', { className: 'note', text: 'These figures and operations belong to the previous run.' }));
   const dashboard = state.dashboard;
   const ledger = dashboard && dashboard.ledger;
   const budget = el('section', { className: 'sheet' });
@@ -245,16 +261,18 @@ function ledgerPanel(state) {
     const sheet = el('section', { className: 'sheet' }, [el('h3', { text: 'Operations' })]);
     for (const operation of operations) {
       const ids = operation.providerIds || {};
+      const provider = operation.paymentProvider === 'paypal-sandbox' ? 'PayPal sandbox' : operation.paymentProvider === 'fake' ? 'fake' : 'provider unknown';
       const pairs = [
         ['Supplier', operation.supplierId],
         ['Amount', money(operation.totalMinor)],
         ['Status', operation.status],
-        ['Payment', `${operation.paymentProvider === 'paypal-sandbox' ? 'PayPal sandbox' : operation.paymentProvider === 'fake' ? 'fake' : 'provider unknown'}, ${operation.paymentStatus}`],
+        ['Payment', `${provider}, ${operation.paymentStatus}`],
         ['Supplier order', `simulated, ${operation.orderStatus}`],
+        ['Refund', `${provider}, ${operation.refundStatus}`],
         ['Readiness', 'not assessed'],
       ];
       const block = el('div', { className: 'op' }, [el('p', { className: 'mono', text: operation.id }), rows(pairs)]);
-      for (const [label, value] of [['PayPal order', ids.orderId], ['Authorization', ids.authorizationId], ['Capture', ids.captureId]]) {
+      for (const [label, value] of [['PayPal order', ids.orderId], ['Authorization', ids.authorizationId], ['Capture', ids.captureId], ['Refund', ids.refundId]]) {
         if (value) block.appendChild(el('p', { className: 'note' }, [document.createTextNode(`${label} `), el('span', { className: 'mono', text: value })]));
       }
       sheet.appendChild(block);
@@ -391,6 +409,7 @@ function conversationPanel(state) {
   const panel = el('section', { className: 'conversation', attrs: { 'aria-label': 'Conversation' } });
   if (showingForm(state)) {
     panel.appendChild(introduction());
+    if (state.take) panel.appendChild(el('p', { className: 'note', text: 'These records belong to the previous run; they do not confirm or fund this request.' }));
     panel.appendChild(requestForm(state));
     return panel;
   }
@@ -447,6 +466,7 @@ if (typeof window !== 'undefined' && typeof fetch === 'function') {
   let state = null;
   let lastJson = '';
   let polling = null;
+  let readingFiles = null;
 
   const draw = () => renderApp(state, files, root);
 
@@ -481,10 +501,10 @@ if (typeof window !== 'undefined' && typeof fetch === 'function') {
     }
   };
 
-  actions.start = async (input) => { if (await post('/api/run', input)) ui.showForm = false; };
+  actions.start = async (input) => { if (await post('/api/run', input)) { ui.showForm = false; draw(); } };
   actions.continue = (input) => post('/api/continue', input);
   actions.stop = (input) => post('/api/stop', input);
-  actions.newRun = () => { ui.showForm = true; ui.error = ''; draw(); };
+  actions.newRun = () => { ui.showForm = true; ui.error = ''; readFiles(); draw(); };
   actions.rerender = draw;
 
   function poll() {
@@ -507,6 +527,7 @@ if (typeof window !== 'undefined' && typeof fetch === 'function') {
         lastJson = text;
         draw();
       }
+      if (!files || showingForm(next) || next.dashboard?.mandateStatus === 'not-stored') readFiles();
     } catch {
       ui.connectionError = 'Connection to the app server lost. Is npm run app still running?'
         + (state ? ' Showing the last received state. Actions are unavailable until it reconnects.' : '');
@@ -514,10 +535,29 @@ if (typeof window !== 'undefined' && typeof fetch === 'function') {
     }
   }
 
+  function readFiles() {
+    if (readingFiles) return readingFiles;
+    readingFiles = (async () => {
+      try {
+        const response = await fetch('/api/files', { cache: 'no-store' });
+        if (!response.ok) throw new Error(String(response.status));
+        const next = await response.json();
+        if (!next || !next.policy || typeof next.policy !== 'object' || Array.isArray(next.policy)) throw new Error('Unreadable policy');
+        const changed = JSON.stringify(next) !== JSON.stringify(files) || Boolean(ui.policyError);
+        files = next;
+        ui.policyError = '';
+        if (changed) draw();
+      } catch {
+        files = null;
+        ui.policyError = 'The company policy file could not be read. Retrying automatically.';
+        draw();
+      }
+    })().finally(() => { readingFiles = null; });
+    return readingFiles;
+  }
+
   draw();
-  fetch('/api/files', { cache: 'no-store' })
-    .then((response) => (response.ok ? response.json() : null))
-    .catch(() => null)
-    .then((value) => { files = value; lastJson = ''; return poll(); });
-  setInterval(() => { if (!ui.busy) poll(); }, 1000);
+  readFiles();
+  poll();
+  setInterval(() => { if (!ui.busy) { if (!files) readFiles(); poll(); } }, 1000);
 }

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
+import { PolicySchema, type Policy } from '../../../packages/contracts/src/index.ts';
 
 // The dashboard is a view. It learns everything by running the same read-only
 // commands an operator would type, each in its own process, so it loads no
@@ -217,8 +218,8 @@ const MandateReviewSchema = z.object({
       id: z.string(), role: z.string(), quantity: z.number().int(), allowedSkus: z.array(z.string()).max(100),
       maxUnitPriceMinor: MinorSchema, minWarrantyMonths: z.number().int(),
     })).max(100),
-  }),
-  policy: z.object({ evidenceMaxAgeHours: z.number().int().positive().optional() }).optional(),
+  }).passthrough(),
+  policy: z.object({ evidenceMaxAgeHours: z.number().int().positive().optional() }).passthrough().optional(),
 });
 
 const EvidenceSchema = z.object({ status: z.string().max(40), observedAt: TimestampSchema });
@@ -273,6 +274,8 @@ export interface DashboardState {
   version: 1;
   generatedAt: string;
   source: { kind: 'demo' | 'backend'; label: string };
+  /** The full stored policy from the exact mandate-review result, never the current policy file. */
+  policy?: Policy | null;
   demo: null | {
     mode: 'scripted' | 'live';
     paymentProvider: 'fake' | 'paypal-sandbox';
@@ -444,6 +447,7 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
     generatedAt: now().toISOString(),
     source: { kind: source.kind, label },
     demo: null,
+    policy: null,
     mandate: null,
     mandateStatus: 'not-stored',
     ledgerStatus: 'no-mandate',
@@ -568,6 +572,9 @@ export async function buildDashboardState(source: DashboardSource, run: CommandR
       state.problems.push('Mandate: the backend review did not match the requested revision.');
     } else {
       state.mandateStatus = 'read';
+      const policy = PolicySchema.safeParse(parsed.policy);
+      state.policy = policy.success && policy.data.id === parsed.draft.policyId && policy.data.version === parsed.draft.policyVersion
+        ? policy.data : null;
       state.mandate = {
         id: parsed.mandateId, revision: parsed.mandateVersion, digest: parsed.digest, confirmationStatus, confirmedAt,
         currency: parsed.draft.currency, budgetMinor: parsed.draft.budgetMinor, purchaseBy: parsed.draft.purchaseBy,

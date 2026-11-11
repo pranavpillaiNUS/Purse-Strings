@@ -71,6 +71,7 @@ interface Reply { ok: boolean; status: number; text(): Promise<string>; json(): 
 interface PostReply { body: unknown; status: number }
 const reply = (body: unknown, status = 200): Reply => ({ ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body), json: async () => body });
 const flush = async (): Promise<void> => { await new Promise<void>((resolve) => setImmediate(resolve)); };
+const currentPolicy = { id: 'company-policy', version: 1, maxBudgetMinor: 1000000, allowedSuppliers: ['store-a'], evidenceMaxAgeHours: 72, roles: {} };
 
 function state(takeStatus: 'idle' | 'working' | 'waiting' | 'ended' = 'idle'): AppState {
   if (takeStatus === 'idle') return { take: null, dashboard: null, conversation: [], terminal: [], approvalUrl: null, demoRequest: 'Equip five engineering hires.' };
@@ -88,7 +89,7 @@ function state(takeStatus: 'idle' | 'working' | 'waiting' | 'ended' = 'idle'): A
 }
 
 /** Every response and timer is controlled; this never starts a backend or makes a network call. */
-function client(initial: AppState | Promise<AppState> = state()) {
+function client(initial: AppState | Promise<AppState> = state(), fileReplies: Array<Reply | Error | Promise<Reply>> = []) {
   const document = new ClientDocument();
   const states: Array<AppState | Error | Promise<AppState>> = [initial];
   const posts: Array<PostReply | Promise<PostReply>> = [];
@@ -101,7 +102,11 @@ function client(initial: AppState | Promise<AppState> = state()) {
     fetch: async (path: string, options?: { method?: string; body?: string }) => {
       const method = options?.method ?? 'GET';
       requests.push({ path, method, ...(options?.body === undefined ? {} : { body: JSON.parse(options.body) as unknown }) });
-      if (path === '/api/files') return reply({ policy: null });
+      if (path === '/api/files') {
+        const next = await (fileReplies.shift() ?? reply({ policy: currentPolicy }));
+        if (next instanceof Error) throw next;
+        return next;
+      }
       if (path === '/api/state') {
         const next = states.shift() ?? lastState;
         if (next instanceof Error) throw next;
@@ -118,7 +123,7 @@ function client(initial: AppState | Promise<AppState> = state()) {
     return result;
   };
   return {
-    document, root: document.root, states, posts, requests,
+    document, root: document.root, states, posts, requests, fileReplies,
     node,
     button: (label: string) => node((item) => item.tagName === 'button' && item.textContent === label),
     async click(label: string) {
@@ -160,6 +165,58 @@ test('connection errors remain visible while working and after a take ends', asy
     await page.poll(current);
     assert.doesNotMatch(page.root.textContent, /Connection to the app server lost/, `${status} recovers even with identical state`);
   }
+});
+
+test('policy display retries a failed read without gating Start or overlapping file requests', async () => {
+  let resolveFiles!: (value: Reply) => void;
+  const waitingFiles = new Promise<Reply>((resolve) => { resolveFiles = resolve; });
+  const page = client(state(), [reply({}, 500), waitingFiles]);
+  await flush();
+  assert.match(page.root.textContent, /company policy file could not be read/i);
+  assert.equal(page.button('Start run').disabled, false, 'policy display is not purchasing authority');
+  await page.tick();
+  const reads = () => page.requests.filter((request) => request.path === '/api/files').length;
+  const pendingReads = reads();
+  await page.tick();
+  await page.tick();
+  assert.equal(reads(), pendingReads, 'one outstanding file read must not accumulate retries');
+  resolveFiles(reply({ policy: currentPolicy }));
+  await flush();
+  assert.match(page.root.textContent, /Company policy file, version 1/);
+  assert.doesNotMatch(page.root.textContent, /company policy file could not be read/i);
+  assert.equal(page.button('Start run').disabled, false);
+  assert.equal(page.requests.filter((request) => request.method === 'POST').length, 0);
+});
+
+test('a missing policy display does not add a prerequisite to operator confirmation', async () => {
+  let resolveFiles!: (value: Reply) => void;
+  const waitingFiles = new Promise<Reply>((resolve) => { resolveFiles = resolve; });
+  const current = state('waiting');
+  current.take!.awaiting = 'operator-confirm';
+  current.take!.waitId = 3;
+  const page = client(current, [reply({}, 500), waitingFiles]);
+  await flush();
+  assert.equal(page.button('Confirm this mandate').disabled, false);
+  assert.equal(page.button('Stop run').disabled, false);
+  assert.equal(page.requests.filter((request) => request.method === 'POST').length, 0);
+  resolveFiles(reply({ policy: currentPolicy }));
+  await flush();
+  assert.equal(page.button('Confirm this mandate').disabled, false);
+});
+
+test('the company file refreshes while preparing a request without changing its text or actions', async () => {
+  const page = client();
+  await flush();
+  page.choose('shopper-claude');
+  const box = page.node((node) => node.tagName === 'textarea');
+  box.value = 'Equip three analysts.'; box.dispatch('input'); box.focus(); box.setSelectionRange(6, 11);
+  page.fileReplies.push(reply({ policy: { ...currentPolicy, version: 2, maxBudgetMinor: 900000 } }));
+  await page.tick();
+  assert.match(page.root.textContent, /Company policy file, version 2/);
+  assert.equal(page.document.activeElement.value, 'Equip three analysts.');
+  assert.equal(page.document.activeElement.selectionStart, 6);
+  assert.equal(page.button('Start run').disabled, false);
+  assert.equal(page.requests.filter((request) => request.method === 'POST').length, 0);
 });
 
 test('timer ticks share an unfinished state read and polling resumes after it completes', async () => {
@@ -226,6 +283,80 @@ test('new-run choices update the header and preserve radio focus', async () => {
   const header = page.node((node) => node.tagName === 'header').textContent;
   assert.match(header, /Shopper: Claude/);
   assert.match(header, /Payment: PayPal sandbox/);
+});
+
+test('preparing a new request labels the previous mandate and spend without discarding them', async () => {
+  const previous = state('ended');
+  previous.take!.exitCode = 0;
+  previous.dashboard!.demo!.failure = null;
+  const digest = '0123456789abcdef'.repeat(4);
+  previous.dashboard!.mandateStatus = 'read';
+  previous.dashboard!.mandate = {
+    id: 'previous-mandate', revision: 1, digest, confirmationStatus: 'confirmed', confirmedAt: '2026-11-11T01:00:01.000Z',
+    currency: 'SGD', budgetMinor: 800000, purchaseBy: '2026-11-20T09:00:00.000Z', readyBy: '2026-11-23T09:00:00.000Z',
+    deliveryLocationId: 'singapore-office', allowedSuppliers: ['store-a'], requirements: [], evidenceMaxAgeHours: 72,
+  };
+  previous.dashboard!.ledgerStatus = 'read';
+  previous.dashboard!.ledger = {
+    mandateId: 'previous-mandate', mandateVersion: 1,
+    budget: { totalMinor: 800000, committedMinor: 751010, reservedMinor: 0, remainingMinor: 48990 }, requirements: [],
+  };
+  previous.dashboard!.operations = [{
+    id: 'previous-operation', supplierId: 'store-a', cartId: 'old-cart', totalMinor: 751010, currency: 'SGD',
+    status: 'ordered', reservationStatus: 'consumed', paymentProvider: 'fake', paymentStatus: 'succeeded', orderStatus: 'succeeded',
+    refundStatus: 'not_started', readinessStatus: 'not_assessed', createdAt: '2026-11-11T01:00:01.000Z', updatedAt: '2026-11-11T01:00:02.000Z',
+    providerIds: {}, events: [],
+  }];
+  const saved = structuredClone(previous);
+  const page = client(previous);
+  await flush();
+  await page.click('Start a new run');
+
+  const assertPrevious = (): void => {
+    const files = page.node((node) => node.className === 'panel files').textContent;
+    const ledger = page.node((node) => node.className === 'panel ledger').textContent;
+    assert.match(files, /previous run/i);
+    assert.match(ledger, /previous run/i);
+    assert.ok(page.root.textContent.includes('These records belong to the previous run; they do not confirm or fund this request.'));
+    assert.ok(files.includes(digest), 'the exact earlier confirmation remains reviewable');
+    assert.match(files, /Confirmed/);
+    assert.match(ledger, /previous-operation/);
+    assert.match(ledger, /S\$7,510\.10/);
+    assert.match(ledger, /S\$489\.90/);
+    assert.equal(page.button('Start run').disabled, false);
+  };
+  assertPrevious();
+  const refreshed = structuredClone(previous);
+  refreshed.dashboard!.generatedAt = '2026-11-11T01:00:04.000Z';
+  refreshed.dashboard!.problems.push('A synthetic previous-run status update.');
+  await page.poll(refreshed);
+  assertPrevious();
+  page.posts.push({ body: { error: 'Synthetic start refusal.' }, status: 409 });
+  await page.click('Start run');
+  assert.match(page.root.textContent, /Synthetic start refusal/);
+  assertPrevious();
+  assert.deepEqual(previous, saved, 'displaying a new request must not mutate the retained take records');
+
+  const next = state('working');
+  next.take!.directory = '/test/new-take';
+  page.states.push(next);
+  await page.click('Start run');
+  assert.doesNotMatch(page.root.textContent, /previous run/i);
+  assert.doesNotMatch(page.root.textContent, /previous-operation|previous-mandate/);
+});
+
+test('an accepted Start that fails quickly shows its own failure instead of the new-run form', async () => {
+  const page = client(state('ended'));
+  await flush();
+  await page.click('Start a new run');
+  const failed = state('ended');
+  failed.take!.directory = '/test/failed-new-take';
+  failed.dashboard!.demo!.failure = 'Synthetic startup failure before the next poll.';
+  page.states.push(failed);
+  await page.click('Start run');
+  assert.match(page.root.textContent, /Synthetic startup failure before the next poll/);
+  assert.equal(page.button('Start a new run').disabled, false);
+  assert.doesNotMatch(page.root.textContent, /These records belong to the previous run/);
 });
 
 test('refresh preserves editable request focus and selection, including an intentionally empty request', async () => {

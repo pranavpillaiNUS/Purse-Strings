@@ -10,7 +10,14 @@ import { createTakeManager, type FlowChild, type Outcome, type RunInput, type Ta
 import { SECURITY_HEADERS } from './dashboard.ts';
 
 const TOKEN = 'test-token-123';
-const policy = { id: 'hardware-policy', version: 1 };
+const policy = {
+  id: 'hardware-policy', version: 1, currency: 'SGD', maxBudgetMinor: 1000000,
+  allowedSuppliers: ['store-a', 'store-b'], evidenceMaxAgeHours: 72,
+  roles: {
+    laptop: { allowedSkus: ['LAP-14-AIR'], maxUnitPriceMinor: 120000, minWarrantyMonths: 24, maxUnits: 20 },
+    monitor: { allowedSkus: ['MON-27-IPS'], maxUnitPriceMinor: 40000, minWarrantyMonths: 24, maxUnits: 20 },
+  },
+};
 const assets = { html: '<meta name="splittap-token" content="{{TOKEN}}"><p>app</p>', script: 'void 0;', style: 'body{}' };
 
 function stubTakes(outcome: Outcome = { ok: true }) {
@@ -28,11 +35,16 @@ function stubTakes(outcome: Outcome = { ok: true }) {
 
 const emptyState: AppState = { take: null, dashboard: null, conversation: [], terminal: [], approvalUrl: null, demoRequest: 'Equip five.' };
 
-async function serve(t: { after: (fn: () => void) => void }, outcome?: Outcome, actualTakes?: TakeManager) {
+async function serve(t: { after: (fn: () => void) => void }, outcome?: Outcome, actualTakes?: TakeManager, options: {
+  policyText?: string | (() => string); log?: (line: string) => void;
+} = {}) {
   const stub = stubTakes(outcome);
   const takes = actualTakes ?? stub.takes;
   const calls = stub.calls;
-  const server: Server = createAppServer({ takes, readState: async () => ({ ...emptyState, take: takes.current() }), policyText: JSON.stringify(policy), assets, token: TOKEN, log: () => {} });
+  const server: Server = createAppServer({
+    takes, readState: async () => ({ ...emptyState, take: takes.current() }),
+    policyText: options.policyText ?? JSON.stringify(policy), assets, token: TOKEN, log: options.log ?? (() => {}),
+  });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => server.close());
   const port = (server.address() as AddressInfo).port;
@@ -229,9 +241,72 @@ test('an old take cannot confirm or stop a new take even when its step and wait 
 
 test('the policy file is served read-only', async (t) => {
   const { send, good } = await serve(t);
-  assert.deepEqual(JSON.parse((await send('GET', '/api/files')).body), { policy });
+  const files = await send('GET', '/api/files');
+  assert.deepEqual(JSON.parse(files.body), { policy });
+  const head = await send('HEAD', '/api/files');
+  assert.equal(head.status, 200);
+  assert.equal(head.body, '');
+  assert.equal(head.headers['content-length'], files.headers['content-length']);
+  assert.equal(head.headers['content-type'], files.headers['content-type']);
   assert.equal((await send('POST', '/api/files', { body: '{}', headers: good })).status, 405);
   assert.equal((await send('PUT', '/api/run', { body: runBody, headers: good })).status, 405);
+});
+
+test('the policy callback is read again for each request on the same running server', async (t) => {
+  let text = JSON.stringify(policy);
+  const { send } = await serve(t, undefined, undefined, { policyText: () => text });
+  assert.deepEqual(JSON.parse((await send('GET', '/api/files')).body), { policy });
+  const next = { ...policy, version: 2, maxBudgetMinor: 900000, evidenceMaxAgeHours: 24 };
+  text = JSON.stringify(next);
+  assert.deepEqual(JSON.parse((await send('GET', '/api/files')).body), { policy: next });
+});
+
+test('a policy read failure stays sanitized and recoverable without blocking the app or its actions', async (t) => {
+  let unavailable = true;
+  const logged: string[] = [];
+  const { send, good, calls } = await serve(t, undefined, undefined, {
+    policyText: () => {
+      if (unavailable) throw new Error('synthetic private path C:\\Users\\operator\\company-policy.json');
+      return JSON.stringify(policy);
+    },
+    log: (line) => logged.push(line),
+  });
+  const failed = await send('GET', '/api/files');
+  assert.equal(failed.status, 500);
+  assert.deepEqual(JSON.parse(failed.body), { error: 'The app could not read the current company policy' });
+  const head = await send('HEAD', '/api/files');
+  assert.equal(head.status, 500);
+  assert.equal(head.body, '');
+  assert.equal(head.headers['content-length'], failed.headers['content-length']);
+  assert.deepEqual(logged, ['app: policy read failed', 'app: policy read failed']);
+  assert.equal((await send('GET', '/')).status, 200);
+  assert.deepEqual(JSON.parse((await send('GET', '/api/state')).body), emptyState);
+  assert.equal((await send('POST', '/api/run', { body: runBody, headers: good })).status, 200);
+  assert.equal((await send('POST', '/api/continue', { body: JSON.stringify({ ...binding, step: 'operator-confirm' }), headers: good })).status, 200);
+  assert.equal((await send('POST', '/api/stop', { body: JSON.stringify(binding), headers: good })).status, 200);
+  assert.deepEqual(calls.map(({ action }) => action), ['start', 'continue', 'stop']);
+  unavailable = false;
+  const recovered = await send('GET', '/api/files');
+  assert.equal(recovered.status, 200);
+  assert.deepEqual(JSON.parse(recovered.body), { policy });
+});
+
+test('malformed or schema-invalid policy text cannot appear as a readable current policy', async (t) => {
+  let text = '{not JSON';
+  const logged: string[] = [];
+  const { send } = await serve(t, undefined, undefined, { policyText: () => text, log: (line) => logged.push(line) });
+  for (const invalid of ['{not JSON', JSON.stringify({ ...policy, maxBudgetMinor: 1.5 }), JSON.stringify({ ...policy, currency: 'USD' }), JSON.stringify({ ...policy, roles: {} })]) {
+    text = invalid;
+    const failed = await send('GET', '/api/files');
+    assert.equal(failed.status, 500, invalid);
+    assert.deepEqual(JSON.parse(failed.body), { error: 'The app could not read the current company policy' });
+  }
+  assert.deepEqual(logged, Array.from({ length: 4 }, () => 'app: policy read failed'));
+  text = JSON.stringify(policy);
+  assert.deepEqual(JSON.parse((await send('GET', '/api/files')).body), { policy });
+  const staticInvalid = await serve(t, undefined, undefined, { policyText: '{}' });
+  assert.equal((await staticInvalid.send('GET', '/')).status, 200, 'an invalid string source does not prevent app startup');
+  assert.equal((await staticInvalid.send('GET', '/api/files')).status, 500);
 });
 
 test('the startup note says Ctrl+C also stops a running take, as in the terminal', () => {
