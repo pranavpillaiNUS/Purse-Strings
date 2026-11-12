@@ -98,6 +98,8 @@ test('spawn arguments are an array with the take folder as one element', () => {
     ['apps/cli/src/demo-flow.ts', '--pause', '--live', '--sandbox-paypal', '--dir', '/x/take one', '--request-file', '/x/take one.request.txt']);
   assert.deepEqual(flowArguments({ request: 'r', shopper: 'scripted', payment: 'fake' }, '/x/t'),
     ['apps/cli/src/demo-flow.ts', '--pause', '--dir', '/x/t']);
+  assert.deepEqual(flowArguments({ request: 'r', shopper: 'scripted', payment: 'fake' }, '/x/t', '/policies/current.json'),
+    ['apps/cli/src/demo-flow.ts', '--pause', '--policy', '/policies/current.json', '--dir', '/x/t']);
 });
 
 test('a Claude take writes the request beside its new folder and starts the flow from the repo root', (t) => {
@@ -120,6 +122,19 @@ test('a second start while a take runs is refused', (t) => {
   assert.equal(second.ok, false);
   assert.equal(second.ok === false && second.status, 409);
   assert.equal(calls.length, 1);
+});
+
+test('a policy read failure does not leave a take running or start the flow', (t) => {
+  const runtime = mkdtempSync(join(tmpdir(), 'splittap-app-policy-error-'));
+  t.after(() => rmSync(runtime, { recursive: true, force: true }));
+  const fake = fakeSpawner();
+  const takes = createTakeManager({
+    root: '/repo', runtimeDirectory: runtime, spawn: fake.spawn,
+    policyPath: () => { throw new Error('policy changed'); },
+  });
+  assert.throws(() => takes.start(claude), /policy changed/);
+  assert.equal(takes.current(), null);
+  assert.equal(fake.calls.length, 0);
 });
 
 test('continue writes one Enter only for the step the flow waits for', (t) => {

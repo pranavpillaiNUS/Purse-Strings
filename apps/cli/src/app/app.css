@@ -176,3 +176,9 @@ details.terminal pre {
   body.tab-ledger .files { display: none; }
   .entry, .chain li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
+
+.upload .warn { color: #a3261b; font-weight: 600; }
+.upload .changes { margin: 0.4rem 0; padding-left: 1.1rem; font-size: 0.9em; }
+.upload .changes li.loosens { color: #a3261b; }
+.upload .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.4rem; }
+.upload input[type=file] { max-width: 100%; margin-top: 0.4rem; }

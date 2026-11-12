@@ -1,6 +1,5 @@
 'use strict';
-// The local app page. It renders only what the server reports and sends three fixed
-// actions. Every value from the server is placed with textContent or a known
+// The local app page. Every value from the server is placed with textContent or a known
 // attribute; nothing is parsed as HTML.
 
 const ui = {
@@ -20,6 +19,9 @@ const actions = {
   stop: () => {},
   newRun: () => {},
   rerender: () => {},
+  uploadPolicy: () => {},
+  activatePolicy: () => {},
+  discardPolicy: () => {},
 };
 
 const STEP_BUTTON = { 'next-scene': 'Next scene', 'operator-confirm': 'Confirm this mandate', 'sandbox-buyer': 'Buyer has approved' };
@@ -212,6 +214,44 @@ function storesSheet(state) {
   return sheet;
 }
 
+function changeValue(value) {
+  if (value === null || value === undefined) return '—';
+  if (Array.isArray(value)) return value.join(', ');
+  return String(value);
+}
+
+function policyUpload(state, files) {
+  if (!files || !files.uploads) return null;
+  const running = !!(state && state.take && state.take.status === 'running');
+  const box = el('section', { className: 'sheet upload' }, [el('h3', { text: 'Use your own policy' })]);
+  const pending = files.pending;
+  if (pending) {
+    box.appendChild(el('p', { text: `Pending: version ${pending.policy.version}. Nothing changes until you confirm.` }));
+    const loosens = pending.changes.filter((change) => change.loosens);
+    if (loosens.length) box.appendChild(el('p', { className: 'warn', text: `${loosens.length} change(s) widen what can be bought. Check them before confirming.` }));
+    const list = el('ul', { className: 'changes' });
+    if (!pending.changes.length) list.appendChild(el('li', { text: 'No rule changes from the active policy.' }));
+    for (const change of pending.changes) {
+      list.appendChild(el('li', { className: change.loosens ? 'loosens' : '', text: `${change.field}: ${changeValue(change.from)} → ${changeValue(change.to)}` }));
+    }
+    box.appendChild(list);
+    const confirm = button(`Confirm version ${pending.policy.version}`, () => actions.activatePolicy(pending.digest));
+    const discard = button('Discard', () => actions.discardPolicy(), true);
+    confirm.disabled = discard.disabled = ui.busy || running || Boolean(ui.connectionError);
+    box.appendChild(el('div', { className: 'actions' }, [confirm, discard]));
+    box.appendChild(el('p', { className: 'note', text: `Digest ${pending.digest.slice(0, 12)}…` }));
+  } else {
+    const input = el('input', { attrs: { type: 'file', accept: '.json,.csv,application/json,text/csv', 'aria-label': 'Policy file (JSON or CSV)' } });
+    input.disabled = ui.busy || running || Boolean(ui.connectionError);
+    input.addEventListener('change', () => { const file = input.files && input.files[0]; if (file) actions.uploadPolicy(file); });
+    box.appendChild(el('p', { className: 'note', text: 'JSON in the policy format, or CSV with the fixed columns. Files are read as data only: no AI reads them, and unknown fields are refused.' }));
+    box.appendChild(input);
+  }
+  if (running) box.appendChild(el('p', { className: 'note', text: 'The policy can only change between runs. This run uses the version it started with.' }));
+  if (ui.error && !showingForm(state) && !running) box.appendChild(el('p', { className: 'error', text: ui.error }));
+  return box;
+}
+
 function filesPanel(state, files) {
   const previous = Boolean(state.take && showingForm(state));
   const dashboard = state.dashboard;
@@ -222,6 +262,7 @@ function filesPanel(state, files) {
     note: 'For preparing a request. Stored mandates retain their own policy snapshot.',
     missing: ui.policyError || 'Loading the company policy file…',
   }));
+  parts.push(policyUpload(state, files));
   if (previous) parts.push(el('h2', { text: 'Previous run company files' }));
   if (stored) parts.push(policySheet(dashboard.policy, {
     title: previous ? 'Previous run policy snapshot' : 'Mandate policy snapshot',
@@ -507,6 +548,24 @@ if (typeof window !== 'undefined' && typeof fetch === 'function') {
   actions.newRun = () => { ui.showForm = true; ui.error = ''; readFiles(); draw(); };
   actions.rerender = draw;
 
+  const MAX_UPLOAD = 256 * 1024;
+  actions.uploadPolicy = async (file) => {
+    const name = String(file.name || '').toLowerCase();
+    const format = name.endsWith('.csv') ? 'csv' : name.endsWith('.json') ? 'json' : null;
+    if (!format) { ui.error = 'Choose a .json or .csv policy file.'; draw(); return; }
+    if (file.size > MAX_UPLOAD) { ui.error = 'Policy files are limited to 256 KB.'; draw(); return; }
+    try {
+      const content = await file.text();
+      await post('/api/policy/upload', { format, content });
+      await refreshFiles();
+    } catch {
+      ui.error = 'The policy file could not be read.';
+      draw();
+    }
+  };
+  actions.activatePolicy = async (digest) => { await post('/api/policy/activate', { digest }); await refreshFiles(); };
+  actions.discardPolicy = async () => { await post('/api/policy/discard', {}); await refreshFiles(); };
+
   function poll() {
     if (polling) return polling;
     polling = readState().finally(() => { polling = null; });
@@ -533,6 +592,11 @@ if (typeof window !== 'undefined' && typeof fetch === 'function') {
         + (state ? ' Showing the last received state. Actions are unavailable until it reconnects.' : '');
       draw();
     }
+  }
+
+  async function refreshFiles() {
+    if (readingFiles) await readingFiles;
+    await readFiles();
   }
 
   function readFiles() {

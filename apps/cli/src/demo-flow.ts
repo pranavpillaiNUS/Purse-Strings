@@ -90,7 +90,7 @@ export const SANDBOX_CREDENTIAL_PROBE_ID = 'demo-sandbox-credential-probe';
 const HELP = `Repeatable end-to-end demo (simulation; no real money, suppliers or orders; PayPal sandbox only with --sandbox-paypal)
 
 Usage:
-  npm run demo:flow -- [--live] [--pause] [--sandbox-paypal] [--request-file FILE] [--dir PATH]
+  npm run demo:flow -- [--live] [--pause] [--sandbox-paypal] [--request-file FILE] [--policy FILE] [--dir PATH]
 
   --live    Claude drafts and shops, which spends API credit (about 57,000 tokens).
             Without it, a scripted stand-in plays Claude: no key or network.
@@ -106,6 +106,8 @@ Usage:
             With --live only: the manager's own request (1 to 1,000 characters)
             replaces the generated one. Other requests may be refused by policy or
             end as an unusable take, because the later scenes are tuned to the demo.
+  --policy  Company policy for this take (default: the bundled example). It is
+            copied into the take folder so it cannot change mid-run.
   --dir     Working directory. Default .runtime/demo. Fake-only runs may reuse it;
             sandbox run state is preserved, so use a fresh directory for each run.
 
@@ -657,6 +659,7 @@ async function main(): Promise<void> {
       'sandbox-paypal': { type: 'boolean' },
       dir: { type: 'string' },
       'request-file': { type: 'string' },
+      policy: { type: 'string' },
     },
   });
   if (values.help) {
@@ -695,7 +698,10 @@ async function main(): Promise<void> {
     config: local('config.json'),
     db: join(directory, 'runtime', 'app.db'),
   };
-  const policyFile = join(root, 'config/policies/hardware.example.json');
+  // Pin the policy for this take: a copy in the take folder, so a later upload or
+  // activation can't change the rules between confirmation and execution.
+  const policyFile = join(directory, 'policy.json');
+  writeFileSync(policyFile, readFileSync(values.policy === undefined ? join(root, 'config/policies/hardware.example.json') : resolve(values.policy)), { flag: 'wx' });
   const { evidenceMaxAgeHours } = JSON.parse(readFileSync(policyFile, 'utf8')) as { evidenceMaxAgeHours: number };
   const backendRoot = ['--db', paths.db, '--config', paths.config];
   const shopBackend = ['--backend-db', paths.db, '--backend-config', paths.config];
@@ -818,7 +824,7 @@ async function main(): Promise<void> {
   writeFileSync(paths.request, plan.requestText);
   writeFileSync(paths.draftCalls, JSON.stringify(scriptedDraftCalls(plan)));
   const scriptedDraft = live ? [] : ['--scripted', paths.draftCalls];
-  const drafted = run('shop', ['draft', '--text-file', paths.request, '--draft-out', paths.draft, '--proposal-out', paths.proposal, ...scriptedDraft], {
+  const drafted = run('shop', ['draft', '--text-file', paths.request, '--policy', policyFile, '--draft-out', paths.draft, '--proposal-out', paths.proposal, ...scriptedDraft], {
     shown: ['draft', '--text-file', paths.request, ...scriptedDraft],
     capture: true,
     accept: [0, 2],
@@ -831,7 +837,7 @@ async function main(): Promise<void> {
   record({ mandate: { id: mandateId, revision: 1, stored: false, confirmedAt: null } });
 
   scene('A person confirms it', 'A draft cannot buy anything. The shopper is refused until a person confirms this exact content.');
-  const reviewArgs = ['mandate', 'review', '--draft', paths.draft, '--now', new Date().toISOString()];
+  const reviewArgs = ['mandate', 'review', '--draft', paths.draft, '--policy', policyFile, '--now', new Date().toISOString()];
   const review = run('main', [...reviewArgs, '--json'], { shown: reviewArgs, capture: true, accept: [0, 2] });
   const reviewed = JSON.parse(review.stdout) as Parameters<typeof checkSummary>[0];
   for (const line of checkSummary(reviewed)) console.log(line);

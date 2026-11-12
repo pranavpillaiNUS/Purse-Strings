@@ -255,6 +255,26 @@ API credit; PayPal mode needs sandbox credentials in `.env` and a sandbox buyer,
 flow does. Other requests than the demo's may be refused by policy or end as unusable takes,
 because the later scenes are tuned to the demo request.
 
+### Your own company policy
+
+Under **Company files**, choose a `.json` file in the policy format
+(`config/policies/hardware.example.json`) or a `.csv` with exactly these columns, one row per role
+(lists separated by `;`, whole minor units only):
+
+```
+policy_id,currency,max_budget_minor,allowed_suppliers,evidence_max_age_hours,role,allowed_skus,max_unit_price_minor,min_warranty_months,max_units
+acme,SGD,800000,store-a;store-b,72,laptop,LAP-14-AIR;LAP-14-PRO,120000,24,20
+acme,SGD,800000,store-a;store-b,72,monitor,MON-27-USBC,30000,24,20
+```
+
+Guardrails: no model reads the file, so text inside it can't instruct anything; unknown fields,
+decimals, other currencies, unknown suppliers, odd ids and budgets above S$100,000 are refused;
+files are limited to 256 KB. An upload is only *pending*: the page lists what would change and
+flags anything that widens what can be bought, and nothing applies until you press **Confirm**
+(bound to the file's digest). The policy can't change while a run is going, and each run copies
+the active policy into its own folder (`demo:flow --policy FILE`), so the checker enforces the
+version the mandate was confirmed against. Files stay on this machine under `.runtime/`.
+
 ## Dashboard
 
 A read-only page that follows `demo:flow` scene by scene. It needs no key, internet access
