@@ -8,8 +8,8 @@ On Windows PowerShell, use `npm.cmd` wherever this says `npm`.
 ## 1. Install the tools
 
 - **Node 24.15 or newer** (Node 25 is untested), and **Git**.
-- **GitHub CLI**, then sign in with `gh auth login`. The repo is private, so this also lets
-  Git clone it.
+- **GitHub CLI**, then sign in with `gh auth login`, to open pull requests. The repo is
+  public, so cloning needs no sign-in.
 - **graphify** (optional): `uv tool install graphifyy`, which needs
   [uv](https://docs.astral.sh/uv/). Agents use it for code questions and report if it is
   missing.
