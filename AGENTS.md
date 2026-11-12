@@ -20,7 +20,12 @@ agreed on Nov 8 to start stage two with a local, read-only dashboard; see
 Both people agreed on Nov 10 to one local page that acts (`npm run app`): it starts a
 `demo:flow` take and answers its prompts with three fixed actions (start, continue,
 stop) on 127.0.0.1, so confirmation and execution still run through the same flow and
-backend commands. Any other page action, or hosting beyond this machine, requires a
+backend commands. Both people agreed on Nov 11 to company-policy upload on that page
+(upload, confirm, discard): JSON or fixed-column CSV, parsed with no model, stored under
+`.runtime/uploads` and `.runtime/policies`, pending until the operator confirms its exact
+digest, refused while a take runs; each take pins a copy of the active policy. Storage sits
+behind a `FileStore` interface (`apps/cli/src/file-store.ts`); no S3 adapter exists yet. Any
+other page action, or hosting beyond this machine, requires a
 separate scope agreed by both people.
 
 Read `docs/project-scope.md` for outcomes and milestones, `docs/architecture.md` for
@@ -40,7 +45,7 @@ Everything runnable is a simulation: no real money, suppliers or orders.
 | `npm run backend` | SQLite ledger with atomic budget and quantity reservations, local operator confirmation, and durable execution with crash recovery over **fake** payment and supplier providers; the backend config may additionally select `paymentProvider: "paypal-sandbox"` to route capture/refund effects through the sandbox gateway while the supplier order stays fake |
 | `npm run shop` | The bounded shopper (`run`): a model or a scripted stand-in proposes price-free carts through the shared client, and closes with a plain-language review; `--review-out` saves it. `review --file` replays an editable historical snapshot with no model/backend call or execution instructions. Mandate drafting (`draft`) produces a policy-checked draft. A read-only view (`status`) shows current ledger numbers and named operations, with no model or key |
 | `npm run demo:flow` | The whole story in one command, with dates generated from today: control panel, plain-English request, confirmation, hostile listing, store change, rejection and recovery, and execution over **fake** providers. `--live` uses Claude. `--sandbox-paypal` connects scene 6's payment capture to the PayPal sandbox (operator-only; needs sandbox credentials, aborts cleanly without them; the supplier order stays simulated). See `docs/demo-script.md` |
-| `npm run app` | Local page on 127.0.0.1 that starts one `demo:flow` take (scripted or Claude, fake or PayPal sandbox payment) and replaces each Enter press with a button; shows the policy, mandate, a labelled conversation and the ledger. Three fixed actions only, guarded by a launch token and an Origin check; no hosting or frontend dependencies |
+| `npm run app` | Local page on 127.0.0.1 that starts one `demo:flow` take (scripted or Claude, fake or PayPal sandbox payment) and replaces each Enter press with a button; shows the policy, mandate, a labelled conversation and the ledger. Three run actions plus policy upload/confirm/discard (`apps/cli/src/policy-upload.ts`), all guarded by a launch token and an Origin check; no hosting or frontend dependencies |
 | `npm run dashboard` | Local read-only view of demo scenes, mandate confirmation, budget, operations, audit history and stores through existing read commands; no actions, keys, frontend dependencies or external hosting |
 | `npm run spike:paypal` | A separate, interactive PayPal sandbox spike connected to none of the above. `docs/paypal-spike.md` records Nov 7–8 manual observations; unused-hold void/final-capture closure remains unexercised |
 

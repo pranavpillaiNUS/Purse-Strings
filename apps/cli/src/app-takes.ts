@@ -89,9 +89,10 @@ const FLOW_ENTRY = 'apps/cli/src/demo-flow.ts';
 const TERMINAL_LINES = 400;
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 
-export function flowArguments(input: RunInput, takeDirectory: string): string[] {
+export function flowArguments(input: RunInput, takeDirectory: string, policyPath?: string): string[] {
   return [
     FLOW_ENTRY, '--pause',
+    ...(policyPath === undefined ? [] : ['--policy', policyPath]),
     ...(input.shopper === 'claude' ? ['--live'] : []),
     ...(input.payment === 'paypal-sandbox' ? ['--sandbox-paypal'] : []),
     '--dir', takeDirectory,
@@ -175,6 +176,8 @@ export function createTakeManager(options: {
   runtimeDirectory?: string;
   spawn?: SpawnFlow;
   now?: () => Date;
+  /** The active company policy at the moment a take starts; the take pins a copy. */
+  policyPath?: () => string;
 }) {
   const runtimeDirectory = options.runtimeDirectory ?? join(options.root, '.runtime', 'app');
   const spawn = options.spawn ?? defaultSpawn;
@@ -204,6 +207,7 @@ export function createTakeManager(options: {
   return {
     start(input: RunInput): Outcome {
       if (take?.status === 'running') return refuse('A run is already going. Stop it or wait for it to finish.');
+      const policyPath = options.policyPath?.();
       mkdirSync(runtimeDirectory, { recursive: true });
       const base = takeName(now());
       let directory = join(runtimeDirectory, base);
@@ -216,7 +220,7 @@ export function createTakeManager(options: {
       partial = '';
       answeredWaitId = null;
       take = { directory, startedAt: now().toISOString(), input, status: 'running', exitCode: null, awaiting: null, waitId: null };
-      const started = spawn(flowArguments(input, directory), options.root);
+      const started = spawn(flowArguments(input, directory, policyPath), options.root);
       child = started;
       started.onOutput(receive);
       started.onExit((code) => {

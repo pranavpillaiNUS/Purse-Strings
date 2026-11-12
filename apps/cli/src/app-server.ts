@@ -5,8 +5,11 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { z } from 'zod';
 import { PolicySchema } from '../../../packages/contracts/src/index.ts';
 import { buildConversation, readTakeRecords, type ConversationEntry } from './app-conversation.ts';
+import { MAX_UPLOAD_BYTES, PolicyRegistry, PolicyUploadError } from './policy-upload.ts';
+import { LocalFileStore } from './file-store.ts';
 import { createTakeManager, InputError, parseContinueInput, parseRunInput, parseStopInput, type Outcome, type TakeInfo, type TakeManager } from './app-takes.ts';
 import { SECURITY_HEADERS } from './dashboard.ts';
 import { createDashboardReader, createProcessRunner, type CommandRunner, type DashboardReader, type DashboardState } from './dashboard-state.ts';
@@ -14,8 +17,8 @@ import { demoPlan } from './demo-flow.ts';
 
 /**
  * The local app: one page on 127.0.0.1 that starts a demo:flow take and answers its
- * prompts. Three fixed actions only (start, continue, stop). Every fact on the page
- * comes from the take's records and the backend's existing read commands.
+ * prompts. It also lets the operator review and confirm a company policy. Take facts
+ * come from its records and the backend's existing read commands.
  */
 
 const HELP = `Local app for the demo flow (simulation; PayPal sandbox only when chosen)
@@ -75,7 +78,12 @@ export function createAppStateReader(options: { root: string; takes: TakeManager
   };
 }
 
-const POST_PATHS = new Set(['/api/run', '/api/continue', '/api/stop']);
+const EmptyInputSchema = z.object({}).strict();
+const POST_PATHS = new Set(['/api/run', '/api/continue', '/api/stop', '/api/policy/upload', '/api/policy/activate', '/api/policy/discard']);
+const UploadInputSchema = z.object({ format: z.enum(['json', 'csv']), content: z.string().max(MAX_UPLOAD_BYTES) }).strict();
+const ActivateInputSchema = z.object({ digest: z.string().regex(/^[0-9a-f]{64}$/) }).strict();
+export const KNOWN_SUPPLIERS = ['store-a', 'store-b'] as const;
+const UPLOAD_STATUS: Record<PolicyUploadError['code'], number> = { too_large: 413, bad_format: 415, invalid: 422, stale_digest: 409, not_found: 409 };
 
 function sameToken(given: string | string[] | undefined, expected: string): boolean {
   if (typeof given !== 'string') return false;
@@ -92,7 +100,7 @@ class HttpRefusal extends Error {
   }
 }
 
-function readBody(request: IncomingMessage): Promise<unknown> {
+function readBody(request: IncomingMessage, limit = MAX_BODY_BYTES): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -100,7 +108,7 @@ function readBody(request: IncomingMessage): Promise<unknown> {
     request.on('data', (chunk: Buffer) => {
       if (refused) return;
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > limit) {
         refused = true;
         reject(new HttpRefusal(413, 'The request is too large.'));
         return;
@@ -123,6 +131,7 @@ export function createAppServer(options: {
   takes: TakeManager;
   readState: () => Promise<AppState>;
   policyText: string | (() => string);
+  policies?: PolicyRegistry;
   assets: AppAssets;
   token: string;
   log?: (line: string) => void;
@@ -160,6 +169,41 @@ export function createAppServer(options: {
         json(415, { error: 'Actions are sent as JSON.' });
         return;
       }
+      if (path.startsWith('/api/policy/')) {
+        const policies = options.policies;
+        if (!policies) {
+          json(404, { error: 'Policy upload is not enabled.' });
+          return;
+        }
+        readBody(request, MAX_UPLOAD_BYTES * 2).then((body) => {
+          if (options.takes.current()?.status === 'running') {
+            json(409, { error: 'A run is going. The policy can only change between runs.' });
+            return;
+          }
+          if (path === '/api/policy/upload') {
+            const input = UploadInputSchema.safeParse(body);
+            if (!input.success) throw new InputError('The upload could not be read.');
+            json(200, { pending: policies.upload(Buffer.from(input.data.content, 'utf8'), input.data.format, KNOWN_SUPPLIERS) });
+          } else if (path === '/api/policy/activate') {
+            const input = ActivateInputSchema.safeParse(body);
+            if (!input.success) throw new InputError('The confirmation could not be read.');
+            json(200, { active: policies.activate(input.data.digest) });
+          } else {
+            if (!EmptyInputSchema.safeParse(body).success) throw new InputError('The request could not be read.');
+            policies.discardPending();
+            json(200, { ok: true });
+          }
+        }).catch((error: unknown) => {
+          if (error instanceof PolicyUploadError) json(UPLOAD_STATUS[error.code], { error: error.message });
+          else if (error instanceof HttpRefusal) json(error.status, { error: error.message });
+          else if (error instanceof InputError) json(400, { error: error.message });
+          else {
+            log(`app: policy action failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+            json(500, { error: 'The policy action failed. Check the terminal that runs npm run app.' });
+          }
+        });
+        return;
+      }
       readBody(request).then((body) => {
         let outcome: Outcome;
         if (path === '/api/run') outcome = options.takes.start(parseRunInput(body));
@@ -187,12 +231,25 @@ export function createAppServer(options: {
     else if (path === '/app.css') send(200, 'text/css; charset=utf-8', options.assets.style);
     else if (path === '/api/files') {
       try {
-        const text = typeof options.policyText === 'function' ? options.policyText() : options.policyText;
-        const policy = PolicySchema.parse(JSON.parse(text.replace(/^\uFEFF/, '')));
-        json(200, { policy });
+        if (options.policies) {
+          json(200, { policy: options.policies.active().policy, uploads: true, pending: options.policies.pending() ?? null });
+        } else {
+          const text = typeof options.policyText === 'function' ? options.policyText() : options.policyText;
+          json(200, { policy: PolicySchema.parse(JSON.parse(text.replace(/^\uFEFF/, ''))) });
+        }
       } catch {
         log('app: policy read failed');
         json(500, { error: 'The app could not read the current company policy' });
+      }
+    } else if (path === '/api/policy') {
+      if (!options.policies) json(404, { error: 'Policy upload is not enabled.' });
+      else {
+        try {
+          json(200, { active: options.policies.active(), pending: options.policies.pending() ?? null });
+        } catch {
+          log('app: policy read failed');
+          json(500, { error: 'The app could not read the current company policy' });
+        }
       }
     } else if (path === '/api/state') {
       options.readState().then(
@@ -227,9 +284,15 @@ async function main(): Promise<void> {
     return;
   }
   const port = parsePort(values.port);
-  const takes = createTakeManager({ root });
+  const policies = new PolicyRegistry({
+    directory: join(root, '.runtime', 'policies'),
+    fallbackPath: join(root, 'config/policies/hardware.example.json'),
+    files: new LocalFileStore(join(root, '.runtime', 'uploads')),
+  });
+  const takes = createTakeManager({ root, policyPath: () => policies.activePath() });
   const server = createAppServer({
     takes,
+    policies,
     readState: createAppStateReader({ root, takes }),
     policyText: () => readFileSync(join(root, 'config/policies/hardware.example.json'), 'utf8'),
     assets: loadAppAssets(),

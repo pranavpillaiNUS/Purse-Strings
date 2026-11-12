@@ -219,6 +219,41 @@ test('the company file refreshes while preparing a request without changing its 
   assert.equal(page.requests.filter((request) => request.method === 'POST').length, 0);
 });
 
+test('policy confirmation sends the displayed digest and keeps prompt actions bound', async () => {
+  const digest = 'a'.repeat(64);
+  const files = { policy: currentPolicy, uploads: true, pending: { policy: { ...currentPolicy, version: 2 }, digest, changes: [] } };
+  const page = client(state(), [reply(files)]);
+  await flush();
+  assert.match(page.root.textContent, /Nothing changes until you confirm/);
+  page.fileReplies.push(reply({ policy: { ...currentPolicy, version: 2 }, uploads: true, pending: null }));
+  page.fileReplies.push(reply({ policy: { ...currentPolicy, version: 2 }, uploads: true, pending: null }));
+  await page.click('Confirm version 2');
+  assert.deepEqual(page.requests.find((request) => request.path === '/api/policy/activate')?.body, { digest });
+  assert.match(page.root.textContent, /Company policy file, version 2/);
+  assert.doesNotMatch(page.root.textContent, /Nothing changes until you confirm/);
+});
+
+test('policy confirmation is disabled while a take is running', async () => {
+  const digest = 'b'.repeat(64);
+  const files = { policy: currentPolicy, uploads: true, pending: { policy: { ...currentPolicy, version: 2 }, digest, changes: [] } };
+  const page = client(state('waiting'), [reply(files), reply(files)]);
+  await flush();
+  assert.equal(page.button('Confirm version 2').disabled, true);
+  assert.equal(page.button('Discard').disabled, true);
+  assert.equal(page.button('Next scene').disabled, false);
+  assert.equal(page.requests.filter((request) => request.method === 'POST').length, 0);
+});
+
+test('a refused policy confirmation remains visible after a run ends', async () => {
+  const digest = 'c'.repeat(64);
+  const files = { policy: currentPolicy, uploads: true, pending: { policy: { ...currentPolicy, version: 2 }, digest, changes: [] } };
+  const page = client(state('ended'), [reply(files), reply(files), reply(files)]);
+  await flush();
+  page.posts.push({ status: 409, body: { error: 'The pending policy changed; review it again.' } });
+  await page.click('Confirm version 2');
+  assert.match(page.root.textContent, /The pending policy changed; review it again/);
+});
+
 test('timer ticks share an unfinished state read and polling resumes after it completes', async () => {
   let resolveInitial!: (value: AppState) => void;
   const initial = new Promise<AppState>((resolve) => { resolveInitial = resolve; });
