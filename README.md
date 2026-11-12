@@ -245,6 +245,10 @@ or PayPal sandbox payment, and press **Start run**. Each Enter press of `demo:fl
 a button: **Next scene**, **Confirm this mandate**, **Buyer has approved**. The page shows the
 company policy, the mandate with its confirmation, a conversation labelled by who said or decided
 each thing (you, Claude, the scripted stand-in, the checker), and the ledger's budget and operations.
+Each scene opens with what it sets out to show. Scene 4 quotes the hostile listing as supplier data
+and lists every refused attempt with its reason; scene 5 gives the checker's failed checks and the
+shopper's own estimate, labelled as an estimate; a finished take ends with the flow's result lines.
+All of it comes from the take's own files: its draft, saved shopper reviews, run logs and session.
 
 It drives the same flow and backend commands as the terminal, so the checker, ledger and payment
 code are unchanged. Each take runs in a new folder under `.runtime/app`, one at a time. The server
