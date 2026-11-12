@@ -26,8 +26,10 @@ jobs:
         include:
           - os: ubuntu-latest
             node-version: '24'
-          # One job only: macOS minutes count ten times over on a private repo.
-          - os: macos-latest
+          # One macOS job, on the Intel image. `macos-latest` is the arm64 pool, which GitHub
+          # flags for capacity constraints: on Nov 12 this job waited there for 5 minutes and
+          # then for over 15 without starting. It never failed; it had no machine to run on.
+          - os: macos-26-intel
             node-version: '26'
     # Every step is offline: no secrets, no model key, no PayPal, scripted stand-ins only.
     steps:

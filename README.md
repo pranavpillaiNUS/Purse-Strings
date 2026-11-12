@@ -331,12 +331,13 @@ All of it comes from the take's own files: its draft, saved shopper reviews, run
 
 It drives the same flow and backend commands as the terminal, so the checker, ledger and payment
 code are unchanged. Each take runs in a new folder under `.runtime/app`, one at a time. The server
-listens on 127.0.0.1 only and accepts three actions (start, continue, stop), each needing the
-launch token in the page and a matching Origin. Continue sends one Enter, only for the prompt the
-flow is waiting at; Stop works only while it waits, so no command is cut off. Claude mode spends
-API credit; PayPal mode needs sandbox credentials in `.env` and a sandbox buyer, as the terminal
-flow does. Other requests than the demo's may be refused by policy or end as unusable takes,
-because the later scenes are tuned to the demo request.
+listens on 127.0.0.1 only and accepts three run actions (start, continue, stop) plus policy
+upload, confirm and discard, each needing the launch token in the page and a matching Origin.
+Continue sends one Enter, only for the prompt the flow is waiting at; Stop works only while it
+waits, so no command is cut off. Claude mode spends API credit; PayPal mode needs sandbox
+credentials in `.env` and a sandbox buyer, as the terminal flow does. Other requests than the
+demo's may be refused by policy or end as unusable takes, because the later scenes are tuned to
+the demo request.
 
 #### Your own company policy
 
@@ -421,6 +422,11 @@ keeps its state in `.runtime/backend/`, a private folder it creates itself, and 
 existing folder with wider access. If that happens, delete the folder and run the command
 again. [The backend API](docs/backend-api.md#private-runtime-folders) has the exact rules.
 
+> [!WARNING]
+> This walkthrough uses a dated request whose purchase deadline is November 16, 2026 at 10:00
+> UTC, so it stops working after that. On any later date, use `npm run demo:flow` or
+> `npm run app`, which generate their dates from the day they run.
+
 <details>
   <summary>Step-by-step walkthrough against the simulation backend (PowerShell, no API key)</summary>
 
@@ -460,8 +466,7 @@ npm.cmd run --silent backend -- --db .runtime/backend/app.db --config $config au
 To use Claude, add `ANTHROPIC_API_KEY` to `.env` and drop `--scripted`. Delete `.runtime/`
 and the `state` files to start again. Change a store between runs with `store set`: a
 shipping jump, for example, makes the checker reject a cart the model had estimated
-within budget. This walkthrough uses dated fixtures, which stop working after November 16,
-2026. The [demo flow](#demo-flow) generates its dates.
+within budget.
 
 ### Offline checks
 

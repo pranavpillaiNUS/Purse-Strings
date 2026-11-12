@@ -96,6 +96,12 @@ commands; confirmation is still recorded by the backend for the OS user running 
 through the dashboard's read commands and the take's own files. Nothing in stage-one acceptance
 depends on it.
 
+Both people agreed on Nov 11 to company-policy upload on that page (upload, confirm, discard;
+`apps/cli/src/policy-upload.ts`). A JSON or fixed-column CSV file is parsed with no model and
+stays pending until the operator confirms its exact digest. A policy change is refused while a
+take runs, and each take pins a copy of the active policy. Files stay under `.runtime/` behind a
+local `FileStore` interface; no S3 adapter exists. This passes no acceptance gate.
+
 Still deferred, each needing both people's agreement: any other page action (mandate editing,
 approvals, exceptions, running or reconciling operations outside the demo flow), progress and
 readiness views beyond what the ledger records, and anything served beyond this machine. A
