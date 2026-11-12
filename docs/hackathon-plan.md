@@ -155,7 +155,7 @@ checker ── rules ─┬─ pass ──► reserve → capture → order by q
 ## PayPal: what we rely on
 
 Checked against PayPal's developer docs on Nov 1. "Spike" means `npm run spike:paypal` tests it
-([setup and how to read results](docs/paypal-spike.md)).
+([setup and how to read results](paypal-spike.md)).
 
 | Behavior | What the docs say | How we handle it |
 |---|---|---|
@@ -285,7 +285,7 @@ Dates are Singapore time. Adjust to the hours actually available.
 
 - [x] **Nov 1:** plan reviewed against PayPal's docs; step 1 code written (PayPal client, money helpers, sandbox spike).
 - [ ] **Nov 1–2 · Step 1, PayPal spike.** Create the sandbox accounts and run the spike twice. Done when the results
-      are recorded in [docs/paypal-spike.md](docs/paypal-spike.md) and we've decided how to capture and how to release the rest.
+      are recorded in [docs/paypal-spike.md](paypal-spike.md) and we've decided how to capture and how to release the rest.
 - [ ] **Nov 3–4 · Step 2, stores and control panel.** Done when three stores serve catalogs, carts and quotes, and the
       control panel changes them on cue. Test Payouts here if we're keeping it.
 - [ ] **Nov 5–6 · Step 3, checker, ledger and audit log.** Done when every demo failure case has a unit test.
