@@ -21,7 +21,11 @@ test('a scripted fake-payment take driven only through HTTP ends with the demo l
     policyText: readFileSync(join(root, 'config/policies/hardware.example.json'), 'utf8'), assets: loadAppAssets(),
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => { takes.stop(); server.close(); });
+  t.after(() => {
+    const take = takes.current();
+    if (take?.awaiting && take.waitId !== null) takes.stop({ takeDirectory: take.directory, waitId: take.waitId });
+    server.close();
+  });
   const port = (server.address() as AddressInfo).port;
   const call = (method: string, path: string, body?: unknown) => new Promise<{ status: number; body: string }>((resolve, reject) => {
     const request = httpRequest({ host: '127.0.0.1', port, method, path, headers: {
@@ -42,9 +46,12 @@ test('a scripted fake-payment take driven only through HTTP ends with the demo l
   for (let polls = 0; polls < 400; polls += 1) {
     state = JSON.parse((await call('GET', '/api/state')).body) as AppState;
     if (state.take?.status === 'ended') break;
-    const step = state.take?.awaiting;
-    if (step) {
-      assert.equal((await call('POST', '/api/continue', { step })).status, 200);
+    const take = state.take;
+    const step = take?.awaiting;
+    if (take && step) {
+      assert.equal(typeof take.waitId, 'number', 'only the displayed wait can be answered');
+      const response = await call('POST', '/api/continue', { takeDirectory: take.directory, waitId: take.waitId, step });
+      assert.equal(response.status, 200, response.body);
       continued.push(step);
     }
     await new Promise((resolve) => setTimeout(resolve, 250));

@@ -29,7 +29,15 @@ const RunInputSchema = z.object({
   payment: z.enum(['fake', 'paypal-sandbox']),
 }).strict();
 
-const ContinueInputSchema = z.object({ step: z.enum(['next-scene', 'operator-confirm', 'sandbox-buyer']) }).strict();
+const WaitBindingSchema = z.object({
+  // Correlates the displayed take; this value is never used to resolve or read a path.
+  takeDirectory: z.string().min(1).max(4_096),
+  waitId: z.number().int().min(0).max(1_000_000),
+}).strict();
+const ContinueInputSchema = WaitBindingSchema.extend({ step: z.enum(['next-scene', 'operator-confirm', 'sandbox-buyer']) }).strict();
+
+export type WaitBinding = z.infer<typeof WaitBindingSchema>;
+export type ContinueInput = z.infer<typeof ContinueInputSchema>;
 
 export function parseRunInput(body: unknown): RunInput {
   const parsed = RunInputSchema.safeParse(body);
@@ -42,9 +50,15 @@ export function parseRunInput(body: unknown): RunInput {
   return { ...parsed.data, request };
 }
 
-export function parseContinueInput(body: unknown): { step: WaitStep } {
+export function parseContinueInput(body: unknown): ContinueInput {
   const parsed = ContinueInputSchema.safeParse(body);
   if (!parsed.success) throw new InputError('That step could not be read. Reload the page and try again.');
+  return parsed.data;
+}
+
+export function parseStopInput(body: unknown): WaitBinding {
+  const parsed = WaitBindingSchema.safeParse(body);
+  if (!parsed.success) throw new InputError('That prompt could not be read. Reload the page and try again.');
   return parsed.data;
 }
 
@@ -56,6 +70,8 @@ export interface TakeInfo {
   exitCode: number | null;
   /** The step the flow's latest unanswered recorded wait is for; null when nothing waits. */
   awaiting: WaitStep | null;
+  /** The same recorded wait as `awaiting`; both are null when nothing waits. */
+  waitId: number | null;
 }
 
 export type Outcome = { ok: true } | { ok: false; status: 409; message: string };
@@ -73,9 +89,10 @@ const FLOW_ENTRY = 'apps/cli/src/demo-flow.ts';
 const TERMINAL_LINES = 400;
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 
-export function flowArguments(input: RunInput, takeDirectory: string): string[] {
+export function flowArguments(input: RunInput, takeDirectory: string, policyPath?: string): string[] {
   return [
     FLOW_ENTRY, '--pause',
+    ...(policyPath === undefined ? [] : ['--policy', policyPath]),
     ...(input.shopper === 'claude' ? ['--live'] : []),
     ...(input.payment === 'paypal-sandbox' ? ['--sandbox-paypal'] : []),
     '--dir', takeDirectory,
@@ -150,6 +167,7 @@ function lastTake(runtimeDirectory: string): TakeInfo | null {
     status: session?.finished === true ? 'ended' : 'interrupted',
     exitCode: null,
     awaiting: null,
+    waitId: null,
   };
 }
 
@@ -158,6 +176,8 @@ export function createTakeManager(options: {
   runtimeDirectory?: string;
   spawn?: SpawnFlow;
   now?: () => Date;
+  /** The active company policy at the moment a take starts; the take pins a copy. */
+  policyPath?: () => string;
 }) {
   const runtimeDirectory = options.runtimeDirectory ?? join(options.root, '.runtime', 'app');
   const spawn = options.spawn ?? defaultSpawn;
@@ -187,6 +207,7 @@ export function createTakeManager(options: {
   return {
     start(input: RunInput): Outcome {
       if (take?.status === 'running') return refuse('A run is already going. Stop it or wait for it to finish.');
+      const policyPath = options.policyPath?.();
       mkdirSync(runtimeDirectory, { recursive: true });
       const base = takeName(now());
       let directory = join(runtimeDirectory, base);
@@ -198,8 +219,8 @@ export function createTakeManager(options: {
       lines = [];
       partial = '';
       answeredWaitId = null;
-      take = { directory, startedAt: now().toISOString(), input, status: 'running', exitCode: null, awaiting: null };
-      const started = spawn(flowArguments(input, directory), options.root);
+      take = { directory, startedAt: now().toISOString(), input, status: 'running', exitCode: null, awaiting: null, waitId: null };
+      const started = spawn(flowArguments(input, directory, policyPath), options.root);
       child = started;
       started.onOutput(receive);
       started.onExit((code) => {
@@ -207,13 +228,14 @@ export function createTakeManager(options: {
         if (partial.length > 0) lines = [...lines, partial].slice(-TERMINAL_LINES);
         partial = '';
         child = null;
-        if (take !== null) take = { ...take, status: 'ended', exitCode: code, awaiting: null };
+        if (take !== null) take = { ...take, status: 'ended', exitCode: code, awaiting: null, waitId: null };
       });
       return { ok: true };
     },
 
-    continue(step: WaitStep): Outcome {
+    continue(input: ContinueInput): Outcome {
       if (take?.status !== 'running' || child === null) return refuse('No run is going.');
+      if (input.takeDirectory !== take.directory) return refuse('The run has changed. Review the current run before continuing.');
       const awaited = pending();
       if (awaited === null) {
         const session = readSessionIn(take.directory);
@@ -221,23 +243,31 @@ export function createTakeManager(options: {
           ? refuse('Already sent; waiting for the flow.')
           : refuse('The run is not waiting for you yet.');
       }
-      if (awaited.step !== step) return refuse('The run is waiting for a different step. Reload the page.');
+      if (awaited.waitId !== input.waitId || awaited.step !== input.step) return refuse('The run is waiting for a different prompt. Review the current prompt before continuing.');
       child.stdin.write('\n');
       answeredWaitId = awaited.waitId;
       return { ok: true };
     },
 
-    stop(): Outcome {
-      if (take?.status !== 'running' || child === null || pending() === null) {
+    stop(input: WaitBinding): Outcome {
+      const awaited = pending();
+      if (take?.status !== 'running' || child === null || awaited === null) {
         return refuse('Stop works only while the run waits for you, so no step is cut off halfway.');
       }
+      if (input.takeDirectory !== take.directory || input.waitId !== awaited.waitId) {
+        return refuse('The run or prompt has changed. Review the current run before stopping it.');
+      }
       child.kill();
+      // Exit is asynchronous. A stopped prompt must not accept Enter or another
+      // Stop while the child is still being reported as running.
+      answeredWaitId = awaited.waitId;
       return { ok: true };
     },
 
     current(): TakeInfo | null {
       if (take === null) return null;
-      return { ...take, awaiting: take.status === 'running' ? pending()?.step ?? null : null };
+      const awaited = pending();
+      return { ...take, awaiting: awaited?.step ?? null, waitId: awaited?.waitId ?? null };
     },
 
     terminal(): string[] {

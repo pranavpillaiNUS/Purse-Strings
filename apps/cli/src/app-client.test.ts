@@ -1,0 +1,469 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { runInNewContext } from 'node:vm';
+import type { AppState } from './app-server.ts';
+import { loadAppAssets } from './app-server.ts';
+import { DEMO_SCENES } from './demo-flow.ts';
+
+/** Browser interactions used by the client, including focus lost when nodes are replaced. */
+class ClientNode {
+  childNodes: ClientNode[] = [];
+  parentNode: ClientNode | null = null;
+  attributes: Record<string, string> = {};
+  listeners: Record<string, Array<(event: { target: ClientNode; currentTarget: ClientNode }) => void>> = {};
+  className = '';
+  style: Record<string, string> = {};
+  value = '';
+  readOnly = false;
+  checked = false;
+  disabled = false;
+  type = '';
+  name = '';
+  open = false;
+  selectionStart: number | null = null;
+  selectionEnd: number | null = null;
+  selectionDirection: string | null = null;
+  readonly document: ClientDocument;
+  readonly tagName: string | null;
+  private text = '';
+  constructor(document: ClientDocument, tagName: string | null, text = '') { this.document = document; this.tagName = tagName; this.text = text; }
+  get id(): string { return this.getAttribute('id') ?? ''; }
+  get textContent(): string { return this.tagName === null ? this.text : this.childNodes.map((child) => child.textContent).join(''); }
+  set textContent(value: string) { this.replaceChildren(new ClientNode(this.document, null, value)); }
+  appendChild<T extends ClientNode>(child: T): T { child.parentNode = this; this.childNodes.push(child); return child; }
+  append(...children: Array<ClientNode | string>): void { for (const child of children) this.appendChild(typeof child === 'string' ? new ClientNode(this.document, null, child) : child); }
+  replaceChildren(...children: ClientNode[]): void {
+    if (this.contains(this.document.activeElement)) this.document.activeElement = this.document.body;
+    for (const child of this.childNodes) child.parentNode = null;
+    this.childNodes = [];
+    this.append(...children);
+  }
+  contains(node: ClientNode | null): boolean { return node !== null && (node === this || this.childNodes.some((child) => child.contains(node))); }
+  setAttribute(name: string, value: string): void { this.attributes[name] = String(value); }
+  getAttribute(name: string): string | null { return this.attributes[name] ?? null; }
+  removeAttribute(name: string): void { delete this.attributes[name]; }
+  addEventListener(type: string, listener: (event: { target: ClientNode; currentTarget: ClientNode }) => void): void { (this.listeners[type] ??= []).push(listener); }
+  dispatch(type: string): void { for (const listener of this.listeners[type] ?? []) listener({ target: this, currentTarget: this }); }
+  focus(): void { if (!this.disabled) this.document.activeElement = this; }
+  setSelectionRange(start: number, end: number, direction = 'none'): void { this.selectionStart = start; this.selectionEnd = end; this.selectionDirection = direction; }
+  querySelectorAll(selector: string): ClientNode[] {
+    const attribute = /^\[([^=\]]+)(?:="([^"]*)")?\]$/.exec(selector);
+    return descendants(this).filter((node) => attribute
+      ? node.getAttribute(attribute[1]!) !== null && (attribute[2] === undefined || node.getAttribute(attribute[1]!) === attribute[2])
+      : selector.startsWith('.') ? node.className.split(' ').includes(selector.slice(1)) : node.tagName === selector);
+  }
+  querySelector(selector: string): ClientNode | null { return this.querySelectorAll(selector)[0] ?? null; }
+}
+
+function descendants(node: ClientNode): ClientNode[] { return node.childNodes.flatMap((child) => [child, ...descendants(child)]); }
+
+class ClientDocument {
+  body = new ClientNode(this, 'body');
+  root = this.body.appendChild(new ClientNode(this, 'main'));
+  activeElement: ClientNode = this.body;
+  createElement(tag: string): ClientNode { return new ClientNode(this, tag); }
+  createTextNode(text: string): ClientNode { return new ClientNode(this, null, text); }
+  getElementById(id: string): ClientNode | null { return id === 'app' ? this.root : descendants(this.root).find((node) => node.id === id) ?? null; }
+  querySelector(): null { return null; }
+}
+
+interface Reply { ok: boolean; status: number; text(): Promise<string>; json(): Promise<unknown> }
+interface PostReply { body: unknown; status: number }
+const reply = (body: unknown, status = 200): Reply => ({ ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body), json: async () => body });
+const flush = async (): Promise<void> => { await new Promise<void>((resolve) => setImmediate(resolve)); };
+const currentPolicy = { id: 'company-policy', version: 1, maxBudgetMinor: 1000000, allowedSuppliers: ['store-a'], evidenceMaxAgeHours: 72, roles: {} };
+
+function state(takeStatus: 'idle' | 'working' | 'waiting' | 'ended' = 'idle'): AppState {
+  if (takeStatus === 'idle') return { take: null, dashboard: null, conversation: [], terminal: [], approvalUrl: null, demoRequest: 'Equip five engineering hires.' };
+  return {
+    take: { directory: '/test/take', startedAt: '2026-11-11T01:00:00.000Z', input: { request: 'Equip five engineering hires.', shopper: 'scripted', payment: 'fake' },
+      status: takeStatus === 'ended' ? 'ended' : 'running', exitCode: takeStatus === 'ended' ? 1 : null, awaiting: takeStatus === 'waiting' ? 'next-scene' : null, waitId: takeStatus === 'waiting' ? 1 : null },
+    dashboard: {
+      version: 1, generatedAt: '2026-11-11T01:00:00.000Z', source: { kind: 'demo', label: '<test>' },
+      demo: { mode: 'scripted', paymentProvider: 'fake', startedAt: '2026-11-11T01:00:00.000Z', updatedAt: '2026-11-11T01:00:00.000Z', scenes: [...DEMO_SCENES], scene: 1,
+        results: [], waiting: takeStatus === 'waiting' ? 'next-scene' : null, finished: takeStatus === 'ended', failure: takeStatus === 'ended' ? 'Synthetic failure.' : null, unusable: [] },
+      mandate: null, mandateStatus: 'not-stored', ledgerStatus: 'no-mandate', ledger: null, stores: [], requestedOperationIds: [], operations: [], notices: [], problems: [],
+    },
+    conversation: [], terminal: ['Synthetic terminal output.'], approvalUrl: null, demoRequest: 'Equip five engineering hires.',
+  };
+}
+
+/** Every response and timer is controlled; this never starts a backend or makes a network call. */
+function client(initial: AppState | Promise<AppState> = state(), fileReplies: Array<Reply | Error | Promise<Reply>> = []) {
+  const document = new ClientDocument();
+  const states: Array<AppState | Error | Promise<AppState>> = [initial];
+  const posts: Array<PostReply | Promise<PostReply>> = [];
+  const requests: Array<{ path: string; method: string; body?: unknown }> = [];
+  let lastState = state();
+  let interval: (() => void) | undefined;
+  runInNewContext(loadAppAssets().script, {
+    window: {}, document, URL,
+    setInterval: (callback: () => void) => { interval = callback; return 1; },
+    fetch: async (path: string, options?: { method?: string; body?: string }) => {
+      const method = options?.method ?? 'GET';
+      requests.push({ path, method, ...(options?.body === undefined ? {} : { body: JSON.parse(options.body) as unknown }) });
+      if (path === '/api/files') {
+        const next = await (fileReplies.shift() ?? reply({ policy: currentPolicy }));
+        if (next instanceof Error) throw next;
+        return next;
+      }
+      if (path === '/api/state') {
+        const next = states.shift() ?? lastState;
+        if (next instanceof Error) throw next;
+        lastState = await next;
+        return reply(lastState);
+      }
+      const next = await (posts.shift() ?? { body: {}, status: 200 });
+      return reply(next.body, next.status);
+    },
+  }, { filename: 'app/app.js', timeout: 1000 });
+  const node = (predicate: (node: ClientNode) => boolean): ClientNode => {
+    const result = descendants(document.root).find(predicate);
+    assert.ok(result, 'expected control to be rendered');
+    return result;
+  };
+  return {
+    document, root: document.root, states, posts, requests, fileReplies,
+    node,
+    button: (label: string) => node((item) => item.tagName === 'button' && item.textContent === label),
+    async click(label: string) {
+      const button = node((item) => item.tagName === 'button' && item.textContent === label);
+      assert.equal(button.disabled, false, `${label} should be enabled`);
+      button.focus(); button.dispatch('click'); await flush();
+    },
+    choose(id: string) {
+      const radio = document.getElementById(id);
+      assert.ok(radio, `radio ${id} should be rendered`);
+      radio.focus(); radio.checked = true; radio.dispatch('change');
+    },
+    async tick() { assert.ok(interval); interval(); await flush(); },
+    async poll(next: AppState | Error) { states.push(next); assert.ok(interval); interval(); await flush(); },
+  };
+}
+
+test('initial loading and connection failure remain visible before any state arrives, then recover', async () => {
+  let rejectInitial!: (error: Error) => void;
+  const initial = new Promise<AppState>((_resolve, reject) => { rejectInitial = reject; });
+  const page = client(initial);
+  assert.match(page.root.textContent, /loading/i);
+  await flush();
+  rejectInitial(new Error('offline'));
+  await flush();
+  assert.match(page.root.textContent, /Connection to the app server lost/);
+  await page.poll(state());
+  assert.doesNotMatch(page.root.textContent, /Connection to the app server lost/);
+  assert.equal(page.button('Start run').disabled, false);
+});
+
+test('connection errors remain visible while working and after a take ends', async () => {
+  for (const status of ['working', 'ended'] as const) {
+    const current = state(status);
+    const page = client(current);
+    await flush();
+    await page.poll(new Error('offline'));
+    assert.match(page.root.textContent, /Connection to the app server lost/, status);
+    await page.poll(current);
+    assert.doesNotMatch(page.root.textContent, /Connection to the app server lost/, `${status} recovers even with identical state`);
+  }
+});
+
+test('policy display retries a failed read without gating Start or overlapping file requests', async () => {
+  let resolveFiles!: (value: Reply) => void;
+  const waitingFiles = new Promise<Reply>((resolve) => { resolveFiles = resolve; });
+  const page = client(state(), [reply({}, 500), waitingFiles]);
+  await flush();
+  assert.match(page.root.textContent, /company policy file could not be read/i);
+  assert.equal(page.button('Start run').disabled, false, 'policy display is not purchasing authority');
+  await page.tick();
+  const reads = () => page.requests.filter((request) => request.path === '/api/files').length;
+  const pendingReads = reads();
+  await page.tick();
+  await page.tick();
+  assert.equal(reads(), pendingReads, 'one outstanding file read must not accumulate retries');
+  resolveFiles(reply({ policy: currentPolicy }));
+  await flush();
+  assert.match(page.root.textContent, /Company policy file, version 1/);
+  assert.doesNotMatch(page.root.textContent, /company policy file could not be read/i);
+  assert.equal(page.button('Start run').disabled, false);
+  assert.equal(page.requests.filter((request) => request.method === 'POST').length, 0);
+});
+
+test('a missing policy display does not add a prerequisite to operator confirmation', async () => {
+  let resolveFiles!: (value: Reply) => void;
+  const waitingFiles = new Promise<Reply>((resolve) => { resolveFiles = resolve; });
+  const current = state('waiting');
+  current.take!.awaiting = 'operator-confirm';
+  current.take!.waitId = 3;
+  const page = client(current, [reply({}, 500), waitingFiles]);
+  await flush();
+  assert.equal(page.button('Confirm this mandate').disabled, false);
+  assert.equal(page.button('Stop run').disabled, false);
+  assert.equal(page.requests.filter((request) => request.method === 'POST').length, 0);
+  resolveFiles(reply({ policy: currentPolicy }));
+  await flush();
+  assert.equal(page.button('Confirm this mandate').disabled, false);
+});
+
+test('the company file refreshes while preparing a request without changing its text or actions', async () => {
+  const page = client();
+  await flush();
+  page.choose('shopper-claude');
+  const box = page.node((node) => node.tagName === 'textarea');
+  box.value = 'Equip three analysts.'; box.dispatch('input'); box.focus(); box.setSelectionRange(6, 11);
+  page.fileReplies.push(reply({ policy: { ...currentPolicy, version: 2, maxBudgetMinor: 900000 } }));
+  await page.tick();
+  assert.match(page.root.textContent, /Company policy file, version 2/);
+  assert.equal(page.document.activeElement.value, 'Equip three analysts.');
+  assert.equal(page.document.activeElement.selectionStart, 6);
+  assert.equal(page.button('Start run').disabled, false);
+  assert.equal(page.requests.filter((request) => request.method === 'POST').length, 0);
+});
+
+test('policy confirmation sends the displayed digest and keeps prompt actions bound', async () => {
+  const digest = 'a'.repeat(64);
+  const files = { policy: currentPolicy, uploads: true, pending: { policy: { ...currentPolicy, version: 2 }, digest, changes: [] } };
+  const page = client(state(), [reply(files)]);
+  await flush();
+  assert.match(page.root.textContent, /Nothing changes until you confirm/);
+  page.fileReplies.push(reply({ policy: { ...currentPolicy, version: 2 }, uploads: true, pending: null }));
+  page.fileReplies.push(reply({ policy: { ...currentPolicy, version: 2 }, uploads: true, pending: null }));
+  await page.click('Confirm version 2');
+  assert.deepEqual(page.requests.find((request) => request.path === '/api/policy/activate')?.body, { digest });
+  assert.match(page.root.textContent, /Company policy file, version 2/);
+  assert.doesNotMatch(page.root.textContent, /Nothing changes until you confirm/);
+});
+
+test('policy confirmation is disabled while a take is running', async () => {
+  const digest = 'b'.repeat(64);
+  const files = { policy: currentPolicy, uploads: true, pending: { policy: { ...currentPolicy, version: 2 }, digest, changes: [] } };
+  const page = client(state('waiting'), [reply(files), reply(files)]);
+  await flush();
+  assert.equal(page.button('Confirm version 2').disabled, true);
+  assert.equal(page.button('Discard').disabled, true);
+  assert.equal(page.button('Next scene').disabled, false);
+  assert.equal(page.requests.filter((request) => request.method === 'POST').length, 0);
+});
+
+test('a refused policy confirmation remains visible after a run ends', async () => {
+  const digest = 'c'.repeat(64);
+  const files = { policy: currentPolicy, uploads: true, pending: { policy: { ...currentPolicy, version: 2 }, digest, changes: [] } };
+  const page = client(state('ended'), [reply(files), reply(files), reply(files)]);
+  await flush();
+  page.posts.push({ status: 409, body: { error: 'The pending policy changed; review it again.' } });
+  await page.click('Confirm version 2');
+  assert.match(page.root.textContent, /The pending policy changed; review it again/);
+});
+
+test('timer ticks share an unfinished state read and polling resumes after it completes', async () => {
+  let resolveInitial!: (value: AppState) => void;
+  const initial = new Promise<AppState>((resolve) => { resolveInitial = resolve; });
+  const page = client(initial);
+  await flush();
+  const stateReads = () => page.requests.filter((request) => request.path === '/api/state').length;
+  assert.equal(stateReads(), 1);
+  await page.tick();
+  await page.tick();
+  assert.equal(stateReads(), 1, 'an outstanding read must not accumulate competing state requests');
+  resolveInitial(state('waiting'));
+  await flush();
+  assert.equal(page.button('Next scene').disabled, false);
+  await page.tick();
+  assert.equal(stateReads(), 2, 'the lock must release after the previous read finishes');
+});
+
+test('stale state disables network actions until a successful poll, without clearing an action refusal', async () => {
+  const current = state('waiting');
+  const page = client(current);
+  await flush();
+  const refusal = 'The run is waiting for a different step. Reload the page.';
+  page.posts.push({ body: { error: refusal }, status: 409 });
+  await page.click('Next scene');
+  assert.ok(page.root.textContent.includes(refusal));
+  assert.equal(page.document.activeElement, page.button('Next scene'), 'a refused action restores its retry control after the temporary busy state');
+  await page.poll(new Error('offline'));
+  assert.equal(page.button('Next scene').disabled, true);
+  assert.equal(page.button('Stop run').disabled, true);
+  await page.poll(current);
+  assert.equal(page.button('Next scene').disabled, false);
+  assert.equal(page.button('Stop run').disabled, false);
+  assert.doesNotMatch(page.root.textContent, /Connection to the app server lost/);
+  assert.ok(page.root.textContent.includes(refusal), 'a successful read cannot erase a refused action');
+  assert.equal(page.requests.filter((request) => request.method === 'POST').length, 1, 'polling never retries a refused action');
+});
+
+test('an action response preserves a different control focused while the request was pending', async () => {
+  const page = client(state('waiting'));
+  await flush();
+  let finishPost!: (value: PostReply) => void;
+  page.posts.push(new Promise<PostReply>((resolve) => { finishPost = resolve; }));
+  await page.click('Next scene');
+  const summary = page.node((node) => node.tagName === 'summary');
+  summary.focus();
+  const refusal = 'The run is not waiting for you yet.';
+  finishPost({ body: { error: refusal }, status: 409 });
+  await flush();
+  assert.ok(page.root.textContent.includes(refusal), 'the pending response has completed');
+  assert.equal(page.document.activeElement.tagName, 'summary');
+  assert.equal(page.document.activeElement.textContent, 'Terminal', 'a completed action must not take focus back from the person');
+});
+
+test('new-run choices update the header and preserve radio focus', async () => {
+  const page = client(state('ended'));
+  await flush();
+  await page.click('Start a new run');
+  page.choose('shopper-claude');
+  assert.equal(page.document.activeElement.id, 'shopper-claude');
+  page.choose('payment-paypal-sandbox');
+  assert.equal(page.document.activeElement.id, 'payment-paypal-sandbox');
+  const header = page.node((node) => node.tagName === 'header').textContent;
+  assert.match(header, /Shopper: Claude/);
+  assert.match(header, /Payment: PayPal sandbox/);
+});
+
+test('preparing a new request labels the previous mandate and spend without discarding them', async () => {
+  const previous = state('ended');
+  previous.take!.exitCode = 0;
+  previous.dashboard!.demo!.failure = null;
+  const digest = '0123456789abcdef'.repeat(4);
+  previous.dashboard!.mandateStatus = 'read';
+  previous.dashboard!.mandate = {
+    id: 'previous-mandate', revision: 1, digest, confirmationStatus: 'confirmed', confirmedAt: '2026-11-11T01:00:01.000Z',
+    currency: 'SGD', budgetMinor: 800000, purchaseBy: '2026-11-20T09:00:00.000Z', readyBy: '2026-11-23T09:00:00.000Z',
+    deliveryLocationId: 'singapore-office', allowedSuppliers: ['store-a'], requirements: [], evidenceMaxAgeHours: 72,
+  };
+  previous.dashboard!.ledgerStatus = 'read';
+  previous.dashboard!.ledger = {
+    mandateId: 'previous-mandate', mandateVersion: 1,
+    budget: { totalMinor: 800000, committedMinor: 751010, reservedMinor: 0, remainingMinor: 48990 }, requirements: [],
+  };
+  previous.dashboard!.operations = [{
+    id: 'previous-operation', supplierId: 'store-a', cartId: 'old-cart', totalMinor: 751010, currency: 'SGD',
+    status: 'ordered', reservationStatus: 'consumed', paymentProvider: 'fake', paymentStatus: 'succeeded', orderStatus: 'succeeded',
+    refundStatus: 'not_started', readinessStatus: 'not_assessed', createdAt: '2026-11-11T01:00:01.000Z', updatedAt: '2026-11-11T01:00:02.000Z',
+    providerIds: {}, events: [],
+  }];
+  const saved = structuredClone(previous);
+  const page = client(previous);
+  await flush();
+  await page.click('Start a new run');
+
+  const assertPrevious = (): void => {
+    const files = page.node((node) => node.className === 'panel files').textContent;
+    const ledger = page.node((node) => node.className === 'panel ledger').textContent;
+    assert.match(files, /previous run/i);
+    assert.match(ledger, /previous run/i);
+    assert.ok(page.root.textContent.includes('These records belong to the previous run; they do not confirm or fund this request.'));
+    assert.ok(files.includes(digest), 'the exact earlier confirmation remains reviewable');
+    assert.match(files, /Confirmed/);
+    assert.match(ledger, /previous-operation/);
+    assert.match(ledger, /S\$7,510\.10/);
+    assert.match(ledger, /S\$489\.90/);
+    assert.equal(page.button('Start run').disabled, false);
+  };
+  assertPrevious();
+  const refreshed = structuredClone(previous);
+  refreshed.dashboard!.generatedAt = '2026-11-11T01:00:04.000Z';
+  refreshed.dashboard!.problems.push('A synthetic previous-run status update.');
+  await page.poll(refreshed);
+  assertPrevious();
+  page.posts.push({ body: { error: 'Synthetic start refusal.' }, status: 409 });
+  await page.click('Start run');
+  assert.match(page.root.textContent, /Synthetic start refusal/);
+  assertPrevious();
+  assert.deepEqual(previous, saved, 'displaying a new request must not mutate the retained take records');
+
+  const next = state('working');
+  next.take!.directory = '/test/new-take';
+  page.states.push(next);
+  await page.click('Start run');
+  assert.doesNotMatch(page.root.textContent, /previous run/i);
+  assert.doesNotMatch(page.root.textContent, /previous-operation|previous-mandate/);
+});
+
+test('an accepted Start that fails quickly shows its own failure instead of the new-run form', async () => {
+  const page = client(state('ended'));
+  await flush();
+  await page.click('Start a new run');
+  const failed = state('ended');
+  failed.take!.directory = '/test/failed-new-take';
+  failed.dashboard!.demo!.failure = 'Synthetic startup failure before the next poll.';
+  page.states.push(failed);
+  await page.click('Start run');
+  assert.match(page.root.textContent, /Synthetic startup failure before the next poll/);
+  assert.equal(page.button('Start a new run').disabled, false);
+  assert.doesNotMatch(page.root.textContent, /These records belong to the previous run/);
+});
+
+test('refresh preserves editable request focus and selection, including an intentionally empty request', async () => {
+  const current = state('ended');
+  const page = client(current);
+  await flush();
+  await page.click('Start a new run');
+  page.choose('shopper-claude');
+  const box = page.node((node) => node.tagName === 'textarea');
+  box.value = 'Equip three designers.';
+  box.dispatch('input'); box.focus(); box.setSelectionRange(6, 11, 'backward');
+  const refreshed = structuredClone(current);
+  refreshed.dashboard!.generatedAt = '2026-11-11T01:00:03.000Z';
+  refreshed.dashboard!.problems.push('A synthetic status read changed.');
+  await page.poll(refreshed);
+  assert.match(page.root.textContent, /A synthetic status read changed/, 'fresh displayed facts must still render while editing');
+  const active = page.document.activeElement;
+  assert.equal(active.tagName, 'textarea');
+  assert.equal(active.value, 'Equip three designers.');
+  assert.equal(active.selectionStart, 6);
+  assert.equal(active.selectionEnd, 11);
+  assert.equal(active.selectionDirection, 'backward');
+  active.value = ''; active.dispatch('input');
+  page.choose('payment-paypal-sandbox');
+  assert.equal(page.node((node) => node.tagName === 'textarea').value, '', 'redraw must not replace an empty request with the demo');
+});
+
+test('Terminal stays open when new state and output arrive', async () => {
+  const current = state('waiting');
+  const page = client(current);
+  await flush();
+  const terminal = page.node((node) => node.tagName === 'details');
+  terminal.open = true; terminal.dispatch('toggle');
+  const refreshed = structuredClone(current);
+  refreshed.dashboard!.generatedAt = '2026-11-11T01:00:03.000Z';
+  refreshed.terminal.push('Another synthetic line.');
+  await page.poll(refreshed);
+  const updated = page.node((node) => node.tagName === 'details');
+  assert.equal(updated.open, true);
+  assert.match(updated.textContent, /Another synthetic line/);
+});
+
+test('a confirmation click keeps the take and prompt that its button displayed', async () => {
+  const displayed = state('waiting');
+  displayed.take!.directory = '/test/take-a';
+  displayed.take!.awaiting = 'operator-confirm';
+  displayed.take!.waitId = 3;
+  const page = client(displayed);
+  await flush();
+  const oldButton = page.button('Confirm this mandate');
+  const nextTake = structuredClone(displayed);
+  nextTake.take!.directory = '/test/take-b';
+  await page.poll(nextTake);
+  // A queued click must not silently acquire the newly displayed take's authority.
+  oldButton.dispatch('click');
+  await flush();
+  assert.deepEqual(page.requests.find((request) => request.path === '/api/continue')?.body, {
+    takeDirectory: '/test/take-a', waitId: 3, step: 'operator-confirm',
+  });
+});
+
+test('a stop click keeps the recorded wait shown before the next prompt arrived', async () => {
+  const displayed = state('waiting');
+  const page = client(displayed);
+  await flush();
+  const oldButton = page.button('Stop run');
+  const nextWait = structuredClone(displayed);
+  nextWait.take!.waitId = 2;
+  await page.poll(nextWait);
+  oldButton.dispatch('click');
+  await flush();
+  assert.deepEqual(page.requests.find((request) => request.path === '/api/stop')?.body, {
+    takeDirectory: '/test/take', waitId: 1,
+  });
+});

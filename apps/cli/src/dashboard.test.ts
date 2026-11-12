@@ -77,7 +77,8 @@ test('the dashboard loads no checker, payment or shopper code', () => {
     const source = readFileSync(join(here, file), 'utf8');
     const imports = [...source.matchAll(/^import .*? from '([^']+)'/gm)].map(([, name]) => name!);
     assert.ok(imports.length > 0);
-    assert.deepEqual(imports.filter((name) => !name.startsWith('node:') && name !== 'zod' && name !== './dashboard-state.ts'), [], file);
+    const schemaImport = file === 'dashboard-state.ts' ? '../../../packages/contracts/src/index.ts' : null;
+    assert.deepEqual(imports.filter((name) => !name.startsWith('node:') && name !== 'zod' && name !== './dashboard-state.ts' && name !== schemaImport), [], file);
     assert.doesNotMatch(source, /import\(/);
   }
 });
@@ -242,6 +243,15 @@ const outputs: Record<string, unknown> = {
   },
 };
 
+const storedPolicy = {
+  id: 'hardware', version: 1, currency: 'SGD', maxBudgetMinor: 1000000,
+  allowedSuppliers: ['store-a', 'store-b'], evidenceMaxAgeHours: 72,
+  roles: {
+    laptop: { allowedSkus: ['LAP-14-AIR'], maxUnitPriceMinor: 120000, minWarrantyMonths: 24, maxUnits: 20 },
+    monitor: { allowedSkus: ['MON-27-IPS'], maxUnitPriceMinor: 40000, minWarrantyMonths: 24, maxUnits: 20 },
+  },
+};
+
 function fakeRunner(overrides: Record<string, CommandResult> = {}): { run: CommandRunner; calls: string[] } {
   const calls: string[] = [];
   const run: CommandRunner = async (entry, args) => {
@@ -400,6 +410,65 @@ test('a failed mandate review is unavailable, not unstored', async (t) => {
   assert.equal(state.mandateStatus, 'unavailable');
   assert.equal(state.ledgerStatus, 'read', 'the ledger read stands on its own');
   assert.ok(state.problems.some((problem) => problem.startsWith('Mandate')));
+});
+
+test('the policy shown for a take comes from its matched stored review despite a different current policy file', async (t) => {
+  const source = demoDirectory(t, session());
+  assert.equal(source.kind, 'demo');
+  if (source.kind !== 'demo') return;
+  const currentPolicy = { ...storedPolicy, version: 2, maxBudgetMinor: 900000, evidenceMaxAgeHours: 24 };
+  writeFileSync(join(source.directory, 'current-policy.json'), JSON.stringify(currentPolicy));
+  writeFileSync(join(source.directory, 'config.json'), JSON.stringify({ version: 1, policyFiles: ['current-policy.json'], catalogFiles: ['store-a.json'] }));
+  const { run, calls } = fakeRunner({
+    'backend mandate-review': { status: 0, stdout: JSON.stringify({ ...(outputs['backend mandate-review'] as object), policy: storedPolicy }), stderr: '' },
+  });
+  const state = await buildDashboardState(source, run, () => new Date(NOW));
+  assert.deepEqual(state.policy, storedPolicy);
+  assert.notDeepEqual(state.policy, currentPolicy);
+  assert.equal(state.mandate?.evidenceMaxAgeHours, 72);
+  assert.equal(calls.filter((call) => call === 'backend mandate-review').length, 1, 'the existing read supplies the snapshot without another command');
+  assert.deepEqual(calls.sort(), ['backend audit', 'backend mandate-review', 'backend status', 'main store show', 'shop status']);
+});
+
+test('an unavailable or mismatched review cannot supply a take policy', async (t) => {
+  const reviewed = { ...(outputs['backend mandate-review'] as object), policy: storedPolicy };
+  const cases: CommandResult[] = [
+    { status: 2, stdout: JSON.stringify(reviewed), stderr: 'backend: Mandate revision was not found' },
+    { status: 0, stdout: JSON.stringify({ ...reviewed, mandateId: 'another-mandate' }), stderr: '' },
+    { status: 0, stdout: JSON.stringify({ ...reviewed, mandateVersion: 2 }), stderr: '' },
+  ];
+  for (const result of cases) {
+    const state = await buildDashboardState(demoDirectory(t, session()), fakeRunner({ 'backend mandate-review': result }).run);
+    assert.equal(state.policy, null, JSON.stringify(result));
+    assert.equal(state.mandateStatus, 'unavailable');
+  }
+});
+
+test('a full policy snapshot must match the stored draft policy references', async (t) => {
+  const reviewed = outputs['backend mandate-review'] as Record<string, unknown>;
+  const draft = reviewed.draft as Record<string, unknown>;
+  for (const references of [{ policyId: 'another-policy' }, { policyVersion: 2 }, { policyId: undefined }, { policyVersion: undefined }]) {
+    const result = {
+      status: 0, stdout: JSON.stringify({ ...reviewed, draft: { ...draft, ...references }, policy: storedPolicy }), stderr: '',
+    };
+    const state = await buildDashboardState(demoDirectory(t, session()), fakeRunner({ 'backend mandate-review': result }).run);
+    assert.equal(state.policy, null, JSON.stringify(references));
+    assert.equal(state.mandateStatus, 'read');
+    assert.equal(state.mandate?.evidenceMaxAgeHours, 72, 'missing or conflicting policy references do not discard the existing partial age view');
+  }
+});
+
+test('missing, partial or invalid policy snapshots stay unknown without hiding a readable mandate', async (t) => {
+  const reviewed = outputs['backend mandate-review'] as Record<string, unknown>;
+  for (const policy of [undefined, { evidenceMaxAgeHours: 72 }, { ...storedPolicy, maxBudgetMinor: '1000000' }, { ...storedPolicy, roles: {} }]) {
+    const result = { status: 0, stdout: JSON.stringify({ ...reviewed, policy }), stderr: '' };
+    const state = await buildDashboardState(demoDirectory(t, session()), fakeRunner({ 'backend mandate-review': result }).run);
+    assert.equal(state.policy, null, JSON.stringify(policy));
+    assert.equal(state.mandateStatus, 'read');
+    assert.equal(state.mandate?.id, 'engineering-hires-demo');
+    assert.equal(state.mandate?.evidenceMaxAgeHours, policy === undefined ? null : 72, 'the existing partial age view remains usable');
+    assert.deepEqual(state.problems, []);
+  }
 });
 
 test('a failed, malformed or mismatched confirmation read stays unknown despite session claims', async (t) => {
