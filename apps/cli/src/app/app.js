@@ -4,11 +4,14 @@
 // attribute; nothing is parsed as HTML.
 
 const ui = {
-  form: { shopper: 'scripted', payment: 'fake', request: '' },
+  form: { shopper: 'scripted', payment: 'fake', request: null },
   showForm: false,
   error: '',
+  connectionError: '',
+  policyError: '',
   busy: false,
   stampedDigest: null,
+  terminalOpen: false,
 };
 
 const actions = {
@@ -63,7 +66,12 @@ function safeLink(url) {
   return parsed.protocol === 'https:' && sandbox ? url : null;
 }
 
+function showingForm(state) {
+  return !state.take || (ui.showForm && state.take.status !== 'running');
+}
+
 function shopperOf(state) {
+  if (showingForm(state)) return ui.form.shopper === 'claude' ? 'Claude' : 'scripted stand-in';
   const input = state.take && state.take.input;
   if (input) return input.shopper === 'claude' ? 'Claude' : 'scripted stand-in';
   const mode = state.dashboard && state.dashboard.demo && state.dashboard.demo.mode;
@@ -72,6 +80,7 @@ function shopperOf(state) {
 }
 
 function paymentOf(state) {
+  if (showingForm(state)) return ui.form.payment === 'paypal-sandbox' ? 'PayPal sandbox' : 'fake';
   const input = state.take && state.take.input;
   const provider = input ? input.payment : state.dashboard && state.dashboard.demo ? state.dashboard.demo.paymentProvider : ui.form.payment;
   return provider === 'paypal-sandbox' ? 'PayPal sandbox' : 'fake';
@@ -89,6 +98,7 @@ function outcomeOf(state) {
 function runStatus(state) {
   const take = state.take;
   if (!take) return { text: 'No run yet', tone: '' };
+  if (showingForm(state)) return { text: 'Ready for a new run', tone: '' };
   if (take.status === 'interrupted') return { text: 'Interrupted', tone: 'refused' };
   if (take.status === 'ended') {
     const demo = state.dashboard && state.dashboard.demo;
@@ -127,9 +137,11 @@ function rows(pairs) {
   return list;
 }
 
-function policySheet(policy) {
-  if (!policy || typeof policy !== 'object') return el('section', { className: 'sheet' }, [el('p', { className: 'note', text: 'The policy file could not be read.' })]);
-  const sheet = el('section', { className: 'sheet' }, [el('h3', { text: `Company policy, version ${policy.version}` })]);
+function policySheet(policy, context) {
+  if (!policy || typeof policy !== 'object') return el('section', { className: 'sheet' }, [
+    el('h3', { text: context.title }), el('p', { className: 'note', text: context.missing }),
+  ]);
+  const sheet = el('section', { className: 'sheet' }, [el('h3', { text: `${context.title}, version ${policy.version}` }), el('p', { className: 'note', text: context.note })]);
   sheet.appendChild(rows([
     ['Budget cap', money(policy.maxBudgetMinor)],
     ['Suppliers', Array.isArray(policy.allowedSuppliers) ? policy.allowedSuppliers.join(', ') : 'unknown'],
@@ -153,9 +165,14 @@ function mandateSheet(state) {
   const dashboard = state.dashboard;
   const mandate = dashboard && dashboard.mandate;
   if (!mandate) {
+    const message = dashboard && dashboard.mandateStatus === 'unavailable'
+      ? 'The mandate could not be read. Its details and confirmation are unknown.'
+      : dashboard && dashboard.mandateStatus === 'revision-unknown'
+        ? 'A mandate is stored, but its revision details are unavailable.'
+        : 'Appears once the request is drafted and stored. A draft cannot buy anything.';
     return el('section', { className: 'sheet mandate' }, [
       el('h3', { text: 'Mandate' }),
-      el('p', { className: 'note', text: 'Appears once the request is drafted and stored. A draft cannot buy anything.' }),
+      el('p', { className: 'note', text: message }),
     ]);
   }
   const sheet = el('section', { className: 'sheet mandate' }, [el('h3', { text: `Mandate ${mandate.id}, revision ${mandate.revision}` })]);
@@ -166,6 +183,7 @@ function mandateSheet(state) {
   ];
   for (const requirement of mandate.requirements || []) pairs.push([`${requirement.quantity} × ${requirement.role}`, (requirement.allowedSkus || []).join(', ')]);
   sheet.appendChild(rows(pairs));
+  sheet.appendChild(el('p', { className: 'note' }, [document.createTextNode('Digest '), el('span', { className: 'mono', text: mandate.digest })]));
   if (mandate.confirmationStatus === 'confirmed') {
     const fresh = ui.stampedDigest !== mandate.digest;
     ui.stampedDigest = mandate.digest;
@@ -195,16 +213,29 @@ function storesSheet(state) {
 }
 
 function filesPanel(state, files) {
-  return el('aside', { className: 'panel files', attrs: { 'aria-label': 'Company files' } }, [
-    el('h2', { text: 'Company files' }),
-    policySheet(files && files.policy),
-    mandateSheet(state),
-    storesSheet(state),
-  ]);
+  const previous = Boolean(state.take && showingForm(state));
+  const dashboard = state.dashboard;
+  const stored = dashboard && (dashboard.mandate || dashboard.mandateStatus !== 'not-stored');
+  const parts = [el('h2', { text: 'Company files' })];
+  if (!stored || previous) parts.push(policySheet(files && files.policy, {
+    title: 'Company policy file',
+    note: 'For preparing a request. Stored mandates retain their own policy snapshot.',
+    missing: ui.policyError || 'Loading the company policy file…',
+  }));
+  if (previous) parts.push(el('h2', { text: 'Previous run company files' }));
+  if (stored) parts.push(policySheet(dashboard.policy, {
+    title: previous ? 'Previous run policy snapshot' : 'Mandate policy snapshot',
+    note: 'Read from the backend record for this exact mandate revision.',
+    missing: 'The policy snapshot for this mandate is unavailable.',
+  }));
+  parts.push(mandateSheet(state), storesSheet(state));
+  return el('aside', { className: 'panel files', attrs: { 'aria-label': 'Company files' } }, parts);
 }
 
 function ledgerPanel(state) {
-  const panel = el('aside', { className: 'panel ledger', attrs: { 'aria-label': 'Budget and operations' } }, [el('h2', { text: 'Budget' })]);
+  const previous = Boolean(state.take && showingForm(state));
+  const panel = el('aside', { className: 'panel ledger', attrs: { 'aria-label': 'Budget and operations' } }, [el('h2', { text: previous ? 'Previous run budget' : 'Budget' })]);
+  if (previous) panel.appendChild(el('p', { className: 'note', text: 'These figures and operations belong to the previous run.' }));
   const dashboard = state.dashboard;
   const ledger = dashboard && dashboard.ledger;
   const budget = el('section', { className: 'sheet' });
@@ -230,16 +261,18 @@ function ledgerPanel(state) {
     const sheet = el('section', { className: 'sheet' }, [el('h3', { text: 'Operations' })]);
     for (const operation of operations) {
       const ids = operation.providerIds || {};
+      const provider = operation.paymentProvider === 'paypal-sandbox' ? 'PayPal sandbox' : operation.paymentProvider === 'fake' ? 'fake' : 'provider unknown';
       const pairs = [
         ['Supplier', operation.supplierId],
         ['Amount', money(operation.totalMinor)],
         ['Status', operation.status],
-        ['Payment', operation.paymentProvider === 'paypal-sandbox' ? `PayPal sandbox, ${operation.paymentStatus}` : `fake, ${operation.paymentStatus}`],
+        ['Payment', `${provider}, ${operation.paymentStatus}`],
         ['Supplier order', `simulated, ${operation.orderStatus}`],
+        ['Refund', `${provider}, ${operation.refundStatus}`],
         ['Readiness', 'not assessed'],
       ];
       const block = el('div', { className: 'op' }, [el('p', { className: 'mono', text: operation.id }), rows(pairs)]);
-      for (const [label, value] of [['PayPal order', ids.orderId], ['Authorization', ids.authorizationId], ['Capture', ids.captureId]]) {
+      for (const [label, value] of [['PayPal order', ids.orderId], ['Authorization', ids.authorizationId], ['Capture', ids.captureId], ['Refund', ids.refundId]]) {
         if (value) block.appendChild(el('p', { className: 'note' }, [document.createTextNode(`${label} `), el('span', { className: 'mono', text: value })]));
       }
       sheet.appendChild(block);
@@ -269,9 +302,9 @@ function holdMayExist(state) {
     && operation.providerIds && (operation.providerIds.orderId || operation.providerIds.authorizationId));
 }
 
-function button(label, onClick, secondary) {
-  const node = el('button', { className: secondary ? 'secondary' : '', text: label, attrs: { type: 'button' } });
-  node.disabled = ui.busy;
+function button(label, onClick, secondary, needsConnection = false) {
+  const node = el('button', { className: secondary ? 'secondary' : '', text: label, attrs: { type: 'button', 'data-focus-key': label } });
+  node.disabled = ui.busy || (needsConnection && Boolean(ui.connectionError));
   node.addEventListener('click', onClick);
   return node;
 }
@@ -281,6 +314,10 @@ function actionArea(state) {
   const demo = state.dashboard && state.dashboard.demo;
   if (take.status === 'running') {
     if (!take.awaiting) return el('div', { className: 'action' }, [el('p', { text: 'Working. The next step appears here when the run needs you.' })]);
+    if (!Number.isSafeInteger(take.waitId) || take.waitId < 0) {
+      return el('div', { className: 'action' }, [el('p', { text: 'The current prompt could not be read. Waiting for a fresh state.' })]);
+    }
+    const binding = { takeDirectory: take.directory, waitId: take.waitId };
     const parts = [];
     if (take.awaiting === 'sandbox-buyer') {
       parts.push(el('p', { text: 'The sandbox buyer approves the hold on PayPal\'s own page. Press the button only after they approve; if you press early, the run tells you and asks again.' }));
@@ -289,9 +326,9 @@ function actionArea(state) {
     }
     const row = el('div', { className: 'buttons' });
     const link = take.awaiting === 'sandbox-buyer' ? safeLink(state.approvalUrl) : null;
-    if (link) row.appendChild(el('a', { className: 'button-link', text: 'Open PayPal approval page', attrs: { href: link, target: '_blank', rel: 'noopener noreferrer' } }));
-    row.appendChild(button(atResult(state) ? 'Show the result' : STEP_BUTTON[take.awaiting], () => actions.continue(take.awaiting)));
-    row.appendChild(button('Stop run', () => actions.stop(), true));
+    if (link) row.appendChild(el('a', { className: 'button-link', text: 'Open PayPal approval page', attrs: { href: link, target: '_blank', rel: 'noopener noreferrer', 'data-focus-key': 'paypal-approval' } }));
+    row.appendChild(button(atResult(state) ? 'Show the result' : STEP_BUTTON[take.awaiting], () => actions.continue({ ...binding, step: take.awaiting }), false, true));
+    row.appendChild(button('Stop run', () => actions.stop(binding), true, true));
     parts.push(row);
     if (ui.error) parts.push(el('p', { className: 'error', text: ui.error }));
     return el('div', { className: 'action' }, parts);
@@ -333,7 +370,7 @@ function introduction() {
 }
 
 function radio(name, value, label) {
-  const input = el('input', { attrs: { type: 'radio', name, value, id: `${name}-${value}` } });
+  const input = el('input', { attrs: { type: 'radio', name, value, id: `${name}-${value}`, 'data-focus-key': `${name}-${value}` } });
   input.type = 'radio';
   input.name = name;
   input.value = value;
@@ -344,10 +381,10 @@ function radio(name, value, label) {
 
 function requestForm(state) {
   const scripted = ui.form.shopper === 'scripted';
-  const box = el('textarea', { attrs: { id: 'request', maxlength: '1000', 'aria-describedby': 'request-note' } });
+  const box = el('textarea', { attrs: { id: 'request', maxlength: '1000', 'aria-describedby': 'request-note', 'data-focus-key': 'request' } });
   box.readOnly = scripted;
-  box.value = scripted ? state.demoRequest : ui.form.request || state.demoRequest;
-  if (!scripted && !ui.form.request) ui.form.request = state.demoRequest;
+  if (!scripted && ui.form.request === null) ui.form.request = state.demoRequest;
+  box.value = scripted ? state.demoRequest : ui.form.request;
   box.addEventListener('input', () => { ui.form.request = box.value; });
   const note = scripted
     ? 'The scripted stand-in always uses this request. Choose Claude to use your own words.'
@@ -362,7 +399,7 @@ function requestForm(state) {
       request: scripted ? state.demoRequest : ui.form.request,
       shopper: ui.form.shopper,
       payment: ui.form.payment,
-    }))]),
+    }), false, true)]),
   ]);
   if (ui.error) form.appendChild(el('p', { className: 'error', text: ui.error }));
   return form;
@@ -370,15 +407,17 @@ function requestForm(state) {
 
 function conversationPanel(state) {
   const panel = el('section', { className: 'conversation', attrs: { 'aria-label': 'Conversation' } });
-  const take = state.take;
-  if (!take || (ui.showForm && take.status !== 'running')) {
+  if (showingForm(state)) {
     panel.appendChild(introduction());
+    if (state.take) panel.appendChild(el('p', { className: 'note', text: 'These records belong to the previous run; they do not confirm or fund this request.' }));
     panel.appendChild(requestForm(state));
     return panel;
   }
   panel.appendChild(el('ol', { className: 'log' }, (state.conversation || []).map(entryNode)));
   panel.appendChild(actionArea(state));
-  const terminal = el('details', { className: 'terminal' }, [el('summary', { text: 'Terminal' }), el('pre', { text: (state.terminal || []).join('\n') })]);
+  const terminal = el('details', { className: 'terminal' }, [el('summary', { text: 'Terminal', attrs: { 'data-focus-key': 'terminal' } }), el('pre', { text: (state.terminal || []).join('\n') })]);
+  terminal.open = ui.terminalOpen;
+  terminal.addEventListener('toggle', () => { ui.terminalOpen = terminal.open; });
   panel.appendChild(terminal);
   return panel;
 }
@@ -390,11 +429,31 @@ function tabs() {
   ]);
 }
 
+function restoreFocus(root, key, selection) {
+  if (!key) return;
+  const replacement = Array.from(root.querySelectorAll('[data-focus-key]')).find((node) => node.getAttribute('data-focus-key') === key);
+  if (replacement && !replacement.disabled) {
+    replacement.focus({ preventScroll: true });
+    if (selection) {
+      replacement.setSelectionRange(selection.start, selection.end, selection.direction);
+      replacement.scrollTop = selection.scroll;
+    }
+  }
+}
+
 function renderApp(state, files, root) {
-  root.replaceChildren(
-    statusLine(state),
-    el('div', { className: 'layout' }, [filesPanel(state, files), conversationPanel(state), tabs(), ledgerPanel(state)]),
-  );
+  const focused = document.activeElement;
+  const focusKey = focused && focused.getAttribute('data-focus-key');
+  const selection = focused && focused.tagName.toLowerCase() === 'textarea'
+    ? { start: focused.selectionStart, end: focused.selectionEnd, direction: focused.selectionDirection, scroll: focused.scrollTop }
+    : null;
+  const children = [state ? statusLine(state) : el('header', { className: 'status' }, [el('span', { className: 'brand', text: 'Purse Strings' })])];
+  if (ui.connectionError) children.push(el('p', { className: 'connection', text: ui.connectionError, attrs: { role: 'status' } }));
+  children.push(state
+    ? el('div', { className: 'layout' }, [filesPanel(state, files), conversationPanel(state), tabs(), ledgerPanel(state)])
+    : el('p', { className: 'loading', text: ui.connectionError ? 'Waiting to reconnect to the app server.' : 'Loading the app…' }));
+  root.replaceChildren(...children);
+  restoreFocus(root, focusKey, selection);
 }
 
 globalThis.renderApp = renderApp;
@@ -406,10 +465,14 @@ if (typeof window !== 'undefined' && typeof fetch === 'function') {
   let files = null;
   let state = null;
   let lastJson = '';
+  let polling = null;
+  let readingFiles = null;
 
-  const draw = () => { if (state) renderApp(state, files, root); };
+  const draw = () => renderApp(state, files, root);
 
   const post = async (path, body) => {
+    if (ui.busy || ui.connectionError) return false;
+    const focusKey = document.activeElement && document.activeElement.getAttribute('data-focus-key');
     ui.busy = true;
     ui.error = '';
     draw();
@@ -432,35 +495,69 @@ if (typeof window !== 'undefined' && typeof fetch === 'function') {
       ui.busy = false;
       lastJson = '';
       await poll();
+      // A temporarily disabled action loses focus while it is pending. Restore it
+      // if the same control still exists and the person has not focused elsewhere.
+      if (document.activeElement === document.body) restoreFocus(root, focusKey, null);
     }
   };
 
-  actions.start = async (input) => { if (await post('/api/run', input)) ui.showForm = false; };
-  actions.continue = (step) => post('/api/continue', { step });
-  actions.stop = () => post('/api/stop', {});
-  actions.newRun = () => { ui.showForm = true; ui.error = ''; draw(); };
+  actions.start = async (input) => { if (await post('/api/run', input)) { ui.showForm = false; draw(); } };
+  actions.continue = (input) => post('/api/continue', input);
+  actions.stop = (input) => post('/api/stop', input);
+  actions.newRun = () => { ui.showForm = true; ui.error = ''; readFiles(); draw(); };
   actions.rerender = draw;
 
-  async function poll() {
+  function poll() {
+    if (polling) return polling;
+    polling = readState().finally(() => { polling = null; });
+    return polling;
+  }
+
+  async function readState() {
     try {
       const response = await fetch('/api/state', { cache: 'no-store' });
       if (!response.ok) throw new Error(String(response.status));
-      const text = await response.text();
-      // Redraw only when something changed, so typing in the request box is never interrupted.
-      if (text !== lastJson) {
+      const next = JSON.parse(await response.text());
+      // The read timestamp changes even when none of the displayed facts do.
+      const text = JSON.stringify({ ...next, dashboard: next.dashboard ? { ...next.dashboard, generatedAt: null } : null });
+      const reconnected = Boolean(ui.connectionError);
+      ui.connectionError = '';
+      state = next;
+      if (text !== lastJson || reconnected) {
         lastJson = text;
-        state = JSON.parse(text);
         draw();
       }
+      if (!files || showingForm(next) || next.dashboard?.mandateStatus === 'not-stored') readFiles();
     } catch {
-      ui.error = 'Connection to the app server lost. Is npm run app still running?';
+      ui.connectionError = 'Connection to the app server lost. Is npm run app still running?'
+        + (state ? ' Showing the last received state. Actions are unavailable until it reconnects.' : '');
       draw();
     }
   }
 
-  fetch('/api/files', { cache: 'no-store' })
-    .then((response) => (response.ok ? response.json() : null))
-    .catch(() => null)
-    .then((value) => { files = value; lastJson = ''; return poll(); });
-  setInterval(() => { if (!ui.busy) poll(); }, 1000);
+  function readFiles() {
+    if (readingFiles) return readingFiles;
+    readingFiles = (async () => {
+      try {
+        const response = await fetch('/api/files', { cache: 'no-store' });
+        if (!response.ok) throw new Error(String(response.status));
+        const next = await response.json();
+        if (!next || !next.policy || typeof next.policy !== 'object' || Array.isArray(next.policy)) throw new Error('Unreadable policy');
+        const changed = JSON.stringify(next) !== JSON.stringify(files) || Boolean(ui.policyError);
+        files = next;
+        ui.policyError = '';
+        if (changed) draw();
+      } catch {
+        files = null;
+        ui.policyError = 'The company policy file could not be read. Retrying automatically.';
+        draw();
+      }
+    })().finally(() => { readingFiles = null; });
+    return readingFiles;
+  }
+
+  draw();
+  readFiles();
+  poll();
+  setInterval(() => { if (!ui.busy) { if (!files) readFiles(); poll(); } }, 1000);
 }

@@ -131,7 +131,7 @@ function operationEntry(operation: DashboardState['operations'][number]): Conver
   if (operation.status !== 'ordered') return null;
   const payment = operation.paymentProvider === 'paypal-sandbox'
     ? `Payment: PayPal sandbox capture ${operation.providerIds.captureId ?? '(id not reported)'}`
-    : 'Payment: fake provider, no real money';
+    : operation.paymentProvider === 'fake' ? 'Payment: fake provider, no real money' : 'Payment provider: unknown';
   return {
     actor: 'system', scene: 6, title: `Executed at ${operation.supplierId}: ${formatMinor(operation.totalMinor)}`,
     detail: [payment, 'Supplier order: simulated, not a real order', 'Readiness: not assessed'], tone: 'accepted',

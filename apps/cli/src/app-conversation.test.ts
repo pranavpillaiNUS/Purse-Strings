@@ -94,6 +94,8 @@ test('an executed operation shows payment, order and readiness as separate facts
   assert.deepEqual(executed.detail, ['Payment: PayPal sandbox capture CAP1', 'Supplier order: simulated, not a real order', 'Readiness: not assessed']);
   const fake = buildConversation({ mode: 'scripted', requestText: null, draft: null, reviews: [], state: state(6, [{ ...operation, paymentProvider: 'fake', providerIds: {} }]) }).at(-1)!;
   assert.equal(fake.detail[0], 'Payment: fake provider, no real money');
+  const unknown = buildConversation({ mode: 'scripted', requestText: null, draft: null, reviews: [], state: state(6, [{ ...operation, paymentProvider: null, providerIds: {} }]) }).at(-1)!;
+  assert.equal(unknown.detail[0], 'Payment provider: unknown');
   const reserved = buildConversation({ mode: 'scripted', requestText: null, draft: null, reviews: [], state: state(6, [{ ...operation, status: 'reserved' }]) });
   assert.ok(!reserved.some((entry) => entry.title.startsWith('Executed')), 'a reservation is not an execution');
 });

@@ -5,9 +5,9 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { z } from 'zod';
+import { PolicySchema } from '../../../packages/contracts/src/index.ts';
 import { buildConversation, readTakeRecords, type ConversationEntry } from './app-conversation.ts';
-import { createTakeManager, InputError, parseContinueInput, parseRunInput, type Outcome, type TakeInfo, type TakeManager } from './app-takes.ts';
+import { createTakeManager, InputError, parseContinueInput, parseRunInput, parseStopInput, type Outcome, type TakeInfo, type TakeManager } from './app-takes.ts';
 import { SECURITY_HEADERS } from './dashboard.ts';
 import { createDashboardReader, createProcessRunner, type CommandRunner, type DashboardReader, type DashboardState } from './dashboard-state.ts';
 import { demoPlan } from './demo-flow.ts';
@@ -75,7 +75,6 @@ export function createAppStateReader(options: { root: string; takes: TakeManager
   };
 }
 
-const StopInputSchema = z.object({}).strict();
 const POST_PATHS = new Set(['/api/run', '/api/continue', '/api/stop']);
 
 function sameToken(given: string | string[] | undefined, expected: string): boolean {
@@ -123,14 +122,13 @@ function readBody(request: IncomingMessage): Promise<unknown> {
 export function createAppServer(options: {
   takes: TakeManager;
   readState: () => Promise<AppState>;
-  policyText: string;
+  policyText: string | (() => string);
   assets: AppAssets;
   token: string;
   log?: (line: string) => void;
 }): Server {
   const log = options.log ?? ((line: string) => console.error(line));
   const html = options.assets.html.replaceAll('{{TOKEN}}', options.token);
-  const files = JSON.stringify({ policy: JSON.parse(options.policyText) as unknown });
 
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     const send = (status: number, type: string, body: string, extra: Record<string, string> = {}): void => {
@@ -165,11 +163,8 @@ export function createAppServer(options: {
       readBody(request).then((body) => {
         let outcome: Outcome;
         if (path === '/api/run') outcome = options.takes.start(parseRunInput(body));
-        else if (path === '/api/continue') outcome = options.takes.continue(parseContinueInput(body).step);
-        else {
-          if (!StopInputSchema.safeParse(body).success) throw new InputError('The stop request could not be read.');
-          outcome = options.takes.stop();
-        }
+        else if (path === '/api/continue') outcome = options.takes.continue(parseContinueInput(body));
+        else outcome = options.takes.stop(parseStopInput(body));
         if (outcome.ok) json(200, { ok: true });
         else json(outcome.status, { error: outcome.message });
       }).catch((error: unknown) => {
@@ -190,8 +185,16 @@ export function createAppServer(options: {
     if (path === '/' || path === '/index.html') send(200, 'text/html; charset=utf-8', html);
     else if (path === '/app.js') send(200, 'text/javascript; charset=utf-8', options.assets.script);
     else if (path === '/app.css') send(200, 'text/css; charset=utf-8', options.assets.style);
-    else if (path === '/api/files') send(200, 'application/json; charset=utf-8', files);
-    else if (path === '/api/state') {
+    else if (path === '/api/files') {
+      try {
+        const text = typeof options.policyText === 'function' ? options.policyText() : options.policyText;
+        const policy = PolicySchema.parse(JSON.parse(text.replace(/^\uFEFF/, '')));
+        json(200, { policy });
+      } catch {
+        log('app: policy read failed');
+        json(500, { error: 'The app could not read the current company policy' });
+      }
+    } else if (path === '/api/state') {
       options.readState().then(
         (state) => json(200, state),
         (error: unknown) => {
@@ -228,7 +231,7 @@ async function main(): Promise<void> {
   const server = createAppServer({
     takes,
     readState: createAppStateReader({ root, takes }),
-    policyText: readFileSync(join(root, 'config/policies/hardware.example.json'), 'utf8'),
+    policyText: () => readFileSync(join(root, 'config/policies/hardware.example.json'), 'utf8'),
     assets: loadAppAssets(),
     token: randomBytes(24).toString('base64url'),
   });
